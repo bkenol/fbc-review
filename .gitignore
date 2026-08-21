@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Secrets — never commit
+.env
+.env.*
+*-service-account*.json
+*serviceAccountKey*.json
+.firebaserc.local
+
+# Node / Angular
+node_modules/
+web/dist/
+.angular/
+
+# Local artefacts
+/out/
+samples/
+*.pdf
+!docs/**/*.pdf
+
+# Firebase CLI artefacts
+firebase-debug.log
+firestore-debug.log
+database-debug.log
+ui-debug.log
+.firebase/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
