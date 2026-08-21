@@ -1,0 +1,234 @@
+name: CI and deploy
+
+# Tests gate everything. A push to main that passes them builds the API image,
+# deploys it to Cloud Run by commit SHA, and deploys Hosting when the client or
+# the Hosting config changed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Never a downloaded service-account key. Workload Identity Federation needs an
+# OIDC token, which is what id-token: write grants.
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: us-east1
+  SERVICE: fbc-review
+  REPOSITORY: fbc
+  # Must match the container: the engine is verified against 3.12, not the 3.14
+  # a developer may have locally.
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '24.19.0'
+
+jobs:
+  # ── the engine and the service ─────────────────────────────────────────
+  python-tests:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      # Rebuilding scanned sheets needs Tesseract. Without it the OCR test skips
+      # rather than fails, and the coverage silently disappears — so install it.
+      - name: Install Tesseract
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
+          echo "TESSDATA_PREFIX=$(dirname "$(find /usr/share -name eng.traineddata -print -quit)")" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run the regression gate and the service tests
+        run: python -m pytest tests/ -v
+
+  # ── the client ─────────────────────────────────────────────────────────
+  web-tests:
+    name: ng build and ng test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      # strictTemplates is on, so a template type error fails here.
+      - run: npm run build
+        working-directory: web
+
+      - run: npm run test:ci
+        working-directory: web
+
+  # ── the contract ───────────────────────────────────────────────────────
+  client-drift:
+    name: generated client matches the API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - run: pip install -r requirements.txt
+      - run: npm ci
+        working-directory: web
+
+      # This is what keeps the contract honest. Regenerate from the app's own
+      # schema and fail if anything differs from what is committed: a backend
+      # field rename that was not carried into the client is a red build here
+      # rather than a runtime `undefined` in front of a user.
+      - name: Regenerate the schema and the client
+        run: npm run api:refresh
+        working-directory: web
+
+      - name: Fail if the committed output is stale
+        run: |
+          if ! git diff --quiet -- openapi.json web/src/app/api; then
+            echo "::error::openapi.json or web/src/app/api is out of date."
+            echo "Run 'npm run api:refresh' in web/ and commit the result."
+            git diff --stat -- openapi.json web/src/app/api
+            git diff -- openapi.json web/src/app/api | head -200
+            exit 1
+          fi
+          echo "Generated client matches the API."
+
+  # ── deploy ─────────────────────────────────────────────────────────────
+  deploy-api:
+    name: Cloud Run
+    needs: [python-tests, web-tests, client-drift]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Authorise Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      # linux/amd64 explicitly: Cloud Run runs amd64, and a silently-arm64 image
+      # fails at start rather than at build.
+      - name: Build and push
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
+          docker buildx build --platform linux/amd64 -t "$IMAGE" --push .
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}
+          flags: >-
+            --memory=2Gi
+            --cpu=2
+            --concurrency=4
+            --timeout=900
+            --min-instances=0
+            --max-instances=5
+            --service-account=fbc-review-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+          env_vars: |
+            FBC_BUCKET=${{ vars.FBC_BUCKET }}
+            FBC_PROJECT_ID=${{ env.PROJECT_ID }}
+            FBC_ALLOWED_EMAILS=${{ vars.FBC_ALLOWED_EMAILS }}
+            FBC_SIGNER_SA=fbc-review-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Smoke-test the new revision
+        run: |
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "${{ steps.deploy.outputs.url }}/healthz" || true)
+            [ "$code" = "200" ] && echo "healthz OK" && exit 0
+            sleep 5
+          done
+          echo "::error::/healthz did not return 200 on the new revision"
+          exit 1
+
+  # ── hosting ────────────────────────────────────────────────────────────
+  changes:
+    name: what changed
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: filter
+        run: |
+          if git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" \
+             | grep -Eq '^(web/|firebase\.json|firestore\.)'; then
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "web=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-hosting:
+    name: Firebase Hosting
+    needs: [deploy-api, changes]
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+
+      # The CLI picks up Application Default Credentials from the auth step, so
+      # no FIREBASE_TOKEN and no key file.
+      - name: Deploy Hosting
+        run: npx --yes firebase-tools@latest deploy --only hosting --project "${PROJECT_ID}" --non-interactive

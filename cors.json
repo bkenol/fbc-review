@@ -1,0 +1,13 @@
+[
+  {
+    "origin": [
+      "https://review.omniflexfitness.com",
+      "https://REPLACE_PROJECT_ID.web.app",
+      "https://REPLACE_PROJECT_ID.firebaseapp.com",
+      "http://localhost:4300"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Content-Disposition"],
+    "maxAgeSeconds": 3600
+  }
+]
