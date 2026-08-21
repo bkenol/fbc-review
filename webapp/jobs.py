@@ -1,0 +1,169 @@
+"""Job records in Firestore, and the rate limits derived from them.
+
+Replaces the in-process dict the laptop build used. Cloud Run scales to zero
+and replaces instances freely, so nothing about a job may live in memory.
+
+Rate limits are **derived by query**, never kept as a counter. A counter that
+is incremented when a review starts and decremented when it finishes leaks a
+slot permanently every time an instance is killed mid-review, and the user is
+then locked out with no way to clear it.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import logging
+from functools import lru_cache
+from typing import Any, Dict, List, Optional
+
+from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
+
+from webapp.config import settings
+
+log = logging.getLogger("fbc.jobs")
+
+QUEUED, RUNNING, DONE, ERROR = "queued", "running", "done", "error"
+ACTIVE = (QUEUED, RUNNING)
+
+
+def utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+class RateLimited(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+class JobStore:
+    def __init__(self, client: Optional[firestore.Client] = None):
+        cfg = settings()
+        self._db = client or firestore.Client(project=cfg.project_id or None)
+        self._col = self._db.collection(cfg.collection)
+
+    # ── writes ────────────────────────────────────────────────────────────
+    def create(
+        self,
+        *,
+        job_id: str,
+        uid: str,
+        email: str,
+        filename: str,
+        size_bytes: int,
+        pages: int,
+        options: Dict[str, Any],
+        upload_blob: str,
+    ) -> Dict[str, Any]:
+        record = {
+            "id": job_id,
+            "uid": uid,
+            "email": email,
+            "filename": filename,
+            "bytes": size_bytes,
+            "pages": pages,
+            "state": QUEUED,
+            "stage": 0,
+            "options": options,
+            "upload_blob": upload_blob,
+            "summary": None,
+            "error": None,
+            "error_code": None,
+            "created_at": utcnow(),
+            "started_at": None,
+            "finished_at": None,
+        }
+        self._col.document(job_id).set(record)
+        return record
+
+    def update(self, job_id: str, **fields: Any) -> None:
+        self._col.document(job_id).update(fields)
+
+    def mark_running(self, job_id: str) -> None:
+        self.update(job_id, state=RUNNING, stage=0, started_at=utcnow())
+
+    def mark_stage(self, job_id: str, stage: int) -> None:
+        self.update(job_id, stage=stage)
+
+    def mark_done(self, job_id: str, summary: Dict[str, Any]) -> None:
+        self.update(job_id, state=DONE, stage=4, summary=summary, finished_at=utcnow())
+
+    def mark_error(self, job_id: str, code: str, message: str) -> None:
+        self.update(
+            job_id, state=ERROR, error=message, error_code=code, finished_at=utcnow()
+        )
+
+    # ── reads ─────────────────────────────────────────────────────────────
+    def get(self, job_id: str) -> Optional[Dict[str, Any]]:
+        snap = self._col.document(job_id).get()
+        return snap.to_dict() if snap.exists else None
+
+    # ── rate limiting ─────────────────────────────────────────────────────
+    def _count(self, query) -> int:
+        result = query.count().get()
+        # Aggregation results come back as [[AggregationResult]].
+        for row in result:
+            for item in row if isinstance(row, list) else [row]:
+                return int(item.value)
+        return 0
+
+    def active_count(self, uid: str) -> int:
+        q = (
+            self._col.where(filter=FieldFilter("uid", "==", uid))
+            .where(filter=FieldFilter("state", "in", list(ACTIVE)))
+        )
+        return self._count(q)
+
+    def recent_count(self, uid: str, since: dt.datetime) -> int:
+        q = (
+            self._col.where(filter=FieldFilter("uid", "==", uid))
+            .where(filter=FieldFilter("created_at", ">", since))
+        )
+        return self._count(q)
+
+    def enforce_limits(self, uid: str) -> None:
+        cfg = settings()
+
+        active = self.active_count(uid)
+        if active >= cfg.rate_concurrent:
+            raise RateLimited(
+                f"You already have {active} reviews in progress. "
+                f"Wait for one to finish — the limit is {cfg.rate_concurrent} at a time."
+            )
+
+        window_start = utcnow() - dt.timedelta(hours=1)
+        recent = self.recent_count(uid, window_start)
+        if recent >= cfg.rate_per_hour:
+            raise RateLimited(
+                f"You have run {recent} reviews in the last hour, which is the limit. "
+                "Try again later."
+            )
+
+    # ── startup housekeeping ──────────────────────────────────────────────
+    def fail_stale_running(self) -> int:
+        """Cloud Run scales to zero and kills instances mid-review. Any job
+        still marked running from before this instance existed is orphaned:
+        nothing is going to finish it, so say so rather than let the client
+        poll forever."""
+        cfg = settings()
+        cutoff = utcnow() - dt.timedelta(minutes=cfg.stale_running_minutes)
+        stale: List[Any] = list(
+            self._col.where(filter=FieldFilter("state", "==", RUNNING))
+            .where(filter=FieldFilter("started_at", "<", cutoff))
+            .limit(100)
+            .stream()
+        )
+        for snap in stale:
+            self.mark_error(
+                snap.id,
+                "interrupted",
+                "This review was interrupted by a server restart. Run it again.",
+            )
+        if stale:
+            log.warning("failed orphaned jobs", extra={"count": len(stale)})
+        return len(stale)
+
+
+@lru_cache(maxsize=1)
+def get_job_store() -> JobStore:
+    return JobStore()

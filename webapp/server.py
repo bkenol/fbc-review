@@ -1,223 +1,373 @@
-"""FBC Code Review — HTTP service.
+"""FBC Code Review — HTTP API.
 
-POST a permit set, choose the review parameters, get back a marked-up PDF and a
-findings JSON. The review itself runs in a worker thread and makes no model
-calls; see ARCHITECTURE.md.
+POST a permit set with review parameters, poll the job, then download the
+marked-up PDF and findings from Cloud Storage using the signed URLs the job
+hands back. The review itself runs on a worker thread and makes **no model
+calls**; see ARCHITECTURE.md.
+
+Nothing here streams a PDF back through the app. A finished set is 16-19 MB and
+proxying that would pin a Cloud Run instance for the length of the download.
 """
 from __future__ import annotations
-import json, os, shutil, sys, tempfile, threading, time, traceback, uuid
+
+import contextlib
+import json
+import logging
+import tempfile
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from fastapi import Depends, FastAPI, File, Form, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fbcreview.options import EDITIONS, OCCUPANCY_GROUPS, SEVERITY_ORDER, ReviewOptions
+from fbcreview.rules import registered
+from webapp import errors, logging_config, mailer, models, storage, upload
+from webapp.auth import User, current_user
+from webapp.config import settings
+from webapp.errors import ApiError
+from webapp.jobs import DONE, JobStore, RateLimited, get_job_store, utcnow
+from webapp.storage import Storage, get_storage
+from webapp.worker import STAGES, run_review
 
-from fbcreview.options import ReviewOptions, OCCUPANCY_GROUPS, EDITIONS, SEVERITY_ORDER
-from fbcreview.pipeline import build_facts
-from fbcreview.rules import run_all, registered
-from fbcreview.render.markup import render
-from webapp import mailer
+logging_config.configure()
+log = logging.getLogger("fbc.api")
 
+VERSION = "1.0.0"
 APP_DIR = Path(__file__).resolve().parent
-WORK = Path(os.environ.get("FBC_WORK_DIR", tempfile.gettempdir())) / "fbc-jobs"
-WORK.mkdir(parents=True, exist_ok=True)
-MAX_MB = int(os.environ.get("FBC_MAX_UPLOAD_MB", 120))
-RETAIN_HOURS = int(os.environ.get("FBC_RETAIN_HOURS", 24))
 
-app = FastAPI(title="FBC Code Review", version="0.1.0")
-_pool = ThreadPoolExecutor(max_workers=int(os.environ.get("FBC_WORKERS", 2)))
-_jobs: Dict[str, "Job"] = {}
-_lock = threading.Lock()
-
-STAGES = ["Reading the PDF", "Extracting schedules and code data",
-          "Running rules", "Rendering the markup", "Delivering"]
+_pool: Optional[ThreadPoolExecutor] = None
 
 
-@dataclass
-class Job:
-    id: str
-    filename: str
-    options: ReviewOptions
-    state: str = "queued"          # queued | running | done | error
-    stage: int = 0
-    created: float = field(default_factory=time.time)
-    error: str = ""
-    mail: str = ""
-    summary: dict = field(default_factory=dict)
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _pool
+    cfg = settings()
+    _pool = ThreadPoolExecutor(max_workers=cfg.workers, thread_name_prefix="review")
+    log.info(
+        "service starting",
+        extra={
+            "version": VERSION,
+            "workers": cfg.workers,
+            "bucket": cfg.bucket,
+            "allowlist_size": len(cfg.allowed_emails),
+            "on_cloud_run": cfg.on_cloud_run,
+        },
+    )
+    if cfg.dev_unsafe_auth:
+        log.warning("FBC_DEV_UNSAFE_AUTH=1 - every request is treated as signed in")
 
-    @property
-    def dir(self) -> Path:
-        return WORK / self.id
-
-    def public(self) -> dict:
-        return {"id": self.id, "filename": self.filename, "state": self.state,
-                "stage": self.stage, "stage_label": STAGES[min(self.stage, len(STAGES) - 1)],
-                "stages": STAGES, "error": self.error, "mail": self.mail,
-                "summary": self.summary, "elapsed": round(time.time() - self.created, 1)}
-
-
-def _sweep():
-    cutoff = time.time() - RETAIN_HOURS * 3600
-    for d in WORK.iterdir():
-        try:
-            if d.is_dir() and d.stat().st_mtime < cutoff:
-                shutil.rmtree(d, ignore_errors=True)
-                _jobs.pop(d.name, None)
-        except OSError:
-            pass
-
-
-def _run(job: Job):
+    # Cloud Run scales to zero; anything left running belongs to a dead
+    # instance. Failing to reach Firestore here must not stop the service
+    # coming up, or a transient outage becomes a crash loop.
     try:
-        job.state, job.stage = "running", 0
-        src = str(job.dir / "source.pdf")
-        job.stage = 1
-        facts = build_facts(src)
-        job.stage = 2
-        res = run_all(facts, job.options)
-        job.stage = 3
-        out = job.dir / f"{Path(job.filename).stem} — CODE REVIEW.pdf"
-        info = render(src, str(out), res.findings, facts.sheets, job.options, res.abstentions)
+        get_job_store().fail_stale_running()
+    except Exception:
+        log.exception("startup sweep for orphaned jobs failed")
 
-        counts = {}
-        for f in res.findings:
-            counts[f.severity] = counts.get(f.severity, 0) + 1
-        job.summary = {
-            "sheets": len(facts.sheets), "pages": info["pages"],
-            "cad_layers": len(facts.meta.get("cad_layers", [])),
-            "annotations": info["annots"], "marked": info["marked"],
-            "counts": counts,
-            "open": sum(1 for f in res.findings if f.status == "OPEN"),
-            "verified": sum(1 for f in res.findings if f.status != "OPEN"),
-            "abstentions": [{"rule": a.rule_id, "reason": a.reason} for a in res.abstentions],
-            "rules_run": len(registered()),
-            "scale_pages": sum(1 for g in facts.geometry.values() if g.scale_pt_per_ft),
-            "pdf_bytes": out.stat().st_size,
-            "pdf_name": out.name,
-            "findings": [f.to_dict() for f in res.findings],
-        }
-        (job.dir / "findings.json").write_text(
-            json.dumps({"options": job.options.to_dict(), "summary":
-                        {k: v for k, v in job.summary.items() if k != "findings"},
-                        "findings": job.summary["findings"]}, indent=2), encoding="utf-8")
+    yield
 
-        job.stage = 4
-        if job.options.email_to:
-            crit = [f for f in res.findings if f.severity == "CRITICAL"]
-            lines = [f"Code review complete for {job.options.project_name or job.filename}.", "",
-                     f"{job.summary['open']} open findings, {job.summary['verified']} verified.",
-                     ""]
-            if crit:
-                lines += [f"CRITICAL — {crit[0].title}", f"  {crit[0].result}", ""]
-            for f in [f for f in res.findings if f.status == "OPEN"][:12]:
-                lines.append(f"  {f.severity:<9} {f.fid:<7} {f.sheet:<5} {f.title}")
-            lines += ["", "The marked-up PDF is attached.", "",
-                      "Advisory only. A licensed design professional remains responsible for "
-                      "code compliance; this is not a plan approval."]
-            job.mail = mailer.send_review(
-                job.options.email_to,
-                f"Code review — {job.options.project_name or job.filename}",
-                "\n".join(lines), str(out))
-        job.state = "done"
-    except Exception as exc:
-        job.state = "error"
-        job.error = f"{type(exc).__name__}: {exc}"
-        traceback.print_exc()
+    _pool.shutdown(wait=False, cancel_futures=True)
 
 
-@app.get("/", response_class=HTMLResponse)
-def index():
-    return (APP_DIR / "static" / "index.html").read_text(encoding="utf-8")
+app = FastAPI(
+    title="FBC Code Review",
+    version=VERSION,
+    summary="Deterministic Florida Building Code plan review.",
+    description=(
+        "Upload a vector permit set, choose the review parameters, download a "
+        "marked-up PDF and a findings register. No model calls in the request path."
+    ),
+    lifespan=lifespan,
+    responses={
+        400: {"model": models.ErrorResponse},
+        401: {"model": models.ErrorResponse},
+        403: {"model": models.ErrorResponse},
+        404: {"model": models.ErrorResponse},
+        413: {"model": models.ErrorResponse},
+        415: {"model": models.ErrorResponse},
+        429: {"model": models.ErrorResponse},
+        500: {"model": models.ErrorResponse},
+    },
+)
+errors.install(app)
 
 
-@app.get("/api/config")
-def config():
-    return {"occupancy_groups": OCCUPANCY_GROUPS,
-            "editions": [{"id": k, "label": v, "available": k == "fbc2023"}
-                         for k, v in EDITIONS.items()],
-            "severities": SEVERITY_ORDER,
-            "max_upload_mb": MAX_MB,
-            "mail": {"configured": mailer.configured(), "status": mailer.status()},
-            "rules": registered(),
-            "retain_hours": RETAIN_HOURS}
+def custom_openapi() -> Dict[str, Any]:
+    """Make the published schema match what the service actually returns.
+
+    Two corrections to FastAPI's default output:
+
+    1. FastAPI documents a 422 as its own `HTTPValidationError`, but
+       `errors.install` converts those to the same `{"error": {...}}` envelope
+       as everything else. Left alone, the generated client would carry a type
+       for a body that is never sent.
+    2. `FindingsDocument` is published even though no endpoint returns it. The
+       browser fetches `findings.json` straight from Cloud Storage, so without
+       this the findings table would be the only hand-typed part of the client.
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    from fastapi.openapi.utils import get_openapi
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        summary=app.summary,
+        description=app.description,
+        routes=app.routes,
+    )
+    schemas = schema.setdefault("components", {}).setdefault("schemas", {})
+
+    error_ref = {"$ref": "#/components/schemas/ErrorResponse"}
+    for operations in schema.get("paths", {}).values():
+        for operation in operations.values():
+            for status, declared in (operation.get("responses") or {}).items():
+                if status.startswith(("4", "5")):
+                    declared["content"] = {"application/json": {"schema": dict(error_ref)}}
+                    declared.setdefault("description", "Error")
+
+    # FastAPI only emits these to describe the 422 it no longer sends.
+    for dead in ("HTTPValidationError", "ValidationError"):
+        schemas.pop(dead, None)
+
+    document = models.FindingsDocument.model_json_schema(
+        ref_template="#/components/schemas/{model}"
+    )
+    for name, definition in document.pop("$defs", {}).items():
+        schemas.setdefault(name, definition)
+    schemas["FindingsDocument"] = document
+
+    app.openapi_schema = schema
+    return schema
 
 
-@app.post("/api/review")
-async def review(file: UploadFile = File(...), options: str = Form("{}")):
-    if not (file.filename or "").lower().endswith(".pdf"):
-        raise HTTPException(415, "Upload a PDF permit set.")
+app.openapi = custom_openapi  # type: ignore[method-assign]
+
+
+# -- dependency seams (overridden in tests) --------------------------------
+def job_store() -> JobStore:
+    return get_job_store()
+
+
+def file_store() -> Storage:
+    return get_storage()
+
+
+# -- health ----------------------------------------------------------------
+@app.get(
+    "/healthz",
+    response_model=models.Health,
+    tags=["health"],
+    summary="Liveness. Unauthenticated and deliberately cheap.",
+)
+def healthz() -> models.Health:
+    # No Firestore, no Cloud Storage, no allowlist. Cloud Run's startup probe
+    # hits this and it must answer before dependencies are warm.
+    return models.Health(ok=True, service="fbc-review", version=VERSION)
+
+
+# -- config ----------------------------------------------------------------
+@app.get("/api/config", response_model=models.ConfigResponse, tags=["config"])
+def config(user: User = Depends(current_user)) -> models.ConfigResponse:
+    cfg = settings()
+    return models.ConfigResponse(
+        occupancy_groups=[models.OccupancyGroup(id=i, label=l) for i, l in OCCUPANCY_GROUPS],
+        editions=[
+            models.Edition(id=k, label=v, available=(k == "fbc2023"))
+            for k, v in EDITIONS.items()
+        ],
+        severities=list(SEVERITY_ORDER),
+        stages=list(STAGES),
+        max_upload_mb=cfg.max_upload_mb,
+        max_pages=cfg.max_pages,
+        retain_days=cfg.retain_days,
+        rules=registered(),
+        mail=models.MailStatus(configured=mailer.configured(), status=mailer.status()),
+        defaults=models.ReviewOptions(),
+    )
+
+
+# -- submit ----------------------------------------------------------------
+@app.post(
+    "/api/review",
+    response_model=models.ReviewAccepted,
+    status_code=202,
+    tags=["reviews"],
+    summary="Accept a permit set and start a review.",
+)
+async def create_review(
+    file: UploadFile = File(..., description="The permit set, as a PDF."),
+    options: str = Form("{}", description="A JSON-encoded ReviewOptions object."),
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    files: Storage = Depends(file_store),
+) -> JSONResponse:
     try:
-        raw = json.loads(options)
+        raw: Dict[str, Any] = json.loads(options or "{}")
     except json.JSONDecodeError:
-        raise HTTPException(400, "options must be JSON")
-    emails = [e.strip() for e in str(raw.get("email_to", "")).replace(";", ",").split(",")
-              if e.strip()]
-    opt = ReviewOptions(
-        edition=raw.get("edition", "fbc2023"),
-        occupancy_group=raw.get("occupancy_group", "A-3"),
-        sprinklered=bool(raw.get("sprinklered", True)),
-        min_severity=raw.get("min_severity", "LOW"),
-        include_verified=bool(raw.get("include_verified", True)),
-        include_measured=bool(raw.get("include_measured", True)),
-        project_name=(raw.get("project_name") or "").strip(),
-        email_to=emails, notes=(raw.get("notes") or "").strip())
-    if opt.edition != "fbc2023":
-        raise HTTPException(400, f"{EDITIONS.get(opt.edition, opt.edition)} — pick the 8th Edition.")
+        raise ApiError(400, errors.INVALID_REQUEST, "options must be a JSON object.")
+    if not isinstance(raw, dict):
+        raise ApiError(400, errors.INVALID_REQUEST, "options must be a JSON object.")
 
-    jid = uuid.uuid4().hex[:12]
-    job = Job(jid, os.path.basename(file.filename), opt)
-    job.dir.mkdir(parents=True, exist_ok=True)
-    dest = job.dir / "source.pdf"
-    size = 0
-    with dest.open("wb") as fh:
-        while chunk := await file.read(1 << 20):
-            size += len(chunk)
-            if size > MAX_MB * 1024 * 1024:
-                fh.close(); shutil.rmtree(job.dir, ignore_errors=True)
-                raise HTTPException(413, f"Larger than the {MAX_MB} MB limit.")
-            fh.write(chunk)
-    with _lock:
-        _jobs[jid] = job
-    _pool.submit(_run, job)
-    _pool.submit(_sweep)
-    return JSONResponse({"id": jid}, status_code=202)
+    # Accept the legacy comma-separated string the reference page sends.
+    if isinstance(raw.get("email_to"), str):
+        raw["email_to"] = [
+            e.strip() for e in raw["email_to"].replace(";", ",").split(",") if e.strip()
+        ]
+    raw.pop("edition_label", None)
+
+    try:
+        parsed = models.ReviewOptions.model_validate(raw)
+    except Exception as exc:
+        raise ApiError(400, errors.INVALID_REQUEST, f"Invalid review options: {exc}")
+
+    upload.validate_options_edition(parsed.edition, EDITIONS)
+    valid_groups = {g for g, _ in OCCUPANCY_GROUPS}
+    if parsed.occupancy_group not in valid_groups:
+        raise ApiError(
+            400,
+            errors.INVALID_REQUEST,
+            f"{parsed.occupancy_group} is not an occupancy group this build reviews.",
+        )
+
+    # Rate limits are checked before the body is streamed, so a throttled user
+    # does not get to spend our bandwidth first.
+    try:
+        store.enforce_limits(user.uid)
+    except RateLimited as exc:
+        raise ApiError(429, errors.RATE_LIMITED, exc.message)
+
+    job_id = uuid.uuid4().hex[:12]
+    filename = upload.safe_basename(file.filename or "")
+    scratch = Path(tempfile.mkdtemp(prefix=f"fbc-in-{job_id}-"))
+    local = scratch / "source.pdf"
+
+    try:
+        size = await upload.stream_to_disk(file, local)
+        pages = upload.probe(local)
+
+        blob = storage.upload_path(job_id, filename)
+        files.upload_file(str(local), blob, "application/pdf")
+    finally:
+        with contextlib.suppress(Exception):
+            local.unlink(missing_ok=True)
+            scratch.rmdir()
+
+    engine_options = ReviewOptions(**parsed.model_dump())
+    store.create(
+        job_id=job_id,
+        uid=user.uid,
+        email=user.email,
+        filename=filename,
+        size_bytes=size,
+        pages=pages,
+        options=parsed.model_dump(),
+        upload_blob=blob,
+    )
+
+    log.info(
+        "review accepted",
+        extra={
+            "job_id": job_id,
+            "uid": user.uid,
+            "email": user.email,
+            "pages": pages,
+            "bytes": size,
+            "occupancy_group": parsed.occupancy_group,
+            "sprinklered": parsed.sprinklered,
+        },
+    )
+
+    assert _pool is not None
+    _pool.submit(
+        run_review,
+        job_id=job_id,
+        uid=user.uid,
+        email=user.email,
+        filename=filename,
+        upload_blob=blob,
+        options=engine_options,
+        store=store,
+        store_files=files,
+    )
+    return JSONResponse({"id": job_id}, status_code=202)
 
 
-def _job(jid: str) -> Job:
-    j = _jobs.get(jid)
-    if not j:
-        raise HTTPException(404, "No such job — results are cleared after "
-                                 f"{RETAIN_HOURS} hours.")
-    return j
+# -- poll ------------------------------------------------------------------
+@app.get("/api/jobs/{job_id}", response_model=models.Job, tags=["reviews"])
+def get_job(
+    job_id: str,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    files: Storage = Depends(file_store),
+) -> models.Job:
+    record = store.get(job_id)
+
+    # Ownership is enforced here, in the handler. The client never talks to
+    # Firestore, so security rules would protect nothing. A job belonging to
+    # someone else is reported as absent rather than forbidden, so job ids
+    # cannot be probed for existence.
+    if not record or record.get("uid") != user.uid:
+        raise ApiError(404, errors.NOT_FOUND, "No such review.")
+
+    return _to_model(record, files)
 
 
-@app.get("/api/jobs/{jid}")
-def job_status(jid: str):
-    return _job(jid).public()
+def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
+    state = record.get("state", "queued")
+    stage = int(record.get("stage", 0) or 0)
+    created = record.get("created_at") or utcnow()
+    finished = record.get("finished_at")
+
+    summary = None
+    downloads = None
+    if state == DONE and record.get("summary"):
+        summary = models.Summary.model_validate(record["summary"])
+        job_id = record["id"]
+        pdf_name = summary.pdf_name or "markup.pdf"
+        downloads = models.Downloads(
+            markup_pdf=files.signed_url(
+                storage.output_path(job_id, storage.MARKUP), download_as=pdf_name
+            ),
+            findings_json=files.signed_url(storage.output_path(job_id, storage.FINDINGS)),
+            expires_at=files.expires_at(),
+        )
+
+    end = finished or utcnow()
+    elapsed = max(0.0, (end - created).total_seconds())
+
+    return models.Job(
+        id=record["id"],
+        filename=record.get("filename", ""),
+        state=state,
+        stage=stage,
+        stage_label=STAGES[min(stage, len(STAGES) - 1)],
+        stages=list(STAGES),
+        options=models.ReviewOptions.model_validate(record.get("options") or {}),
+        bytes=int(record.get("bytes", 0) or 0),
+        pages=record.get("pages"),
+        summary=summary,
+        downloads=downloads,
+        error=record.get("error"),
+        error_code=record.get("error_code"),
+        created_at=created,
+        started_at=record.get("started_at"),
+        finished_at=finished,
+        elapsed_seconds=round(elapsed, 1),
+    )
 
 
-@app.get("/api/jobs/{jid}/markup.pdf")
-def job_pdf(jid: str):
-    j = _job(jid)
-    if j.state != "done":
-        raise HTTPException(409, "Not finished.")
-    p = j.dir / j.summary["pdf_name"]
-    return FileResponse(p, media_type="application/pdf", filename=p.name)
-
-
-@app.get("/api/jobs/{jid}/findings.json")
-def job_json(jid: str):
-    j = _job(jid)
-    if j.state != "done":
-        raise HTTPException(409, "Not finished.")
-    return FileResponse(j.dir / "findings.json", media_type="application/json",
-                        filename=f"{Path(j.filename).stem}-findings.json")
-
-
-@app.get("/healthz")
-def healthz():
-    return {"ok": True, "jobs": len(_jobs), "rules": len(registered())}
+# -- the reference page ----------------------------------------------------
+# Present in a source checkout while the Angular client is brought to parity;
+# the container image does not ship webapp/static, so this 404s in production
+# rather than 500-ing on a missing file.
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def index() -> HTMLResponse:
+    page = APP_DIR / "static" / "index.html"
+    if not page.exists():
+        raise ApiError(404, errors.NOT_FOUND, "This deployment serves the API only.")
+    return HTMLResponse(page.read_text(encoding="utf-8"))
