@@ -73,7 +73,13 @@ export class ReviewService {
   private polling: Subscription | null = null;
 
   // ── config ──────────────────────────────────────────────────────────────
-  loadConfig(): void {
+  /**
+   * `onLoaded` runs once, on the first successful fetch. Callers use it to seed
+   * a form from the server's defaults — which must not happen again on a later
+   * refetch, or it overwrites what the person has since typed.
+   */
+  loadConfig(onLoaded?: (config: ConfigResponse) => void): void {
+    let seeded = false;
     this.configApi
       .getConfig()
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -81,6 +87,10 @@ export class ReviewService {
         next: (config) => {
           this._config.set(config);
           this._failure.set(null);
+          if (!seeded) {
+            seeded = true;
+            onLoaded?.(config);
+          }
         },
         error: (error) => this.handle(error),
       });

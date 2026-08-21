@@ -6,7 +6,7 @@
  * fbcreview/options.py needs no change here.
  */
 import { DecimalPipe } from '@angular/common';
-import { Component, OnDestroy, computed, effect, inject, signal } from '@angular/core';
+import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 
 import { Finding, ReviewOptions, ReviewOptionsMinSeverityEnum } from '../api';
@@ -82,26 +82,28 @@ export class Review implements OnDestroy {
   protected readonly unreadableSheets = computed(() => this.job()?.source?.raster_pages ?? []);
 
   constructor() {
-    this.reviews.loadConfig();
+    // Adopt the server's defaults once, rather than duplicating them here
+    // where they would drift.
+    //
+    // Deliberately a one-shot callback and not an effect() on config(): an
+    // effect re-runs whenever the signal changes, so any later refetch — a
+    // retry, a reconnect — would silently reset the occupancy group and the
+    // sprinklered checkbox underneath someone who had already changed them.
+    this.reviews.loadConfig((config) => this.applyDefaults(config.defaults));
+  }
 
-    // Adopt the server's defaults once config arrives, rather than duplicating
-    // them here where they would drift.
-    effect(() => {
-      const config = this.config();
-      if (!config) return;
-      const defaults = config.defaults;
-      this.form.patchValue(
-        {
-          edition: defaults.edition ?? 'fbc2023',
-          occupancy_group: defaults.occupancy_group ?? 'A-3',
-          sprinklered: defaults.sprinklered ?? true,
-          min_severity: defaults.min_severity ?? ReviewOptionsMinSeverityEnum.Low,
-          include_verified: defaults.include_verified ?? true,
-          include_measured: defaults.include_measured ?? true,
-        },
-        { emitEvent: false },
-      );
-    });
+  private applyDefaults(defaults: ReviewOptions): void {
+    this.form.patchValue(
+      {
+        edition: defaults.edition ?? 'fbc2023',
+        occupancy_group: defaults.occupancy_group ?? 'A-3',
+        sprinklered: defaults.sprinklered ?? true,
+        min_severity: defaults.min_severity ?? ReviewOptionsMinSeverityEnum.Low,
+        include_verified: defaults.include_verified ?? true,
+        include_measured: defaults.include_measured ?? true,
+      },
+      { emitEvent: false },
+    );
   }
 
   ngOnDestroy(): void {

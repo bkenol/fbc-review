@@ -43,12 +43,12 @@ class FakeJobStore:
         self._lock = threading.Lock()
         self.done = threading.Event()
 
-    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob, stages=None, source=None):
+    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob, stages, source=None):
         record = {
             "id": job_id, "uid": uid, "email": email, "filename": filename,
             "bytes": size_bytes, "pages": pages, "state": jobs_mod.QUEUED, "stage": 0,
             "options": options, "upload_blob": upload_blob, "source": source, "summary": None, "conversion": None,
-            "stages": list(stages) if stages else None,
+            "stages": list(stages),
             "error": None, "error_code": None,
             "created_at": jobs_mod.utcnow(), "started_at": None, "finished_at": None,
         }
@@ -93,7 +93,9 @@ class FakeJobStore:
         return sum(1 for d in self.docs.values()
                    if d["uid"] == uid and d["created_at"] > since)
 
-    enforce_limits = jobs_mod.JobStore.enforce_limits
+    def enforce_limits(self, uid):
+        window_start = jobs_mod.utcnow() - dt.timedelta(hours=1)
+        jobs_mod.check_limits(self.active_count(uid), self.recent_count(uid, window_start))
 
     def fail_stale_running(self):
         return 0

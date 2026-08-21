@@ -530,6 +530,8 @@ Ticked only where actually verified. See the report for what is blocked and why.
 - [x] Keyboard-operable: real focusable `<input type=file>`, no unlabelled
       controls, `aria-live` on job status
 - [x] Light and dark both correct, following the OS setting
+- [x] Polling stops on a terminal state — measured, zero further `getJob`
+      requests over 12 s idle after a job finished
 - [x] Cloud Logging output is structured JSON with job ids, and carries no PDF
       content or filenames
 - [ ] A real 35-sheet permit set completes end to end — **blocked**: no permit
@@ -614,6 +616,14 @@ Known limitation, observed in the verification run: OCR read `SHEET G-0` as
 `SHEET G-O0`. Sheet codes are short and O/0 confusion is the classic OCR
 failure, so sheet-code matching on a rebuilt set is less reliable than on a
 plotted one.
+
+### Vectorisation changes no finding today
+
+Worth stating plainly rather than leaving in the detail above: the OCR half of
+the rebuild unlocks most of the rule corpus, and the vectorisation half unlocks
+**none of the twelve current rules**. It makes the file a genuine vector PDF and
+it enables future rules, but no finding changes because of it today — the only
+geometric rule needs a semantic layer name that tracing cannot recover.
 
 **No model call was added anywhere.** OCR is Tesseract and vectorisation is a
 Hough transform; both are deterministic. The review path still makes zero LLM

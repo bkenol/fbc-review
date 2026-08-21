@@ -18,9 +18,9 @@ from webapp import pdfkind
 from webapp.config import settings
 from webapp.errors import (
     CORRUPT_PDF,
-    RASTER_PDF,
     ENCRYPTED_PDF,
     PAYLOAD_TOO_LARGE,
+    RASTER_PDF,
     TOO_MANY_PAGES,
     UNSUPPORTED_MEDIA,
     ApiError,

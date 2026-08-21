@@ -99,7 +99,8 @@ def test_missing_upload_fails_the_job_instead_of_raising():
 
     store, files = FakeJobStore(), FakeStorage()
     store.create(job_id="job-x", uid="u", email="e@example.com", filename="gone.pdf",
-                 size_bytes=1, pages=1, options={}, upload_blob="uploads/job-x/gone.pdf")
+                 size_bytes=1, pages=1, options={}, upload_blob="uploads/job-x/gone.pdf",
+                 stages=stages_for(False))
 
     # Must not propagate: nothing is awaiting this call.
     run_review(job_id="job-x", uid="u", email="e@example.com", filename="gone.pdf",
@@ -128,7 +129,8 @@ def test_local_scratch_is_removed_even_on_failure(tmp_path, monkeypatch):
     monkeypatch.setattr("webapp.worker.tempfile.mkdtemp", tracking_mkdtemp)
 
     store.create(job_id="job-y", uid="u", email="e@example.com", filename="gone.pdf",
-                 size_bytes=1, pages=1, options={}, upload_blob="missing")
+                 size_bytes=1, pages=1, options={}, upload_blob="missing",
+                 stages=stages_for(False))
     run_review(job_id="job-y", uid="u", email="e@example.com", filename="gone.pdf",
                upload_blob="missing", options=ReviewOptions(),
                store=store, store_files=files)
@@ -179,7 +181,8 @@ def test_exception_details_are_logged_but_not_returned():
     from fbcreview.options import ReviewOptions
 
     store.create(job_id="job-z", uid="u", email="e@example.com", filename="x.pdf",
-                 size_bytes=1, pages=1, options={}, upload_blob="nope")
+                 size_bytes=1, pages=1, options={}, upload_blob="nope",
+                 stages=stages_for(False))
     run_review(job_id="job-z", uid="u", email="e@example.com", filename="x.pdf",
                upload_blob="nope", options=ReviewOptions(), store=store, store_files=files)
 

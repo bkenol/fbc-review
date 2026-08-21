@@ -27,8 +27,8 @@ doc = pymupdf.open(); page = doc.new_page(width=1224, height=792)
 y = 120
 for line in SHEET:
     page.insert_text((90, y), line, fontsize=30); y += 70
-for n in range(60):
-    page.draw_line((80, 520 + n), (1140, 520 + n)) if n % 20 == 0 else None
+for n in range(0, 60, 20):
+    page.draw_line((80, 520 + n), (1140, 520 + n))
 flat = page.get_pixmap(dpi=200)
 doc.close()
 

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from webapp.config import settings
-from webapp.jobs import ACTIVE, DONE, ERROR, QUEUED, RUNNING, JobStore, utcnow
+from webapp.jobs import ACTIVE, DONE, ERROR, QUEUED, RUNNING, check_limits, utcnow
 
 log = logging.getLogger("fbc.dev")
 
@@ -45,6 +45,9 @@ class LocalJobStore:
         self._lock = threading.Lock()
 
     def _path(self, job_id: str) -> Path:
+        # Recreated on each use: the directory is disposable scratch and gets
+        # cleared out between sessions, but this object may be cached across it.
+        self.dir.mkdir(parents=True, exist_ok=True)
         return self.dir / f"{job_id}.json"
 
     def _write(self, record: Dict[str, Any]) -> None:
@@ -54,12 +57,12 @@ class LocalJobStore:
 
     def create(
         self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob,
-        stages: Optional[List[str]] = None, source=None,
+        stages: List[str], source=None,
     ) -> Dict[str, Any]:
         record = {
             "id": job_id, "uid": uid, "email": email, "filename": filename,
             "bytes": size_bytes, "pages": pages, "state": QUEUED, "stage": 0,
-            "stages": list(stages or []), "options": options, "upload_blob": upload_blob,
+            "stages": list(stages), "options": options, "upload_blob": upload_blob,
             "source": source, "summary": None, "conversion": None,
             "error": None, "error_code": None,
             "created_at": utcnow(), "started_at": None, "finished_at": None,
@@ -97,6 +100,7 @@ class LocalJobStore:
         self.update(job_id, state=ERROR, error=message, error_code=code, finished_at=utcnow())
 
     def _all(self) -> List[Dict[str, Any]]:
+        self.dir.mkdir(parents=True, exist_ok=True)
         out = []
         for path in self.dir.glob("*.json"):
             try:
@@ -114,8 +118,9 @@ class LocalJobStore:
             if r.get("uid") == uid and (r.get("created_at") or utcnow()) > since
         )
 
-    # Reuse the real limit logic rather than reimplementing it.
-    enforce_limits = JobStore.enforce_limits
+    def enforce_limits(self, uid: str) -> None:
+        window_start = utcnow() - dt.timedelta(hours=1)
+        check_limits(self.active_count(uid), self.recent_count(uid, window_start))
 
     def fail_stale_running(self) -> int:
         cutoff = utcnow() - dt.timedelta(minutes=settings().stale_running_minutes)

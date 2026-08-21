@@ -1,0 +1,149 @@
+{
+  "id": "f4f05cac8e22",
+  "uid": "dev-local",
+  "email": "bertin.kenol@omniflexfitness.com",
+  "filename": "Poll Test.pdf",
+  "bytes": 67284,
+  "pages": 3,
+  "state": "done",
+  "stage": 4,
+  "stages": [
+    "Reading the PDF",
+    "Extracting schedules and code data",
+    "Running rules",
+    "Rendering the markup",
+    "Delivering"
+  ],
+  "options": {
+    "edition": "fbc2023",
+    "occupancy_group": "A-3",
+    "sprinklered": true,
+    "min_severity": "LOW",
+    "include_verified": true,
+    "include_measured": true,
+    "project_name": "Poll Test",
+    "notes": "",
+    "convert_raster": false,
+    "email_to": []
+  },
+  "upload_blob": "uploads/f4f05cac8e22/Poll Test.pdf",
+  "source": {
+    "kind": "vector",
+    "cad_layers": 0,
+    "reviewable_pages": 3,
+    "raster_pages": [],
+    "summary": "3 of 3 sheets are plotted as vector with live text.",
+    "sheets": [
+      {
+        "page": 0,
+        "kind": "vector",
+        "vector_items": 200,
+        "live_chars": 141,
+        "image_count": 0,
+        "image_coverage": 0.0,
+        "reason": "plotted as vector with live text"
+      },
+      {
+        "page": 1,
+        "kind": "vector",
+        "vector_items": 200,
+        "live_chars": 141,
+        "image_count": 0,
+        "image_coverage": 0.0,
+        "reason": "plotted as vector with live text"
+      },
+      {
+        "page": 2,
+        "kind": "vector",
+        "vector_items": 200,
+        "live_chars": 141,
+        "image_count": 0,
+        "image_coverage": 0.0,
+        "reason": "plotted as vector with live text"
+      }
+    ]
+  },
+  "summary": {
+    "sheets": 3,
+    "pages": 5,
+    "cad_layers": 0,
+    "annotations": 0,
+    "marked": 0,
+    "counts": {},
+    "open": 0,
+    "verified": 0,
+    "abstentions": [
+      {
+        "rule": "DOORS.CLEAR_WIDTH",
+        "reason": "no door schedule extracted",
+        "detail": ""
+      },
+      {
+        "rule": "EGRESS.CAPACITY_FACTOR",
+        "reason": "no parseable 1005.3.2 datum",
+        "detail": ""
+      },
+      {
+        "rule": "EGRESS.COMMON_PATH",
+        "reason": "no code datum citing 1006.2.1 with a parseable required value",
+        "detail": ""
+      },
+      {
+        "rule": "EGRESS.CORRIDOR_WIDTH",
+        "reason": "no parseable 1020.3 datum",
+        "detail": ""
+      },
+      {
+        "rule": "EGRESS.DEAD_END",
+        "reason": "no parseable 1020.5 datum",
+        "detail": ""
+      },
+      {
+        "rule": "EGRESS.EXIT_COUNT",
+        "reason": "occupant load not extracted",
+        "detail": ""
+      },
+      {
+        "rule": "EGRESS.TRAVEL_DISTANCE",
+        "reason": "no parseable 1017.2 datum",
+        "detail": ""
+      },
+      {
+        "rule": "ELEC.PANEL_LOADING",
+        "reason": "no load calculation table found",
+        "detail": ""
+      },
+      {
+        "rule": "MEASURE.EGRESS_EXTENT",
+        "reason": "no CAD layer matching 'egress path' \u2014 the plot may be a scan, or the layer is named differently in this office's standard",
+        "detail": ""
+      },
+      {
+        "rule": "MECH.OUTDOOR_AIR_CAPACITY",
+        "reason": "outdoor-air total not extracted",
+        "detail": ""
+      },
+      {
+        "rule": "XSHEET.BUILDING_AREA",
+        "reason": "building area not found on both general sheets",
+        "detail": ""
+      },
+      {
+        "rule": "XSHEET.RISK_CATEGORY",
+        "reason": "risk category or occupant load not extracted",
+        "detail": ""
+      }
+    ],
+    "rules_run": 12,
+    "scale_pages": 3,
+    "pdf_bytes": 118452,
+    "pdf_name": "Poll Test \u2014 CODE REVIEW.pdf",
+    "findings_count": 0
+  },
+  "conversion": null,
+  "error": null,
+  "error_code": null,
+  "created_at": "2026-08-21T23:36:45.914044+00:00",
+  "started_at": "2026-08-21T23:36:45.915366+00:00",
+  "finished_at": "2026-08-21T23:36:46.528928+00:00"
+}

@@ -36,6 +36,29 @@ class RateLimited(Exception):
         self.message = message
 
 
+def check_limits(active: int, recent: int) -> None:
+    """The limit decision, as a plain function of two counts.
+
+    Deliberately not a method: the local development store and the test double
+    both need exactly this logic, and borrowing an unbound method onto an
+    unrelated class works only until the method touches an attribute the
+    borrower does not have. Taking the counts as arguments makes the tested
+    unit unambiguous.
+    """
+    cfg = settings()
+
+    if active >= cfg.rate_concurrent:
+        raise RateLimited(
+            f"You already have {active} reviews in progress. "
+            f"Wait for one to finish — the limit is {cfg.rate_concurrent} at a time."
+        )
+    if recent >= cfg.rate_per_hour:
+        raise RateLimited(
+            f"You have run {recent} reviews in the last hour, which is the limit. "
+            "Try again later."
+        )
+
+
 class JobStore:
     def __init__(self, client: Optional[firestore.Client] = None):
         cfg = settings()
@@ -54,6 +77,8 @@ class JobStore:
         pages: int,
         options: Dict[str, Any],
         upload_blob: str,
+        # Required, not defaulted: mark_done derives the final stage index from
+        # this list, and an empty one reports a finished job at stage 0.
         stages: List[str],
         source: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -131,22 +156,8 @@ class JobStore:
         return self._count(q)
 
     def enforce_limits(self, uid: str) -> None:
-        cfg = settings()
-
-        active = self.active_count(uid)
-        if active >= cfg.rate_concurrent:
-            raise RateLimited(
-                f"You already have {active} reviews in progress. "
-                f"Wait for one to finish — the limit is {cfg.rate_concurrent} at a time."
-            )
-
         window_start = utcnow() - dt.timedelta(hours=1)
-        recent = self.recent_count(uid, window_start)
-        if recent >= cfg.rate_per_hour:
-            raise RateLimited(
-                f"You have run {recent} reviews in the last hour, which is the limit. "
-                "Try again later."
-            )
+        check_limits(self.active_count(uid), self.recent_count(uid, window_start))
 
     # ── startup housekeeping ──────────────────────────────────────────────
     def fail_stale_running(self) -> int:

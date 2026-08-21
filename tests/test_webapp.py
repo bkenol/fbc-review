@@ -248,7 +248,8 @@ def test_concurrent_review_limit(client, monkeypatch):
     store = client.fake_store
     for n in range(2):
         store.create(job_id=f"busy{n}", uid="uid-alice", email="allowed@example.com",
-                     filename="x.pdf", size_bytes=1, pages=1, options={}, upload_blob="b")
+                     filename="x.pdf", size_bytes=1, pages=1, options={}, upload_blob="b",
+                     stages=[])
 
     r = post_review(client, make_pdf())
     assert r.status_code == 429
@@ -267,7 +268,8 @@ def test_hourly_review_limit(client, monkeypatch):
     store = client.fake_store
     for n in range(3):
         rec = store.create(job_id=f"old{n}", uid="uid-alice", email="allowed@example.com",
-                           filename="x.pdf", size_bytes=1, pages=1, options={}, upload_blob="b")
+                           filename="x.pdf", size_bytes=1, pages=1, options={}, upload_blob="b",
+                           stages=[])
         rec["state"] = "done"
         store.docs[f"old{n}"]["state"] = "done"
 
@@ -283,7 +285,8 @@ def test_limits_are_per_user(client, monkeypatch):
     settings.cache_clear()
 
     client.fake_store.create(job_id="theirs", uid="uid-bob", email="bob@example.com",
-                             filename="x.pdf", size_bytes=1, pages=1, options={}, upload_blob="b")
+                             filename="x.pdf", size_bytes=1, pages=1, options={}, upload_blob="b",
+                             stages=[])
     r = post_review(client, make_pdf())
     assert r.status_code == 202
     settings.cache_clear()
