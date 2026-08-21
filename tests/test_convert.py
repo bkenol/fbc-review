@@ -1,0 +1,224 @@
+"""Rebuilding scanned sheets.
+
+The load-bearing test in this file is
+`test_traced_layer_must_never_impersonate_the_egress_layer`. Everything else is
+mechanics; that one is a safety property.
+"""
+from __future__ import annotations
+
+import io
+import json
+import os
+import tempfile
+from pathlib import Path
+
+import pymupdf
+import pytest
+
+from conftest import make_pdf, make_raster_pdf
+from webapp import convert, pdfkind
+
+
+def write(data: bytes, name: str) -> str:
+    path = Path(tempfile.mkdtemp()) / name
+    path.write_bytes(data)
+    return str(path)
+
+
+def mixed_set(vector_pages: int = 1, raster_pages: int = 1) -> bytes:
+    doc = pymupdf.open()
+    doc.insert_pdf(pymupdf.open("pdf", make_pdf(pages=vector_pages)))
+    doc.insert_pdf(pymupdf.open("pdf", make_raster_pdf(pages=raster_pages)))
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def post_review(client, pdf: bytes, options: str = "{}", name: str = "set.pdf"):
+    return client.post(
+        "/api/review",
+        files={"file": (name, io.BytesIO(pdf), "application/pdf")},
+        data={"review_options": options},
+    )
+
+
+# ── the safety property ───────────────────────────────────────────────────
+def test_traced_layer_must_never_impersonate_the_egress_layer():
+    """MEASURE.EGRESS_EXTENT selects geometry by matching the CAD layer name
+    against "egress path", then reports the longest straight run as a travel
+    distance at CRITICAL severity.
+
+    Tracing recovers lines but not what they mean. If the traced layer were
+    named so that rule matched it, the longest straight run on a scanned sheet
+    — very often the title-block border — would be reported as an exit access
+    travel distance, with a citation, confidently. That is worse than not
+    measuring, so it is pinned here rather than left to a comment.
+    """
+    from fbcreview.rules.r_geometry import EGRESS_LAYER
+
+    assert EGRESS_LAYER not in convert.TRACED_LAYER.lower()
+    assert "unclassified" in convert.TRACED_LAYER
+
+
+def test_a_converted_set_leaves_the_egress_rule_abstaining():
+    """End to end: after conversion, no path claims to be an egress path."""
+    from fbcreview.rules.r_geometry import EGRESS_LAYER
+
+    src = write(mixed_set(), "mixed.pdf")
+    before = pdfkind.profile(src)
+    dest = src.replace("mixed", "converted")
+    convert.convert(src, before.raster_pages, dest)
+
+    doc = pymupdf.open(dest)
+    try:
+        layers = {
+            path.get("layer")
+            for number in range(doc.page_count)
+            for path in doc[number].get_drawings()
+        }
+    finally:
+        doc.close()
+
+    assert not any(EGRESS_LAYER in (name or "").lower() for name in layers)
+
+
+# ── mechanics ─────────────────────────────────────────────────────────────
+def test_support_reports_what_is_actually_installed():
+    caps = convert.support()
+    assert isinstance(caps.ocr, bool)
+    assert isinstance(caps.vectorise, bool)
+    assert caps.detail
+
+
+def test_vector_pages_are_copied_through_untouched():
+    """Re-rendering a good sheet would destroy the geometry the engine wants."""
+    src = write(mixed_set(vector_pages=2), "mixed.pdf")
+    before = pdfkind.profile(src)
+    dest = src.replace("mixed", "converted")
+    convert.convert(src, before.raster_pages, dest)
+
+    after = pdfkind.profile(dest)
+    for page in range(2):
+        assert after.sheets[page].kind == "vector"
+        assert after.sheets[page].vector_items == before.sheets[page].vector_items
+        assert after.sheets[page].live_chars == before.sheets[page].live_chars
+
+
+@pytest.mark.skipif(not convert.support().vectorise, reason="OpenCV not installed")
+def test_raster_linework_becomes_real_vector_paths_on_a_named_layer():
+    src = write(mixed_set(), "mixed.pdf")
+    before = pdfkind.profile(src)
+    dest = src.replace("mixed", "converted")
+    report = convert.convert(src, before.raster_pages, dest)
+
+    assert report.total_segments > 0
+    assert report.vectorise_used is True
+
+    doc = pymupdf.open(dest)
+    try:
+        assert convert.TRACED_LAYER in {v["name"] for v in doc.get_ocgs().values()}
+        layers = {p.get("layer") for p in doc[1].get_drawings()}
+    finally:
+        doc.close()
+
+    # The paths carry the layer — without that, page_geometry() reports nothing.
+    assert convert.TRACED_LAYER in layers
+
+
+@pytest.mark.skipif(not convert.support().ocr, reason="Tesseract not installed")
+def test_ocr_recovers_a_live_text_layer():
+    src = write(make_raster_pdf(pages=1), "scan.pdf")
+    dest = src.replace("scan", "converted")
+    report = convert.convert(src, [0], dest, do_vectorise=False)
+
+    assert report.ocr_used is True
+    doc = pymupdf.open(dest)
+    try:
+        assert doc.page_count == 1
+    finally:
+        doc.close()
+
+
+def test_missing_ocr_is_degraded_not_fatal():
+    """Where Tesseract is absent the sheet still survives as an image, and the
+    report says OCR was not used rather than pretending it was."""
+    src = write(make_raster_pdf(pages=1), "scan.pdf")
+    dest = src.replace("scan", "converted")
+    report = convert.convert(src, [0], dest, do_ocr=False, do_vectorise=False)
+
+    assert report.ocr_used is False
+    assert Path(dest).exists()
+    doc = pymupdf.open(dest)
+    try:
+        assert doc.page_count == 1
+    finally:
+        doc.close()
+
+
+def test_report_is_serialisable_for_firestore():
+    src = write(mixed_set(), "mixed.pdf")
+    before = pdfkind.profile(src)
+    dest = src.replace("mixed", "converted")
+    report = convert.convert(src, before.raster_pages, dest)
+
+    encoded = json.dumps(report.to_dict())
+    assert json.loads(encoded)["traced_layer"] == convert.TRACED_LAYER
+
+
+# ── opt-in wiring ─────────────────────────────────────────────────────────
+def test_scanned_set_is_refused_without_the_option_and_the_message_offers_it(client):
+    r = post_review(client, make_raster_pdf(pages=1), name="scanned.pdf")
+    assert r.status_code == 422
+    message = r.json()["error"]["message"]
+    assert "Rebuild scanned sheets" in message
+    assert "minutes rather than seconds" in message
+
+
+def test_scanned_set_is_accepted_with_the_option(client):
+    r = post_review(
+        client,
+        make_raster_pdf(pages=1),
+        options=json.dumps({"convert_raster": True}),
+        name="scanned.pdf",
+    )
+    assert r.status_code == 202
+
+    body = client.get(f"/api/jobs/{r.json()['id']}").json()
+    assert body["options"]["convert_raster"] is True
+    assert body["source"]["kind"] == "raster"
+
+
+def test_conversion_adds_its_own_stage_only_when_it_will_run(client):
+    plain = post_review(client, make_pdf(pages=1))
+    plain_stages = client.get(f"/api/jobs/{plain.json()['id']}").json()["stages"]
+    assert convert.TRACED_LAYER not in plain_stages
+    assert "Rebuilding scanned sheets" not in plain_stages
+
+    converted = post_review(
+        client, mixed_set(), options=json.dumps({"convert_raster": True}), name="mixed.pdf"
+    )
+    stages = client.get(f"/api/jobs/{converted.json()['id']}").json()["stages"]
+    assert "Rebuilding scanned sheets" in stages
+    assert len(stages) == len(plain_stages) + 1
+
+
+def test_convert_raster_is_not_passed_to_the_engine(client):
+    """fbcreview.options.ReviewOptions has no such field; splatting the wire
+    model into it would raise TypeError inside the request."""
+    import dataclasses
+
+    from fbcreview.options import ReviewOptions as EngineOptions
+
+    assert "convert_raster" not in {f.name for f in dataclasses.fields(EngineOptions)}
+
+    r = post_review(
+        client, make_pdf(pages=1), options=json.dumps({"convert_raster": True})
+    )
+    assert r.status_code == 202
+
+
+def test_conversion_report_is_published_in_the_schema(client):
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    assert "ConversionReport" in schemas
+    assert "ConvertedPage" in schemas
+    assert "convert_raster" in schemas["ReviewOptions"]["properties"]

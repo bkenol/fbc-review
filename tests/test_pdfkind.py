@@ -35,7 +35,7 @@ def test_plotted_vector_sheet_is_recognised():
     assert prof.reviewable_pages == 2
     assert prof.raster_pages == []
     assert all(s.kind == "vector" for s in prof.sheets)
-    assert prof.sheets[0].vector_paths >= 120
+    assert prof.sheets[0].vector_items >= 120
     assert prof.sheets[0].live_chars >= 120
 
 

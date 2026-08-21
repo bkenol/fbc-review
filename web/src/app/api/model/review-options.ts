@@ -13,6 +13,10 @@
  * The review parameters. Mirrors `fbcreview.options.ReviewOptions`.
  */
 export interface ReviewOptions { 
+    /**
+     * Rebuild scanned sheets before reviewing: OCR to recover a text layer, and trace the linework into real vector paths. Off by default because it turns a two-second review into a multi-minute one. Recovers text, not meaning — traced lines carry no CAD layer names, so geometric rules still abstain.
+     */
+    convert_raster?: boolean;
     edition?: string;
     /**
      * Inert unless SMTP is configured on the server. Not surfaced in the web client.

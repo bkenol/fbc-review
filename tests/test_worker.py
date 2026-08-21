@@ -19,7 +19,7 @@ from conftest import FakeJobStore, FakeStorage, make_pdf
 from webapp import storage as storage_mod
 from webapp.logging_config import JsonFormatter
 from webapp.models import FindingsDocument
-from webapp.worker import STAGES, run_review
+from webapp.worker import STAGES, run_review, stages_for
 
 
 def wait_for(store: FakeJobStore, job_id: str, timeout: float = 60.0) -> dict:
@@ -39,7 +39,7 @@ def run_one(store, files, job_id="job-1", filename="Test Set.pdf", pages=2):
     files.blobs[blob] = make_pdf(pages=pages)
     store.create(job_id=job_id, uid="uid-alice", email="allowed@example.com",
                  filename=filename, size_bytes=len(files.blobs[blob]), pages=pages,
-                 options={}, upload_blob=blob)
+                 options={}, upload_blob=blob, stages=stages_for(False))
     run_review(
         job_id=job_id, uid="uid-alice", email="allowed@example.com",
         filename=filename, upload_blob=blob, options=ReviewOptions(),

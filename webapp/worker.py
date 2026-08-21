@@ -17,13 +17,13 @@ import tempfile
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from fbcreview.options import ReviewOptions
 from fbcreview.pipeline import build_facts
 from fbcreview.render.markup import render
 from fbcreview.rules import registered, run_all
-from webapp import mailer, storage
+from webapp import convert, mailer, storage
 from webapp.jobs import JobStore
 
 log = logging.getLogger("fbc.worker")
@@ -36,6 +36,19 @@ STAGES = [
     "Delivering",
 ]
 
+CONVERT_STAGE = "Rebuilding scanned sheets"
+
+
+def stages_for(convert_raster: bool) -> List[str]:
+    """The stage list a given job will actually move through.
+
+    A job that is not rebuilding scanned sheets should not display a stage that
+    does nothing, so the list is per job rather than global.
+    """
+    if not convert_raster:
+        return list(STAGES)
+    return [STAGES[0], CONVERT_STAGE, *STAGES[1:]]
+
 
 def run_review(
     *,
@@ -47,31 +60,51 @@ def run_review(
     options: ReviewOptions,
     store: JobStore,
     store_files: "storage.Storage",
+    convert_raster: bool = False,
+    raster_pages: Optional[List[int]] = None,
 ) -> None:
     """Executed on a worker thread. Never raises — every failure is recorded
     on the job document instead, because nothing is waiting on the return."""
     started = time.monotonic()
     workdir = Path(tempfile.mkdtemp(prefix=f"fbc-{job_id}-"))
     pages = 0
+    step = 0
+
+    def advance() -> int:
+        nonlocal step
+        step += 1
+        store.mark_stage(job_id, step)
+        return step
 
     try:
         store.mark_running(job_id)
 
-        # ── stage 0 — fetch ────────────────────────────────────────────────
+        # ── fetch ──────────────────────────────────────────────────────────
         src = workdir / "source.pdf"
         store_files.download_to(upload_blob, str(src))
 
-        # ── stage 1 — extract ──────────────────────────────────────────────
-        store.mark_stage(job_id, 1)
+        # ── rebuild scanned sheets, when asked ─────────────────────────────
+        if convert_raster and raster_pages:
+            advance()
+            rebuilt = workdir / "converted.pdf"
+            report = convert.convert(str(src), raster_pages, str(rebuilt))
+            store.update(job_id, conversion=report.to_dict())
+            # Only adopt the rebuild if it actually produced a file; a failed
+            # OCR pass must not lose the original.
+            if rebuilt.exists() and rebuilt.stat().st_size > 0:
+                src = rebuilt
+
+        # ── extract ────────────────────────────────────────────────────────
+        advance()
         facts = build_facts(str(src))
         pages = len(facts.sheets)
 
-        # ── stage 2 — rules ────────────────────────────────────────────────
-        store.mark_stage(job_id, 2)
+        # ── rules ──────────────────────────────────────────────────────────
+        advance()
         result = run_all(facts, options)
 
-        # ── stage 3 — render ───────────────────────────────────────────────
-        store.mark_stage(job_id, 3)
+        # ── render ─────────────────────────────────────────────────────────
+        advance()
         pdf_name = f"{Path(filename).stem} — CODE REVIEW.pdf"
         out_pdf = workdir / "markup.pdf"
         info = render(
@@ -119,8 +152,8 @@ def run_review(
             encoding="utf-8",
         )
 
-        # ── stage 4 — deliver ──────────────────────────────────────────────
-        store.mark_stage(job_id, 4)
+        # ── deliver ────────────────────────────────────────────────────────
+        advance()
         store_files.upload_file(
             str(out_pdf), storage.output_path(job_id, storage.MARKUP), "application/pdf"
         )

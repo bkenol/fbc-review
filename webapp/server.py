@@ -11,6 +11,7 @@ proxying that would pin a Cloud Run instance for the length of the download.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import logging
 import tempfile
@@ -30,7 +31,7 @@ from webapp.config import settings
 from webapp.errors import ApiError
 from webapp.jobs import DONE, JobStore, RateLimited, get_job_store, utcnow
 from webapp.storage import Storage, get_storage
-from webapp.worker import STAGES, run_review
+from webapp.worker import STAGES, run_review, stages_for
 
 logging_config.configure()
 log = logging.getLogger("fbc.api")
@@ -260,7 +261,7 @@ async def create_review(
 
     try:
         size = await upload.stream_to_disk(file, local)
-        pages, source = upload.probe(local)
+        pages, source = upload.probe(local, allow_raster=parsed.convert_raster)
 
         blob = storage.upload_path(job_id, filename)
         files.upload_file(str(local), blob, "application/pdf")
@@ -269,7 +270,15 @@ async def create_review(
             local.unlink(missing_ok=True)
             scratch.rmdir()
 
-    engine_options = ReviewOptions(**parsed.model_dump())
+    # The wire model carries fields the engine does not know about
+    # (convert_raster is handled here, before build_facts ever runs), so map by
+    # the engine dataclass's own field names rather than splatting.
+    engine_fields = {f.name for f in dataclasses.fields(ReviewOptions)}
+    engine_options = ReviewOptions(
+        **{k: v for k, v in parsed.model_dump().items() if k in engine_fields}
+    )
+    job_stages = stages_for(parsed.convert_raster and bool(source.raster_pages))
+
     store.create(
         job_id=job_id,
         uid=user.uid,
@@ -279,6 +288,7 @@ async def create_review(
         pages=pages,
         options=parsed.model_dump(),
         upload_blob=blob,
+        stages=job_stages,
         source=source.to_dict(),
     )
 
@@ -308,6 +318,8 @@ async def create_review(
         options=engine_options,
         store=store,
         store_files=files,
+        convert_raster=parsed.convert_raster,
+        raster_pages=list(source.raster_pages),
     )
     return JSONResponse({"id": job_id}, status_code=202)
 
@@ -340,6 +352,7 @@ def get_job(
 def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
     state = record.get("state", "queued")
     stage = int(record.get("stage", 0) or 0)
+    stages = list(record.get("stages") or STAGES)
     created = record.get("created_at") or utcnow()
     finished = record.get("finished_at")
 
@@ -365,8 +378,8 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
         filename=record.get("filename", ""),
         state=state,
         stage=stage,
-        stage_label=STAGES[min(stage, len(STAGES) - 1)],
-        stages=list(STAGES),
+        stage_label=stages[min(stage, len(stages) - 1)],
+        stages=stages,
         options=models.ReviewOptions.model_validate(record.get("options") or {}),
         bytes=int(record.get("bytes", 0) or 0),
         pages=record.get("pages"),
@@ -376,6 +389,11 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
             else None
         ),
         summary=summary,
+        conversion=(
+            models.ConversionReport.model_validate(record["conversion"])
+            if record.get("conversion")
+            else None
+        ),
         downloads=downloads,
         error=record.get("error"),
         error_code=record.get("error_code"),

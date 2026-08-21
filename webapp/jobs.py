@@ -54,6 +54,7 @@ class JobStore:
         pages: int,
         options: Dict[str, Any],
         upload_blob: str,
+        stages: List[str],
         source: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         record = {
@@ -65,10 +66,12 @@ class JobStore:
             "pages": pages,
             "state": QUEUED,
             "stage": 0,
+            "stages": stages,
             "options": options,
             "upload_blob": upload_blob,
             "source": source,
             "summary": None,
+            "conversion": None,
             "error": None,
             "error_code": None,
             "created_at": utcnow(),
@@ -88,7 +91,11 @@ class JobStore:
         self.update(job_id, stage=stage)
 
     def mark_done(self, job_id: str, summary: Dict[str, Any]) -> None:
-        self.update(job_id, state=DONE, stage=4, summary=summary, finished_at=utcnow())
+        # stage is not hard-coded: a job that rebuilt scanned sheets has one
+        # more stage than one that did not.
+        record = self.get(job_id) or {}
+        final = max(len(record.get("stages") or []) - 1, 0)
+        self.update(job_id, state=DONE, stage=final, summary=summary, finished_at=utcnow())
 
     def mark_error(self, job_id: str, code: str, message: str) -> None:
         self.update(

@@ -126,6 +126,87 @@
         "title": "ConfigResponse",
         "type": "object"
       },
+      "ConversionReport": {
+        "description": "What the raster rebuild actually recovered.\n\nReported rather than summarised away: if OCR found 40 characters on a\nsheet, the review that follows is thin and the person needs to know why.",
+        "properties": {
+          "converted_pages": {
+            "items": {
+              "$ref": "#/components/schemas/ConvertedPage"
+            },
+            "title": "Converted Pages",
+            "type": "array"
+          },
+          "ocr_used": {
+            "title": "Ocr Used",
+            "type": "boolean"
+          },
+          "recovered_chars": {
+            "title": "Recovered Chars",
+            "type": "integer"
+          },
+          "seconds": {
+            "title": "Seconds",
+            "type": "number"
+          },
+          "traced_layer": {
+            "description": "Optional-content group the traced linework is written to. Deliberately not named after any semantic CAD layer \u2014 tracing recovers lines, not what they mean.",
+            "title": "Traced Layer",
+            "type": "string"
+          },
+          "traced_segments": {
+            "title": "Traced Segments",
+            "type": "integer"
+          },
+          "vectorise_used": {
+            "title": "Vectorise Used",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "converted_pages",
+          "ocr_used",
+          "vectorise_used",
+          "seconds",
+          "traced_layer",
+          "recovered_chars",
+          "traced_segments"
+        ],
+        "title": "ConversionReport",
+        "type": "object"
+      },
+      "ConvertedPage": {
+        "properties": {
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "ocr_chars": {
+            "title": "Ocr Chars",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "seconds": {
+            "title": "Seconds",
+            "type": "number"
+          },
+          "traced_segments": {
+            "title": "Traced Segments",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page",
+          "ocr_chars",
+          "traced_segments",
+          "seconds"
+        ],
+        "title": "ConvertedPage",
+        "type": "object"
+      },
       "Downloads": {
         "description": "V4 signed URLs, fetched straight from Cloud Storage by the browser.",
         "properties": {
@@ -364,6 +445,17 @@
             "title": "Bytes",
             "type": "integer"
           },
+          "conversion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversionReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when scanned sheets were rebuilt."
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -571,6 +663,12 @@
         "additionalProperties": false,
         "description": "The review parameters. Mirrors `fbcreview.options.ReviewOptions`.",
         "properties": {
+          "convert_raster": {
+            "default": false,
+            "description": "Rebuild scanned sheets before reviewing: OCR to recover a text layer, and trace the linework into real vector paths. Off by default because it turns a two-second review into a multi-minute one. Recovers text, not meaning \u2014 traced lines carry no CAD layer names, so geometric rules still abstain.",
+            "title": "Convert Raster",
+            "type": "boolean"
+          },
           "edition": {
             "default": "fbc2023",
             "title": "Edition",
@@ -632,7 +730,7 @@
         "type": "object"
       },
       "SheetProfile": {
-        "description": "Measured, not guessed: path count, live character count and how much of\nthe page is covered by raster images.",
+        "description": "Measured, not guessed: drawing-primitive count, live character count and\nhow much of the page is covered by raster images.",
         "properties": {
           "image_count": {
             "title": "Image Count",
@@ -666,15 +764,15 @@
             "title": "Reason",
             "type": "string"
           },
-          "vector_paths": {
-            "title": "Vector Paths",
+          "vector_items": {
+            "title": "Vector Items",
             "type": "integer"
           }
         },
         "required": [
           "page",
           "kind",
-          "vector_paths",
+          "vector_items",
           "live_chars",
           "image_count",
           "image_coverage",

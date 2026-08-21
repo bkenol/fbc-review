@@ -43,11 +43,12 @@ class FakeJobStore:
         self._lock = threading.Lock()
         self.done = threading.Event()
 
-    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob, source=None):
+    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob, stages=None, source=None):
         record = {
             "id": job_id, "uid": uid, "email": email, "filename": filename,
             "bytes": size_bytes, "pages": pages, "state": jobs_mod.QUEUED, "stage": 0,
-            "options": options, "upload_blob": upload_blob, "source": source, "summary": None,
+            "options": options, "upload_blob": upload_blob, "source": source, "summary": None, "conversion": None,
+            "stages": list(stages) if stages else None,
             "error": None, "error_code": None,
             "created_at": jobs_mod.utcnow(), "started_at": None, "finished_at": None,
         }
@@ -66,7 +67,9 @@ class FakeJobStore:
         self.update(job_id, stage=stage)
 
     def mark_done(self, job_id, summary):
-        self.update(job_id, state=jobs_mod.DONE, stage=4, summary=summary,
+        record = self.get(job_id) or {}
+        final = max(len(record.get("stages") or []) - 1, 0)
+        self.update(job_id, state=jobs_mod.DONE, stage=final, summary=summary,
                     finished_at=jobs_mod.utcnow())
         self.done.set()
 

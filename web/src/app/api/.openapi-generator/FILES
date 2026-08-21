@@ -8,6 +8,8 @@ encoder.ts
 index.ts
 model/abstention.ts
 model/config-response.ts
+model/conversion-report.ts
+model/converted-page.ts
 model/downloads.ts
 model/edition.ts
 model/error-detail.ts

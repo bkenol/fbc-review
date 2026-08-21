@@ -1,5 +1,7 @@
 export * from './abstention';
 export * from './config-response';
+export * from './conversion-report';
+export * from './converted-page';
 export * from './downloads';
 export * from './edition';
 export * from './error-detail';

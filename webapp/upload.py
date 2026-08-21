@@ -95,7 +95,7 @@ async def stream_to_disk(upload: UploadFile, dest: Path) -> int:
     return size
 
 
-def probe(path: Path) -> Tuple[int, "pdfkind.DocumentProfile"]:
+def probe(path: Path, *, allow_raster: bool = False) -> Tuple[int, "pdfkind.DocumentProfile"]:
     """Open the PDF far enough to reject what the engine cannot review.
 
     Returns (page count, source profile). Raises ApiError with prose rather
@@ -136,12 +136,13 @@ def probe(path: Path) -> Tuple[int, "pdfkind.DocumentProfile"]:
         # unreadable one. Refuse it, and say which sheets and why.
         if source.kind == "blank":
             raise ApiError(400, CORRUPT_PDF, "That PDF has no drawable content.")
-        if source.kind == "raster":
+        if source.kind == "raster" and not allow_raster:
             raise ApiError(
                 422, RASTER_PDF,
-                f"{source.summary} Re-plot the set to PDF from CAD rather than "
-                "scanning or exporting it as images. Automatic conversion of scanned "
-                "sets is not available yet.",
+                f"{source.summary} Re-plot the set from CAD if you can — that gives a "
+                "far better review. Otherwise switch on “Rebuild scanned sheets” "
+                "and submit again: the sheets will be OCR’d and their linework traced, "
+                "which takes minutes rather than seconds.",
             )
 
         return pages, source

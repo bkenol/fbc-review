@@ -63,6 +63,16 @@ class ReviewOptions(BaseModel):
     include_measured: bool = True
     project_name: str = Field(default="", max_length=200)
     notes: str = Field(default="", max_length=2000)
+    convert_raster: bool = Field(
+        default=False,
+        description=(
+            "Rebuild scanned sheets before reviewing: OCR to recover a text layer, "
+            "and trace the linework into real vector paths. Off by default because "
+            "it turns a two-second review into a multi-minute one. Recovers text, "
+            "not meaning — traced lines carry no CAD layer names, so geometric "
+            "rules still abstain."
+        ),
+    )
     email_to: List[str] = Field(
         default_factory=list,
         description="Inert unless SMTP is configured on the server. Not surfaced in the web client.",
@@ -138,12 +148,12 @@ class Summary(BaseModel):
 
 # ── what kind of PDF was uploaded ─────────────────────────────────────────
 class SheetProfile(BaseModel):
-    """Measured, not guessed: path count, live character count and how much of
-    the page is covered by raster images."""
+    """Measured, not guessed: drawing-primitive count, live character count and
+    how much of the page is covered by raster images."""
 
     page: int
     kind: SheetKind
-    vector_paths: int
+    vector_items: int
     live_chars: int
     image_count: int
     image_coverage: float = Field(ge=0.0, le=1.0)
@@ -164,6 +174,36 @@ class SourceProfile(BaseModel):
     raster_pages: List[int]
     summary: str
     sheets: List[SheetProfile]
+
+
+class ConvertedPage(BaseModel):
+    page: int
+    ocr_chars: int
+    traced_segments: int
+    seconds: float
+    note: str = ""
+
+
+class ConversionReport(BaseModel):
+    """What the raster rebuild actually recovered.
+
+    Reported rather than summarised away: if OCR found 40 characters on a
+    sheet, the review that follows is thin and the person needs to know why.
+    """
+
+    converted_pages: List[ConvertedPage]
+    ocr_used: bool
+    vectorise_used: bool
+    seconds: float
+    traced_layer: str = Field(
+        description=(
+            "Optional-content group the traced linework is written to. Deliberately "
+            "not named after any semantic CAD layer — tracing recovers lines, not "
+            "what they mean."
+        )
+    )
+    recovered_chars: int
+    traced_segments: int
 
 
 # ── jobs ──────────────────────────────────────────────────────────────────
@@ -193,6 +233,9 @@ class Job(BaseModel):
         default=None, description="What kind of PDF was uploaded, measured at admission."
     )
     summary: Optional[Summary] = None
+    conversion: Optional[ConversionReport] = Field(
+        default=None, description="Present when scanned sheets were rebuilt."
+    )
     downloads: Optional[Downloads] = Field(
         default=None, description="Present only while state is `done`."
     )

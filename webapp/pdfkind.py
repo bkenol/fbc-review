@@ -25,7 +25,7 @@ DocumentKind = Literal["vector", "mixed", "raster", "blank"]
 # Thresholds. A plotted architectural sheet carries thousands of vector paths
 # and hundreds of words; a scanned one carries a single full-bleed image and
 # whatever OCR someone ran years ago.
-MIN_VECTOR_PATHS = 120
+MIN_VECTOR_ITEMS = 120
 MIN_LIVE_CHARS = 120
 IMAGE_COVERAGE_RASTER = 0.55
 
@@ -34,7 +34,7 @@ IMAGE_COVERAGE_RASTER = 0.55
 class SheetProfile:
     page: int
     kind: SheetKind
-    vector_paths: int
+    vector_items: int
     live_chars: int
     image_count: int
     image_coverage: float
@@ -68,17 +68,26 @@ class DocumentProfile:
         }
 
 
-def _paths_on(page: pymupdf.Page) -> int:
-    """Vector path count. get_cdrawings() returns the same paths as
-    get_drawings() without building a dict per path, which matters when the
-    only question is 'how many'."""
+def _vector_items(page: pymupdf.Page) -> int:
+    """Count drawing primitives, not path objects.
+
+    A plotted sheet emits one path per stroke, but a single path can hold
+    hundreds of items — which is exactly what webapp/convert.py produces when it
+    commits traced linework as one shape. Counting paths would score a converted
+    sheet as 1 and call it raster again.
+    """
     try:
-        return len(page.get_cdrawings())
+        paths = page.get_cdrawings()
     except Exception:
         try:
-            return len(page.get_drawings())
+            paths = page.get_drawings()
         except Exception:
             return 0
+    total = 0
+    for path in paths:
+        items = path.get("items")
+        total += len(items) if items else 1
+    return total
 
 
 def _image_coverage(page: pymupdf.Page) -> tuple[int, float]:
@@ -101,15 +110,15 @@ def _image_coverage(page: pymupdf.Page) -> tuple[int, float]:
 
 
 def classify_page(page: pymupdf.Page) -> SheetProfile:
-    paths = _paths_on(page)
+    items = _vector_items(page)
     chars = len((page.get_text() or "").strip())
     images, coverage = _image_coverage(page)
 
-    has_vector = paths >= MIN_VECTOR_PATHS
+    has_vector = items >= MIN_VECTOR_ITEMS
     has_text = chars >= MIN_LIVE_CHARS
     dominated_by_image = coverage >= IMAGE_COVERAGE_RASTER
 
-    if paths < 8 and chars < 20 and images == 0:
+    if items < 8 and chars < 20 and images == 0:
         kind: SheetKind = "blank"
         reason = "no drawable content"
     elif has_vector and has_text:
@@ -136,7 +145,7 @@ def classify_page(page: pymupdf.Page) -> SheetProfile:
     return SheetProfile(
         page=page.number,
         kind=kind,
-        vector_paths=paths,
+        vector_items=items,
         live_chars=chars,
         image_count=images,
         image_coverage=round(coverage, 3),

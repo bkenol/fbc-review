@@ -12,3 +12,9 @@ python-multipart==0.0.32
 firebase-admin==7.5.0
 google-cloud-storage==3.13.1
 google-cloud-firestore==2.28.1
+
+# Rebuilding scanned sheets (webapp/convert.py). Headless: no GUI libs pulled in.
+# Only touched when a review opts into raster conversion; the deterministic
+# vector path never imports cv2.
+opencv-python-headless==5.0.0.93
+numpy==2.5.2

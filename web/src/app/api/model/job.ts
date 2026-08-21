@@ -9,12 +9,17 @@
  */
 import { ReviewOptions } from './review-options';
 import { Summary } from './summary';
+import { ConversionReport } from './conversion-report';
 import { Downloads } from './downloads';
 import { SourceProfile } from './source-profile';
 
 
 export interface Job { 
     bytes: number;
+    /**
+     * Present when scanned sheets were rebuilt.
+     */
+    conversion?: ConversionReport | null;
     created_at: string;
     /**
      * Present only while state is `done`.

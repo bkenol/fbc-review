@@ -10,7 +10,7 @@
 
 
 /**
- * Measured, not guessed: path count, live character count and how much of the page is covered by raster images.
+ * Measured, not guessed: drawing-primitive count, live character count and how much of the page is covered by raster images.
  */
 export interface SheetProfile { 
     image_count: number;
@@ -19,7 +19,7 @@ export interface SheetProfile {
     live_chars: number;
     page: number;
     reason: string;
-    vector_paths: number;
+    vector_items: number;
 }
 export enum SheetProfileKindEnum {
     Vector = 'vector',

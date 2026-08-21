@@ -1,13 +1,56 @@
+# API only. The Angular client is a static bundle on Firebase Hosting, so no
+# HTML is served from here and webapp/static is deliberately not copied.
 FROM python:3.12-slim
+
+# tesseract-ocr        - OCR for rebuilding scanned sheets (webapp/convert.py)
+# tesseract-ocr-eng    - the English language data; without it OCR raises
+# libglib2.0-0, libgomp1 - OpenCV's runtime deps, even for the headless wheel
+# Nothing here is needed by the deterministic vector path; a vector set never
+# touches any of it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        libglib2.0-0 \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# PyMuPDF resolves Tesseract's data through TESSDATA_PREFIX. The path is
+# version-stamped on Debian, so resolve it rather than hard-coding a guess that
+# breaks on the next base-image bump.
+RUN set -eu; \
+    tessdata="$(dirname "$(find /usr/share -name 'eng.traineddata' -print -quit)")"; \
+    test -n "$tessdata"; \
+    printf '%s\n' "$tessdata" > /etc/tessdata_prefix; \
+    echo "tessdata at $tessdata"
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+
 WORKDIR /app
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
 COPY fbcreview/ ./fbcreview/
 COPY webapp/ ./webapp/
 COPY run.py .
-ENV FBC_WORK_DIR=/data FBC_WORKERS=2 FBC_RETAIN_HOURS=24
-RUN mkdir -p /data
-EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=5s CMD python -c \
-  "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz')"
-CMD ["uvicorn","webapp.server:app","--host","0.0.0.0","--port","8000"]
+
+# webapp/static is the reference page kept in the source tree while the Angular
+# client reaches parity. It must not ship: this image serves the API only.
+RUN rm -rf ./webapp/static
+
+# Run unprivileged. Added after pip install so the site-packages tree stays
+# root-owned and read-only to the service.
+RUN useradd --create-home --uid 10001 fbc \
+    && mkdir -p /tmp/fbc \
+    && chown -R fbc:fbc /tmp/fbc
+USER fbc
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    FBC_WORKERS=2
+
+# No HEALTHCHECK: Cloud Run ignores Docker's and uses the startup probe
+# configured on the service, which points at /healthz.
+#
+# Cloud Run injects PORT and it must be honoured; the default is for local runs.
+CMD exec uvicorn webapp.server:app --host 0.0.0.0 --port ${PORT:-8080}
