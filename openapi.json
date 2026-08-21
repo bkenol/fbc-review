@@ -1,0 +1,1289 @@
+{
+  "components": {
+    "schemas": {
+      "Abstention": {
+        "description": "A rule that declined to run. Never the same thing as a rule that passed.",
+        "properties": {
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "reason"
+        ],
+        "title": "Abstention",
+        "type": "object"
+      },
+      "Body_createReview": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "The permit set, as a PDF.",
+            "title": "File",
+            "type": "string"
+          },
+          "review_options": {
+            "default": "{}",
+            "description": "A JSON-encoded ReviewOptions object.",
+            "title": "Review Options",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_createReview",
+        "type": "object"
+      },
+      "ConfigResponse": {
+        "properties": {
+          "defaults": {
+            "$ref": "#/components/schemas/ReviewOptions"
+          },
+          "editions": {
+            "items": {
+              "$ref": "#/components/schemas/Edition"
+            },
+            "title": "Editions",
+            "type": "array"
+          },
+          "mail": {
+            "$ref": "#/components/schemas/MailStatus"
+          },
+          "max_pages": {
+            "title": "Max Pages",
+            "type": "integer"
+          },
+          "max_upload_mb": {
+            "title": "Max Upload Mb",
+            "type": "integer"
+          },
+          "occupancy_groups": {
+            "items": {
+              "$ref": "#/components/schemas/OccupancyGroup"
+            },
+            "title": "Occupancy Groups",
+            "type": "array"
+          },
+          "retain_days": {
+            "title": "Retain Days",
+            "type": "integer"
+          },
+          "rules": {
+            "description": "Rule ids registered in this build.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "severities": {
+            "description": "Severity floor choices, most severe first.",
+            "items": {
+              "enum": [
+                "CRITICAL",
+                "HIGH",
+                "MEDIUM",
+                "LOW"
+              ],
+              "type": "string"
+            },
+            "title": "Severities",
+            "type": "array"
+          },
+          "stages": {
+            "description": "Ordered stage labels a running job moves through.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "occupancy_groups",
+          "editions",
+          "severities",
+          "stages",
+          "max_upload_mb",
+          "max_pages",
+          "retain_days",
+          "rules",
+          "mail",
+          "defaults"
+        ],
+        "title": "ConfigResponse",
+        "type": "object"
+      },
+      "Downloads": {
+        "description": "V4 signed URLs, fetched straight from Cloud Storage by the browser.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "findings_json": {
+            "title": "Findings Json",
+            "type": "string"
+          },
+          "markup_pdf": {
+            "title": "Markup Pdf",
+            "type": "string"
+          }
+        },
+        "required": [
+          "markup_pdf",
+          "findings_json",
+          "expires_at"
+        ],
+        "title": "Downloads",
+        "type": "object"
+      },
+      "Edition": {
+        "properties": {
+          "available": {
+            "description": "False editions are listed and disabled, not hidden.",
+            "title": "Available",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "available"
+        ],
+        "title": "Edition",
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "description": "Stable machine-readable code, e.g. `rate_limited`.",
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "description": "Prose safe to show a person.",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "description": "The only shape any failure takes.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "Finding": {
+        "description": "One rule outcome. Mirrors `fbcreview.rules.Finding`.",
+        "properties": {
+          "action": {
+            "default": "",
+            "title": "Action",
+            "type": "string"
+          },
+          "anchor": {
+            "title": "Anchor",
+            "type": "string"
+          },
+          "body": {
+            "default": "",
+            "title": "Body",
+            "type": "string"
+          },
+          "checked": {
+            "title": "Checked",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "discipline": {
+            "title": "Discipline",
+            "type": "string"
+          },
+          "fid": {
+            "title": "Fid",
+            "type": "string"
+          },
+          "hit": {
+            "default": 0,
+            "title": "Hit",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "result": {
+            "title": "Result",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "CRITICAL",
+              "HIGH",
+              "MEDIUM",
+              "LOW",
+              "VERIFIED",
+              "MEASURED"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "sheet": {
+            "title": "Sheet",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "OPEN",
+              "PASS"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fid",
+          "rule_id",
+          "status",
+          "severity",
+          "discipline",
+          "page",
+          "sheet",
+          "anchor",
+          "title",
+          "checked",
+          "result",
+          "code"
+        ],
+        "title": "Finding",
+        "type": "object"
+      },
+      "FindingsDocument": {
+        "description": "The exact shape of `findings.json` in the bucket.\n\nNo endpoint serves this \u2014 the browser fetches it from the signed URL \u2014 but\nit is published into `components.schemas` (see `server.custom_openapi`) so\nthe generated TypeScript client carries the type. Without that the findings\ntable would be the one part of the client typed by hand, which is precisely\nthe part most likely to drift.",
+        "properties": {
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/components/schemas/ReviewOptions"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/Summary"
+          }
+        },
+        "required": [
+          "job_id",
+          "options",
+          "summary",
+          "findings"
+        ],
+        "title": "FindingsDocument",
+        "type": "object"
+      },
+      "Health": {
+        "description": "Deliberately cheap: no Firestore or Cloud Storage call. Cloud Run's\nstartup probe hits this.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "service",
+          "version"
+        ],
+        "title": "Health",
+        "type": "object"
+      },
+      "Job": {
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "downloads": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Downloads"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present only while state is `done`."
+          },
+          "elapsed_seconds": {
+            "title": "Elapsed Seconds",
+            "type": "number"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "filename": {
+            "description": "Basename as uploaded. Never a path.",
+            "title": "Filename",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/components/schemas/ReviewOptions"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceProfile"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What kind of PDF was uploaded, measured at admission."
+          },
+          "stage": {
+            "description": "Index into `stages`.",
+            "minimum": 0.0,
+            "title": "Stage",
+            "type": "integer"
+          },
+          "stage_label": {
+            "title": "Stage Label",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "error"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Summary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "state",
+          "stage",
+          "stage_label",
+          "stages",
+          "options",
+          "bytes",
+          "created_at",
+          "elapsed_seconds"
+        ],
+        "title": "Job",
+        "type": "object"
+      },
+      "MailStatus": {
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configured",
+          "status"
+        ],
+        "title": "MailStatus",
+        "type": "object"
+      },
+      "OccupancyGroup": {
+        "properties": {
+          "id": {
+            "description": "Value submitted with a review, e.g. `A-3`.",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "OccupancyGroup",
+        "type": "object"
+      },
+      "ReviewAccepted": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ReviewAccepted",
+        "type": "object"
+      },
+      "ReviewOptions": {
+        "additionalProperties": false,
+        "description": "The review parameters. Mirrors `fbcreview.options.ReviewOptions`.",
+        "properties": {
+          "edition": {
+            "default": "fbc2023",
+            "title": "Edition",
+            "type": "string"
+          },
+          "email_to": {
+            "description": "Inert unless SMTP is configured on the server. Not surfaced in the web client.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Email To",
+            "type": "array"
+          },
+          "include_measured": {
+            "default": true,
+            "title": "Include Measured",
+            "type": "boolean"
+          },
+          "include_verified": {
+            "default": true,
+            "title": "Include Verified",
+            "type": "boolean"
+          },
+          "min_severity": {
+            "default": "LOW",
+            "enum": [
+              "CRITICAL",
+              "HIGH",
+              "MEDIUM",
+              "LOW"
+            ],
+            "title": "Min Severity",
+            "type": "string"
+          },
+          "notes": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Notes",
+            "type": "string"
+          },
+          "occupancy_group": {
+            "default": "A-3",
+            "title": "Occupancy Group",
+            "type": "string"
+          },
+          "project_name": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Project Name",
+            "type": "string"
+          },
+          "sprinklered": {
+            "default": true,
+            "title": "Sprinklered",
+            "type": "boolean"
+          }
+        },
+        "title": "ReviewOptions",
+        "type": "object"
+      },
+      "SheetProfile": {
+        "description": "Measured, not guessed: path count, live character count and how much of\nthe page is covered by raster images.",
+        "properties": {
+          "image_count": {
+            "title": "Image Count",
+            "type": "integer"
+          },
+          "image_coverage": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Image Coverage",
+            "type": "number"
+          },
+          "kind": {
+            "enum": [
+              "vector",
+              "hybrid",
+              "raster",
+              "blank"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "live_chars": {
+            "title": "Live Chars",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "vector_paths": {
+            "title": "Vector Paths",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page",
+          "kind",
+          "vector_paths",
+          "live_chars",
+          "image_count",
+          "image_coverage",
+          "reason"
+        ],
+        "title": "SheetProfile",
+        "type": "object"
+      },
+      "SourceProfile": {
+        "description": "Whether this set is readable, and which sheets are not.\n\nA scanned sheet produces no findings, and no findings reads as a clean\nsheet. Publishing this lets the client say \"not checked\" where the truth is\n\"could not be read\".",
+        "properties": {
+          "cad_layers": {
+            "title": "Cad Layers",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "vector",
+              "mixed",
+              "raster",
+              "blank"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "raster_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Raster Pages",
+            "type": "array"
+          },
+          "reviewable_pages": {
+            "title": "Reviewable Pages",
+            "type": "integer"
+          },
+          "sheets": {
+            "items": {
+              "$ref": "#/components/schemas/SheetProfile"
+            },
+            "title": "Sheets",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "cad_layers",
+          "reviewable_pages",
+          "raster_pages",
+          "summary",
+          "sheets"
+        ],
+        "title": "SourceProfile",
+        "type": "object"
+      },
+      "Summary": {
+        "description": "Counts and provenance for a finished review.\n\nThe findings themselves are deliberately not carried here: a Firestore\ndocument is capped at 1 MiB and a large set's finding bodies can approach\nit. They live in `findings.json` in the bucket and are fetched from the\nsigned URL.",
+        "properties": {
+          "abstentions": {
+            "items": {
+              "$ref": "#/components/schemas/Abstention"
+            },
+            "title": "Abstentions",
+            "type": "array"
+          },
+          "annotations": {
+            "title": "Annotations",
+            "type": "integer"
+          },
+          "cad_layers": {
+            "title": "Cad Layers",
+            "type": "integer"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Finding count keyed by severity.",
+            "title": "Counts",
+            "type": "object"
+          },
+          "findings_count": {
+            "title": "Findings Count",
+            "type": "integer"
+          },
+          "marked": {
+            "title": "Marked",
+            "type": "integer"
+          },
+          "open": {
+            "title": "Open",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "pdf_bytes": {
+            "title": "Pdf Bytes",
+            "type": "integer"
+          },
+          "pdf_name": {
+            "title": "Pdf Name",
+            "type": "string"
+          },
+          "rules_run": {
+            "title": "Rules Run",
+            "type": "integer"
+          },
+          "scale_pages": {
+            "title": "Scale Pages",
+            "type": "integer"
+          },
+          "sheets": {
+            "title": "Sheets",
+            "type": "integer"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sheets",
+          "pages",
+          "cad_layers",
+          "annotations",
+          "marked",
+          "counts",
+          "open",
+          "verified",
+          "abstentions",
+          "rules_run",
+          "scale_pages",
+          "pdf_bytes",
+          "pdf_name",
+          "findings_count"
+        ],
+        "title": "Summary",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Upload a vector permit set, choose the review parameters, download a marked-up PDF and a findings register. No model calls in the request path.",
+    "summary": "Deterministic Florida Building Code plan review.",
+    "title": "FBC Code Review",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/config": {
+      "get": {
+        "operationId": "getConfig",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Config",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "operationId": "getJob",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Get Job",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/api/review": {
+      "post": {
+        "operationId": "createReview",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_createReview"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Accept a permit set and start a review.",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Liveness. Unauthenticated and deliberately cheap.",
+        "tags": [
+          "health"
+        ]
+      }
+    }
+  }
+}

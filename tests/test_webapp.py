@@ -19,7 +19,7 @@ def post_review(client, pdf: bytes, options: str = "{}", name: str = "set.pdf"):
     return client.post(
         "/api/review",
         files={"file": (name, io.BytesIO(pdf), "application/pdf")},
-        data={"options": options},
+        data={"review_options": options},
     )
 
 

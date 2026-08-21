@@ -70,7 +70,13 @@ def _authorise(uid: str, email: str, email_verified: bool) -> User:
     return User(uid=uid, email=address)
 
 
-async def current_user(authorization: Optional[str] = Header(default=None)) -> User:
+async def current_user(
+    # Hidden from the schema deliberately. The generated TypeScript client must
+    # not take an `authorization` argument at every call site — the functional
+    # HttpInterceptorFn attaches the token in one place, and a parameter here
+    # would invite callers to pass it by hand.
+    authorization: Optional[str] = Header(default=None, include_in_schema=False),
+) -> User:
     cfg = settings()
 
     # Local development only. Cloud Run always sets K_SERVICE, and config.py

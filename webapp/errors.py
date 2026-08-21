@@ -42,6 +42,7 @@ UNSUPPORTED_MEDIA = "unsupported_media_type"
 PAYLOAD_TOO_LARGE = "payload_too_large"
 ENCRYPTED_PDF = "encrypted_pdf"
 CORRUPT_PDF = "corrupt_pdf"
+RASTER_PDF = "raster_pdf"
 TOO_MANY_PAGES = "too_many_pages"
 RATE_LIMITED = "rate_limited"
 INTERNAL = "internal"
@@ -55,6 +56,7 @@ _BY_STATUS = {
     409: NOT_READY,
     413: PAYLOAD_TOO_LARGE,
     415: UNSUPPORTED_MEDIA,
+    422: INVALID_REQUEST,
     429: RATE_LIMITED,
 }
 

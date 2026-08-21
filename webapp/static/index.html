@@ -285,7 +285,7 @@ $('#form').addEventListener('submit', async e => {
   };
   const fd = new FormData();
   fd.append('file', file.files[0]);
-  fd.append('options', JSON.stringify(opts));
+  fd.append('review_options', JSON.stringify(opts));
   go.disabled = true; $('#form').hidden = true; $('#run').hidden = false;
   paintStages(0);
   const r = await fetch('/api/review', { method: 'POST', body: fd });

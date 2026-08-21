@@ -1,0 +1,38 @@
+{
+  "name": "fbc-review",
+  "version": "0.0.0",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve --proxy-config proxy.conf.json",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test",
+    "test:ci": "ng test --watch=false",
+    "api:spec": "python ../scripts/dump_openapi.py ../openapi.json",
+    "api:generate": "openapi-generator-cli generate -i ../openapi.json -g typescript-angular -o src/app/api --additional-properties=ngVersion=22.1.0,providedInRoot=true,fileNaming=kebab-case,stringEnums=true,supportsES6=true,serviceSuffix=Api,serviceFileSuffix=.api && node scripts/postgen.mjs",
+    "api:refresh": "npm run api:spec && npm run api:generate"
+  },
+  "private": true,
+  "packageManager": "npm@11.17.0",
+  "dependencies": {
+    "@angular/common": "^22.1.0",
+    "@angular/compiler": "^22.1.0",
+    "@angular/core": "^22.1.0",
+    "@angular/forms": "^22.1.0",
+    "@angular/platform-browser": "^22.1.0",
+    "@angular/router": "^22.1.0",
+    "firebase": "^12.18.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^22.1.5",
+    "@angular/cli": "^22.1.5",
+    "@angular/compiler-cli": "^22.1.0",
+    "@openapitools/openapi-generator-cli": "^2.27.0",
+    "jsdom": "^28.0.0",
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.2",
+    "vitest": "^4.0.8"
+  }
+}

@@ -162,6 +162,7 @@ def file_store() -> Storage:
     "/healthz",
     response_model=models.Health,
     tags=["health"],
+    operation_id="healthz",
     summary="Liveness. Unauthenticated and deliberately cheap.",
 )
 def healthz() -> models.Health:
@@ -171,7 +172,12 @@ def healthz() -> models.Health:
 
 
 # -- config ----------------------------------------------------------------
-@app.get("/api/config", response_model=models.ConfigResponse, tags=["config"])
+@app.get(
+    "/api/config",
+    response_model=models.ConfigResponse,
+    tags=["config"],
+    operation_id="getConfig",
+)
 def config(user: User = Depends(current_user)) -> models.ConfigResponse:
     cfg = settings()
     return models.ConfigResponse(
@@ -197,17 +203,23 @@ def config(user: User = Depends(current_user)) -> models.ConfigResponse:
     response_model=models.ReviewAccepted,
     status_code=202,
     tags=["reviews"],
+    operation_id="createReview",
     summary="Accept a permit set and start a review.",
 )
 async def create_review(
     file: UploadFile = File(..., description="The permit set, as a PDF."),
-    options: str = Form("{}", description="A JSON-encoded ReviewOptions object."),
+    # Named `review_options` rather than `options`: openapi-generator's
+    # typescript-angular services already take a parameter called `options` for
+    # the per-request HttpClient settings, and a form field of the same name
+    # generates a method with two parameters of that name, which does not
+    # compile.
+    review_options: str = Form("{}", description="A JSON-encoded ReviewOptions object."),
     user: User = Depends(current_user),
     store: JobStore = Depends(job_store),
     files: Storage = Depends(file_store),
 ) -> JSONResponse:
     try:
-        raw: Dict[str, Any] = json.loads(options or "{}")
+        raw: Dict[str, Any] = json.loads(review_options or "{}")
     except json.JSONDecodeError:
         raise ApiError(400, errors.INVALID_REQUEST, "options must be a JSON object.")
     if not isinstance(raw, dict):
@@ -248,7 +260,7 @@ async def create_review(
 
     try:
         size = await upload.stream_to_disk(file, local)
-        pages = upload.probe(local)
+        pages, source = upload.probe(local)
 
         blob = storage.upload_path(job_id, filename)
         files.upload_file(str(local), blob, "application/pdf")
@@ -267,6 +279,7 @@ async def create_review(
         pages=pages,
         options=parsed.model_dump(),
         upload_blob=blob,
+        source=source.to_dict(),
     )
 
     log.info(
@@ -279,6 +292,8 @@ async def create_review(
             "bytes": size,
             "occupancy_group": parsed.occupancy_group,
             "sprinklered": parsed.sprinklered,
+            "source_kind": source.kind,
+            "raster_pages": len(source.raster_pages),
         },
     )
 
@@ -298,7 +313,12 @@ async def create_review(
 
 
 # -- poll ------------------------------------------------------------------
-@app.get("/api/jobs/{job_id}", response_model=models.Job, tags=["reviews"])
+@app.get(
+    "/api/jobs/{job_id}",
+    response_model=models.Job,
+    tags=["reviews"],
+    operation_id="getJob",
+)
 def get_job(
     job_id: str,
     user: User = Depends(current_user),
@@ -350,6 +370,11 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
         options=models.ReviewOptions.model_validate(record.get("options") or {}),
         bytes=int(record.get("bytes", 0) or 0),
         pages=record.get("pages"),
+        source=(
+            models.SourceProfile.model_validate(record["source"])
+            if record.get("source")
+            else None
+        ),
         summary=summary,
         downloads=downloads,
         error=record.get("error"),

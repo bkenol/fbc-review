@@ -54,6 +54,7 @@ class JobStore:
         pages: int,
         options: Dict[str, Any],
         upload_blob: str,
+        source: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         record = {
             "id": job_id,
@@ -66,6 +67,7 @@ class JobStore:
             "stage": 0,
             "options": options,
             "upload_blob": upload_blob,
+            "source": source,
             "summary": None,
             "error": None,
             "error_code": None,

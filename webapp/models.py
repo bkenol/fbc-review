@@ -17,6 +17,8 @@ JobState = Literal["queued", "running", "done", "error"]
 Severity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "VERIFIED", "MEASURED"]
 MinSeverity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
 FindingStatus = Literal["OPEN", "PASS"]
+SheetKind = Literal["vector", "hybrid", "raster", "blank"]
+DocumentKind = Literal["vector", "mixed", "raster", "blank"]
 
 
 # ── errors ────────────────────────────────────────────────────────────────
@@ -134,6 +136,36 @@ class Summary(BaseModel):
     findings_count: int
 
 
+# ── what kind of PDF was uploaded ─────────────────────────────────────────
+class SheetProfile(BaseModel):
+    """Measured, not guessed: path count, live character count and how much of
+    the page is covered by raster images."""
+
+    page: int
+    kind: SheetKind
+    vector_paths: int
+    live_chars: int
+    image_count: int
+    image_coverage: float = Field(ge=0.0, le=1.0)
+    reason: str
+
+
+class SourceProfile(BaseModel):
+    """Whether this set is readable, and which sheets are not.
+
+    A scanned sheet produces no findings, and no findings reads as a clean
+    sheet. Publishing this lets the client say "not checked" where the truth is
+    "could not be read".
+    """
+
+    kind: DocumentKind
+    cad_layers: int
+    reviewable_pages: int
+    raster_pages: List[int]
+    summary: str
+    sheets: List[SheetProfile]
+
+
 # ── jobs ──────────────────────────────────────────────────────────────────
 class Downloads(BaseModel):
     """V4 signed URLs, fetched straight from Cloud Storage by the browser."""
@@ -157,6 +189,9 @@ class Job(BaseModel):
     options: ReviewOptions
     bytes: int
     pages: Optional[int] = None
+    source: Optional[SourceProfile] = Field(
+        default=None, description="What kind of PDF was uploaded, measured at admission."
+    )
     summary: Optional[Summary] = None
     downloads: Optional[Downloads] = Field(
         default=None, description="Present only while state is `done`."

@@ -1,0 +1,10 @@
+# OpenAPI Generator Ignore
+#
+# Files the generator emits that this project does not use. The Angular client
+# is standalone and zoneless, so the NgModule variant is not just unused, it is
+# the pattern CLAUDE.md forbids. provide-api.ts is the standalone equivalent
+# and is kept.
+api.module.ts
+git_push.sh
+README.md
+.gitignore

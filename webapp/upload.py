@@ -14,9 +14,11 @@ from typing import Tuple
 import pymupdf
 from fastapi import UploadFile
 
+from webapp import pdfkind
 from webapp.config import settings
 from webapp.errors import (
     CORRUPT_PDF,
+    RASTER_PDF,
     ENCRYPTED_PDF,
     PAYLOAD_TOO_LARGE,
     TOO_MANY_PAGES,
@@ -93,11 +95,11 @@ async def stream_to_disk(upload: UploadFile, dest: Path) -> int:
     return size
 
 
-def probe(path: Path) -> int:
+def probe(path: Path) -> Tuple[int, "pdfkind.DocumentProfile"]:
     """Open the PDF far enough to reject what the engine cannot review.
 
-    Returns the page count. Raises ApiError with prose rather than letting a
-    PyMuPDF traceback escape.
+    Returns (page count, source profile). Raises ApiError with prose rather
+    than letting a PyMuPDF traceback escape.
     """
     cfg = settings()
     doc = None
@@ -126,7 +128,23 @@ def probe(path: Path) -> int:
                 413, TOO_MANY_PAGES,
                 f"That set is {pages} pages. The limit is {cfg.max_pages}.",
             )
-        return pages
+
+        source = pdfkind.profile(str(path), doc)
+
+        # Running a review over a scanned set produces the worst possible
+        # output: no findings, which reads as a clean set rather than an
+        # unreadable one. Refuse it, and say which sheets and why.
+        if source.kind == "blank":
+            raise ApiError(400, CORRUPT_PDF, "That PDF has no drawable content.")
+        if source.kind == "raster":
+            raise ApiError(
+                422, RASTER_PDF,
+                f"{source.summary} Re-plot the set to PDF from CAD rather than "
+                "scanning or exporting it as images. Automatic conversion of scanned "
+                "sets is not available yet.",
+            )
+
+        return pages, source
     finally:
         if doc is not None:
             doc.close()

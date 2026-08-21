@@ -43,11 +43,11 @@ class FakeJobStore:
         self._lock = threading.Lock()
         self.done = threading.Event()
 
-    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob):
+    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob, source=None):
         record = {
             "id": job_id, "uid": uid, "email": email, "filename": filename,
             "bytes": size_bytes, "pages": pages, "state": jobs_mod.QUEUED, "stage": 0,
-            "options": options, "upload_blob": upload_blob, "summary": None,
+            "options": options, "upload_blob": upload_blob, "source": source, "summary": None,
             "error": None, "error_code": None,
             "created_at": jobs_mod.utcnow(), "started_at": None, "finished_at": None,
         }
@@ -125,10 +125,47 @@ class FakeStorage:
 
 # ── pdf builders ──────────────────────────────────────────────────────────
 def make_pdf(pages: int = 1, text: str = "SHEET G-0") -> bytes:
+    """A plausible plotted sheet: vector linework plus live text.
+
+    Deliberately not a near-blank page — webapp.pdfkind rejects those, and a
+    fixture that would be turned away at the door tests nothing.
+    """
     doc = pymupdf.open()
     for i in range(pages):
-        page = doc.new_page()
-        page.insert_text((72, 72), f"{text} {i + 1}")
+        page = doc.new_page(width=1224, height=792)
+        for n in range(200):
+            page.draw_line((20 + n * 6, 40), (20 + n * 6, 720))
+        page.insert_text(
+            (40, 750),
+            f"{text} {i + 1}  LIFE SAFETY PLAN  1/4\" = 1'-0\"  "
+            "COMMON PATH OF EGRESS TRAVEL 75 FT (1006.2.1)  "
+            "OCCUPANT LOAD 70  TRAVEL DISTANCE 250 FT (1017.2)",
+            fontsize=8,
+        )
+    buf = doc.tobytes()
+    doc.close()
+    return buf
+
+
+def make_raster_pdf(pages: int = 1) -> bytes:
+    """A scanned set: a full-bleed image, no live text, no vector geometry."""
+    doc = pymupdf.open()
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 1200, 780))
+    pix.set_rect(pix.irect, (255, 255, 255))
+    for y in range(60, 720, 31):
+        pix.set_rect(pymupdf.IRect(40, y, 1160, y + 2), (0, 0, 0))
+    for i in range(pages):
+        page = doc.new_page(width=1224, height=792)
+        page.insert_image(page.rect, pixmap=pix)
+    buf = doc.tobytes()
+    doc.close()
+    return buf
+
+
+def make_blank_pdf(pages: int = 1) -> bytes:
+    doc = pymupdf.open()
+    for _ in range(pages):
+        doc.new_page()
     buf = doc.tobytes()
     doc.close()
     return buf
@@ -205,5 +242,5 @@ def anon_client(monkeypatch, store, files):
 
 
 def upload_form(pdf: bytes, options: Optional[str] = None, name: str = "set.pdf"):
-    data = {"options": options if options is not None else "{}"}
+    data = {"review_options": options if options is not None else "{}"}
     return {"files": {"file": (name, io.BytesIO(pdf), "application/pdf")}, "data": data}
