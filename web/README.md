@@ -1,59 +1,52 @@
-# FbcReview
+# web/ — the Angular client
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.1.5.
+Angular 22: standalone components, signals, zoneless change detection, strict
+mode with `strictTemplates`, Vitest. No `NgModule`, no `zone.js`, no CSS or
+component framework — this is one page, and `src/styles.css` is the whole design.
 
-## Development server
+## Run it
 
-To start a local development server, run:
-
-```bash
-ng serve
-```
-
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
-
-## Code scaffolding
-
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+The client needs the API. Start that first, from the repository root:
 
 ```bash
-ng generate component component-name
+FBC_DEV_UNSAFE_AUTH=1 FBC_BUCKET=fbc-dev-local FBC_PROJECT_ID=fbc-dev-local   FBC_ALLOWED_EMAILS=you@example.com   .venv/bin/python -m uvicorn webapp.server:app --port 8060
 ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+Then:
 
 ```bash
-ng generate --help
+npm start          # ng serve with proxy.conf.json -> http://127.0.0.1:8060
 ```
 
-## Building
+`FBC_DEV_UNSAFE_AUTH=1` swaps Firestore and Cloud Storage for filesystem
+stand-ins (`webapp/devbackend.py`) and accepts unauthenticated requests, so the
+client is usable without a GCP project. It cannot switch on in a deployed
+service: `webapp/config.py` refuses the flag whenever `K_SERVICE` is set, and
+Cloud Run always sets it.
 
-To build the project run:
+Port 8060 rather than 8000: on some Windows machines 8000 falls inside a
+reserved exclusion range and cannot be bound.
+
+## The generated API client
+
+`src/app/api/` is generated from the backend's OpenAPI schema and **committed**.
+Do not hand-edit it.
 
 ```bash
-ng build
+npm run api:refresh    # dump ../openapi.json from the app, then regenerate
 ```
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+That is the whole point of a typed client: a field renamed in `webapp/models.py`
+becomes a TypeScript compile error here rather than a runtime `undefined`. CI
+regenerates it and fails if the result differs from what is committed.
 
-## Running unit tests
+`scripts/postgen.mjs` removes the NgModule variant the generator still emits and
+strips its re-export from `index.ts`, so the committed output is a pure function
+of `openapi.json`.
 
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
+## Firebase
 
-```bash
-ng test
-```
-
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
-```
-
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+Fill in `src/app/core/firebase-config.ts` from the Firebase console. Those values
+are public by design — access is decided server-side by verifying the ID token
+and checking the email allowlist. Until they are filled in, `ng serve` stands in
+a local user so the tool page is reachable; `ng build` output never does.

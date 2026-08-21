@@ -17,11 +17,12 @@ import logging
 import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, File, Form, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from fbcreview.options import EDITIONS, OCCUPANCY_GROUPS, SEVERITY_ORDER, ReviewOptions
 from fbcreview.rules import registered
@@ -37,7 +38,6 @@ logging_config.configure()
 log = logging.getLogger("fbc.api")
 
 VERSION = "1.0.0"
-APP_DIR = Path(__file__).resolve().parent
 
 _pool: Optional[ThreadPoolExecutor] = None
 
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
     # instance. Failing to reach Firestore here must not stop the service
     # coming up, or a transient outage becomes a crash loop.
     try:
-        get_job_store().fail_stale_running()
+        (_dev_jobs() if cfg.dev_unsafe_auth else get_job_store()).fail_stale_running()
     except Exception:
         log.exception("startup sweep for orphaned jobs failed")
 
@@ -150,12 +150,34 @@ app.openapi = custom_openapi  # type: ignore[method-assign]
 
 
 # -- dependency seams (overridden in tests) --------------------------------
+# In local development these resolve to filesystem stand-ins so the Angular
+# client can be run and used without a GCP project. settings().dev_unsafe_auth
+# cannot be true when K_SERVICE is set, so neither branch is reachable on Cloud
+# Run — see webapp/devbackend.py.
 def job_store() -> JobStore:
+    if settings().dev_unsafe_auth:
+        return _dev_jobs()
     return get_job_store()
 
 
 def file_store() -> Storage:
+    if settings().dev_unsafe_auth:
+        return _dev_files()
     return get_storage()
+
+
+@lru_cache(maxsize=1)
+def _dev_jobs():
+    from webapp.devbackend import LocalJobStore
+
+    return LocalJobStore()
+
+
+@lru_cache(maxsize=1)
+def _dev_files():
+    from webapp.devbackend import LocalStorage
+
+    return LocalStorage()
 
 
 # -- health ----------------------------------------------------------------
@@ -404,13 +426,29 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
     )
 
 
-# -- the reference page ----------------------------------------------------
-# Present in a source checkout while the Angular client is brought to parity;
-# the container image does not ship webapp/static, so this 404s in production
-# rather than 500-ing on a missing file.
-@app.get("/", response_class=HTMLResponse, include_in_schema=False)
-def index() -> HTMLResponse:
-    page = APP_DIR / "static" / "index.html"
-    if not page.exists():
-        raise ApiError(404, errors.NOT_FOUND, "This deployment serves the API only.")
-    return HTMLResponse(page.read_text(encoding="utf-8"))
+# -- dev-only artefact download -------------------------------------------
+# Stands in for a Cloud Storage signed URL on a laptop. Registered only when the
+# dev flag is on, so the deployed service has no such route at all — artefacts
+# there are fetched browser-to-GCS and never cross the app.
+if settings().dev_unsafe_auth:
+    from fastapi.responses import FileResponse
+
+    @app.get("/_dev/blob/{blob_path:path}", include_in_schema=False)
+    def dev_blob(blob_path: str, filename: str | None = None):
+        from webapp.devbackend import LocalStorage
+
+        root = LocalStorage().dir.resolve()
+        target = (root / blob_path).resolve()
+        # Refuse anything that escapes the blob root.
+        if not str(target).startswith(str(root)) or not target.is_file():
+            raise ApiError(404, errors.NOT_FOUND, "No such artefact.")
+        return FileResponse(
+            target,
+            media_type="application/pdf" if target.suffix == ".pdf" else "application/json",
+            filename=filename or target.name,
+        )
+
+
+# No route serves HTML. webapp/static/index.html was the reference client and
+# was removed once web/ reached parity; the Angular bundle is served by Firebase
+# Hosting, which rewrites only /api/** here.

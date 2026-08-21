@@ -1,12 +1,13 @@
-import { Component, signal } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 
+import { AuthService } from './core/auth';
+
 @Component({
-  imports: [RouterOutlet],
   selector: 'app-root',
-  styleUrl: './app.css',
+  imports: [RouterOutlet],
   templateUrl: './app.html',
 })
 export class App {
-  protected readonly title = signal('fbc-review');
+  protected readonly auth = inject(AuthService);
 }

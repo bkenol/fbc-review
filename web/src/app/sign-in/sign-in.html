@@ -1,0 +1,23 @@
+<section class="card centred">
+  @if (!auth.configured) {
+    <h2>Not configured</h2>
+    <div class="note bad">
+      This deployment has no Firebase project configured yet. Fill in
+      <code>web/src/app/core/firebase-config.ts</code> from the Firebase console and rebuild.
+    </div>
+  } @else {
+    <h2>Sign in</h2>
+    <p class="sub" style="margin-bottom: 22px">
+      Access is granted per address. Sign in with the Google account the administrator
+      allowlisted.
+    </p>
+
+    @if (auth.error(); as message) {
+      <div class="note bad" role="alert">{{ message }}</div>
+    }
+
+    <button type="button" (click)="auth.signIn()" [disabled]="auth.signingIn()">
+      {{ auth.signingIn() ? 'Opening Google…' : 'Continue with Google' }}
+    </button>
+  }
+</section>

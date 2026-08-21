@@ -34,10 +34,6 @@ COPY fbcreview/ ./fbcreview/
 COPY webapp/ ./webapp/
 COPY run.py .
 
-# webapp/static is the reference page kept in the source tree while the Angular
-# client reaches parity. It must not ship: this image serves the API only.
-RUN rm -rf ./webapp/static
-
 # Run unprivileged. Added after pip install so the site-packages tree stays
 # root-owned and read-only to the service.
 RUN useradd --create-home --uid 10001 fbc \
