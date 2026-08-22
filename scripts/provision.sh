@@ -58,9 +58,24 @@ gcloud auth print-access-token >/dev/null 2>&1 \
   || die "The credential for $ACCOUNT has expired. Run: gcloud auth login"
 ok "authenticated as $ACCOUNT"
 
-firebase projects:list >/dev/null 2>&1 \
-  || die "The Firebase CLI is not authenticated. Run: firebase login"
-ok "Firebase CLI authenticated"
+# Two traps in one check, both of which report a good login as a bad one.
+#
+# Run it from an empty directory: the Firebase CLI reads .firebaserc on *every*
+# command, so a project that does not exist yet makes even `login:list` fail
+# with "Invalid project id" and look like an auth problem.
+#
+# And capture, then match — never pipe into `grep -q`. Under `set -o pipefail`
+# grep -q exits on the first match and closes the pipe, the CLI upstream dies of
+# SIGPIPE, and the pipeline reports failure on a command that succeeded.
+FB_PROBE="$(mktemp -d)"
+FB_LIST="$( cd "$FB_PROBE" && firebase login:list 2>/dev/null || true )"
+rm -rf "$FB_PROBE"
+case "$FB_LIST" in
+  *[Ll]"ogged in as"*) ;;
+  *) die "The Firebase CLI is not authenticated. Run: firebase login" ;;
+esac
+FB_USER="$(printf '%s' "$FB_LIST" | grep -oiE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+' | head -1 || true)"
+ok "Firebase CLI authenticated as ${FB_USER:-unknown}"
 
 # ── 1. project ────────────────────────────────────────────────────────────
 bold "1. Project"
@@ -80,24 +95,58 @@ ok "project number $PROJECT_NUMBER"
 
 # ── 2. billing ────────────────────────────────────────────────────────────
 bold "2. Billing"
-# Nothing else can be enabled until billing is attached, and choosing which
-# account to bill is not a decision this script should make for you.
+# Nothing else can be enabled until billing is attached AND the account behind
+# it is open. Choosing which account to bill is not a decision this script
+# should make for you.
 
-if gcloud beta billing projects describe "$PROJECT_ID" \
-     --format='value(billingEnabled)' 2>/dev/null | grep -qi true; then
-  ok "billing already attached"
+# Billing API calls are charged against a quota project, and gcloud defaults to
+# whatever `gcloud config` last pointed at — which may be a project that has
+# never enabled the API. Enable it here and pass --billing-project explicitly.
+gcloud services enable cloudbilling.googleapis.com --project="$PROJECT_ID" >/dev/null 2>&1 || true
+BQ=(--billing-project="$PROJECT_ID")
+
+billing_state() {
+  gcloud beta billing projects describe "$PROJECT_ID" "${BQ[@]}"     --format='value(billingEnabled)' 2>/dev/null || true
+}
+
+if [ "$(billing_state)" = "True" ]; then
+  ok "billing enabled"
 else
-  if [ -z "$BILLING_ACCOUNT" ]; then
-    warn "billing is not attached to $PROJECT_ID, and no account was given."
-    printf '\n  Your billing accounts:\n\n'
-    gcloud beta billing accounts list 2>/dev/null || true
-    printf '\n  Re-run with the one you want, for example:\n\n'
-    printf '    FBC_BILLING_ACCOUNT=0X0X0X-0X0X0X-0X0X0X bash scripts/provision.sh\n\n'
-    die "Stopping here — attaching billing is your call, not mine."
+  if [ -n "$BILLING_ACCOUNT" ]; then
+    info "attaching billing account $BILLING_ACCOUNT …"
+    gcloud beta billing projects link "$PROJECT_ID"       --billing-account="$BILLING_ACCOUNT" "${BQ[@]}" >/dev/null || true
   fi
-  info "attaching billing account $BILLING_ACCOUNT …"
-  gcloud beta billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT"
-  ok "billing attached"
+
+  if [ "$(billing_state)" != "True" ]; then
+    # Distinguish "no account attached" from "attached but the account is
+    # closed". They look the same in a generic failure and need different fixes.
+    printf '
+  Billing accounts on this login:
+
+'
+    gcloud beta billing accounts list "${BQ[@]}" 2>/dev/null || true
+
+    OPEN_COUNT="$(gcloud beta billing accounts list "${BQ[@]}"       --filter='open=true' --format='value(name)' 2>/dev/null | wc -l | tr -d ' ')"
+
+    if [ "${OPEN_COUNT:-0}" -eq 0 ]; then
+      die "None of your billing accounts is open, so nothing can be provisioned.
+
+     A closed account can be attached to a project but pays for nothing, which
+     is why enabling Cloud Run fails with \"Billing account ... is not open\".
+
+     Reopen one, or create a new one, here:
+       https://console.cloud.google.com/billing
+
+     Then re-run this script. Everything up to this point is already done and
+     will be skipped."
+    fi
+
+    die "Billing is not enabled on $PROJECT_ID.
+     Pick an open account from the list above and re-run:
+
+       FBC_BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX bash scripts/provision.sh"
+  fi
+  ok "billing enabled"
 fi
 
 # ── 3. APIs ───────────────────────────────────────────────────────────────
@@ -234,12 +283,14 @@ done
 
 # ── 10. Firebase ──────────────────────────────────────────────────────────
 bold "10. Firebase"
-if firebase projects:list 2>/dev/null | grep -q "$PROJECT_ID"; then
-  ok "Firebase already enabled on the project"
-else
-  firebase projects:addfirebase "$PROJECT_ID"
-  ok "Firebase enabled"
-fi
+# Same SIGPIPE trap as the preflight check — capture, then match.
+FB_PROJECTS="$(firebase projects:list 2>/dev/null || true)"
+case "$FB_PROJECTS" in
+  *"$PROJECT_ID"*) ok "Firebase already enabled on the project" ;;
+  *)
+    firebase projects:addfirebase "$PROJECT_ID"
+    ok "Firebase enabled" ;;
+esac
 
 APP_ID="$(firebase apps:list WEB --project "$PROJECT_ID" 2>/dev/null | grep -oE '1:[0-9]+:web:[a-z0-9]+' | head -1 || true)"
 if [ -z "$APP_ID" ]; then

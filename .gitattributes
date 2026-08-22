@@ -1,0 +1,7 @@
+# Shell scripts must be LF. A CRLF script fails on Linux, where the trailing \r
+# becomes part of the last argument on every line — and it silently defeats
+# multi-line text edits made on Windows.
+*.sh text eol=lf
+
+# Everything else: normalise in the repository, check out native.
+* text=auto

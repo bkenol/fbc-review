@@ -1,5 +1,5 @@
 {
   "projects": {
-    "default": "REPLACE_PROJECT_ID"
+    "default": "fbc-reviewer"
   }
 }

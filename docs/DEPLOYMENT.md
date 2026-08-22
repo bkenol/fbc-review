@@ -3,13 +3,17 @@
 Every command needed to stand this service up, and every decision taken while
 building it.
 
-> **Status.** Phases 0–3B are built, tested and pushed. Phases 4–6 are **written
-> but not executed**: no GCP project existed for this service when the work was
-> done, and creating one plus attaching billing is an account-level, cost-
-> incurring action. Every command below marked **[not yet run]** is exactly what
-> to run, in order — but it has not been run, so nothing in this document should
-> be read as describing a live system. The one exception is the container, which
-> was built and exercised locally; see [Phase 4](#phase-4--container).
+> **Status.** Phases 0–3B are built, tested and pushed. Provisioning is
+> automated and has been run as far as it can go: the GCP project
+> **`fbc-reviewer`** (number 983366817143) exists under the
+> `omniflexfitness.com` organisation, and `.firebaserc` points at it.
+>
+> It stops at billing. Both billing accounts on the account —
+> `OmniFlex Billing` and `OmniFlex Fitness Billing` — are **closed**, and a
+> closed account can be attached to a project while paying for nothing:
+> enabling Cloud Run returns *"Billing account for project '983366817143' is not
+> open."* Nothing past that point has run. Open a billing account and re-run
+> the script; everything already done is skipped.
 
 ---
 
@@ -46,6 +50,17 @@ idempotent, so a failure halfway through is fixed by running it again.
 ```bash
 gcloud auth login          # your own account, not a service account
 firebase login
+```
+
+Then, from anywhere:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\provision.ps1
+```
+
+or, from the repository root:
+
+```bash
 bash scripts/provision.sh
 ```
 
