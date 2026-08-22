@@ -587,13 +587,72 @@ Two things are missing instead:
    flatten them. `MEASURE.EGRESS_EXTENT` selects geometry by layer name, so it
    abstains on all three regardless of anything else.
 
-This is precisely the Tier B case in `ARCHITECTURE.md` §2 — "mapping a drafter's
-idiosyncratic block heading to a known block type" — and it is the highest-value
-next piece of work. It is a *normalisation* problem, not a *rasterisation* one,
-and no amount of OCR addresses it.
+### Why ITEC really produces nothing — three separate gaps, measured
+
+Investigated properly rather than assumed. The three are independent, and
+closing any one alone changes no finding.
+
+**Gap 1 — the code tables were pixels. Closed.**
+ITEC pastes its code-analysis tables onto G-002 and A-101 as images; its hand
+review says so ("plotted from AutoCAD LT with no preserved layers and raster
+code tables"). Those sheets are genuinely vector, so the whole-sheet raster
+check never fired on them. `webapp/pdfkind.py` now measures raster *regions*
+too, and `convert.read_regions()` OCRs just those and writes the words back as
+an invisible text layer, leaving the vector content untouched.
+
+Measured on ITEC: 11 sheets, 5 regions on the two that matter, **27,826
+characters recovered — live text 223,422 → 252,995** in 92 s. `OCCUPANT LOAD`,
+`DOOR SCHEDULE`, `PANEL SCHEDULE` and `LOAD CALCULATION` all go from absent to
+present, and the rows behind the hand review's finding H-01 come back legibly.
+
+**Gap 2 — nothing to key the recovered text on. Open.**
+Extraction joins on the parenthesised section number because it is the most
+stable token on a sheet (`ARCHITECTURE.md` §3). ITEC contains **zero** of them
+across 253k characters. It writes `TABLE 508.4`, `TABLE 601`, `TABLE 705.8`
+instead. So the text is now readable and still unkeyable, and code data rows stay
+at 0. This is the Tier B normalisation case, and it is now clearly worth doing
+because there is finally data to key.
+
+**Gap 3 — the rule corpus does not cover what ITEC gets wrong. Open.**
+Even after OCR, `TRAVEL DISTANCE`, `COMMON PATH`, `DEAD END`, `EGRESS WIDTH`,
+`CORRIDOR WIDTH` and `OUTDOOR AIR` are simply **not stated anywhere on ITEC's
+35 sheets**. Those rules abstain because the drawing is silent, which is correct
+and no amount of extraction changes it.
+
+ITEC's actual problems, per its hand review, are a superseded code edition
+(7th vs 8th), a self-contradicting occupancy analysis, and an OCCUPANT FACTOR
+column holding unit numbers instead of code factors. The twelve implemented
+rules check none of those.
+
+So: **ITEC needs new rules more than it needs better extraction.** Sequencing
+the normaliser ahead of rule authoring would be building a key for a lock that
+is not on this door.
 
 Sheet-code recovery also degrades on these sets: `sheet_index` returns `p1, p2,
 p3 …` rather than `G-0, A-1`, catching only the occasional `E-3` or `A-12`.
+
+### DWG and RVT
+
+Decided rather than deferred.
+
+**RVT: not supported, deliberately.** There is no open-source Revit reader. The
+only routes are Autodesk's Model Derivative API — which uploads clients' permit
+sets to Autodesk — or a licensed Revit install on Windows, which Cloud Run
+cannot be. Ask for a PDF or DWG export instead; that is what firms send for
+permit review anyway.
+
+**DWG: DXF only, when it comes up.** `accoreconsole.exe` ships with the AutoCAD
+on this workstation and converts DWG headlessly, but it is Windows-only and
+licence-bound and cannot run in the container. `ezdxf` reads DXF, not DWG. So
+the supported path is DXF in, rendered to a layered PDF in-process, with no
+external binary and no licensing question.
+
+**Before any of that, check the cheap fix.** The Sculpted set's 200 optional
+content groups are literally AutoCAD layer names — `A-Wall`, `A-Anno-Titl`,
+`Life Safety|Egress Path`. That is AutoCAD's PDF export with "Include layer
+information" enabled. ITEC and JSP simply exported without it. A one-line
+instruction to the drafter produces exactly what CAD ingestion would, for no
+code at all.
 
 ---
 
