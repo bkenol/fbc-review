@@ -15,6 +15,7 @@ import {
   catchError,
   defer,
   expand,
+  retry,
   switchMap,
   takeWhile,
   tap,
@@ -44,6 +45,35 @@ const SLOW_POLL_MS = 3000;
 const FAST_POLLS = 10;
 /** A backgrounded tab has nobody watching the progress bar. */
 const HIDDEN_POLL_MS = 5000;
+/** Consecutive failed polls tolerated before admitting we lost the job. */
+const POLL_RETRIES = 5;
+
+/** Survives a reload, so a finished job is not stranded on the server. */
+const JOB_KEY = 'fbc.lastJob';
+
+function rememberJob(id: string): void {
+  try {
+    sessionStorage.setItem(JOB_KEY, id);
+  } catch {
+    /* private mode, storage disabled — resuming is a convenience, not a need */
+  }
+}
+
+function rememberedJob(): string | null {
+  try {
+    return sessionStorage.getItem(JOB_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function forgetJob(): void {
+  try {
+    sessionStorage.removeItem(JOB_KEY);
+  } catch {
+    /* as above */
+  }
+}
 
 @Injectable({ providedIn: 'root' })
 export class ReviewService {
@@ -58,12 +88,15 @@ export class ReviewService {
   private readonly _findings = signal<Finding[] | null>(null);
   private readonly _failure = signal<ApiFailure | null>(null);
   private readonly _submitting = signal(false);
+  private readonly _lostContact = signal(false);
 
   readonly config = this._config.asReadonly();
   readonly job = this._job.asReadonly();
   readonly findings = this._findings.asReadonly();
   readonly failure = this._failure.asReadonly();
   readonly submitting = this._submitting.asReadonly();
+  /** True when polling is failing. The job itself is probably fine. */
+  readonly lostContact = this._lostContact.asReadonly();
 
   readonly running = computed(() => {
     const state = this._job()?.state;
@@ -119,8 +152,19 @@ export class ReviewService {
   }
 
   // ── poll ────────────────────────────────────────────────────────────────
+  /**
+   * Follow a job to a terminal state.
+   *
+   * The review runs on the server and does not care whether we are watching.
+   * So a dropped poll is a failure of *our view*, not of the job, and it must
+   * not end the run — otherwise a single blip leaves the progress bar frozen
+   * partway while the review quietly finishes without us. Observed exactly
+   * that: the UI stuck at 11.5 s on a job that completed at 15.3 s.
+   */
   private follow(id: string): void {
     this.stop();
+    this._lostContact.set(false);
+    rememberJob(id);
 
     let tick = 0;
     const nextDelay = (): number => {
@@ -132,6 +176,17 @@ export class ReviewService {
     this.polling = defer(() => this.reviews.getJob(id))
       .pipe(
         expand(() => timer(nextDelay()).pipe(switchMap(() => this.reviews.getJob(id)))),
+        // Resubscribes the whole poll loop rather than giving up, backing off
+        // each time. Only after several consecutive failures do we admit we
+        // have lost track of it.
+        retry({
+          count: POLL_RETRIES,
+          delay: (_error, attempt) => {
+            this._lostContact.set(true);
+            return timer(Math.min(1000 * 2 ** attempt, 8000));
+          },
+        }),
+        tap(() => this._lostContact.set(false)),
         // `true` keeps the terminal emission — without it the finished job is
         // fetched and then dropped.
         takeWhile((job) => job.state === 'queued' || job.state === 'running', true),
@@ -141,9 +196,47 @@ export class ReviewService {
       .subscribe({
         next: (job) => {
           if (job.state === 'done') this.loadFindings(job);
+          if (job.state === 'done' || job.state === 'error') forgetJob();
         },
-        error: (error) => this.handle(error),
+        error: (error) => {
+          // Out of retries. Say so against the job that is still running,
+          // rather than silently freezing the progress bar.
+          this._lostContact.set(true);
+          this.handle(error);
+        },
       });
+  }
+
+  /**
+   * Resume watching the job this browser last submitted.
+   *
+   * Without this a reload loses the job id and the result becomes unreachable
+   * even though it is sitting finished on the server.
+   */
+  resumeLastJob(): void {
+    const id = rememberedJob();
+    if (!id) return;
+    this.reviews.getJob(id).subscribe({
+      next: (job) => {
+        this._job.set(job);
+        if (job.state === 'done') {
+          this.loadFindings(job);
+          forgetJob();
+        } else if (job.state === 'error') {
+          forgetJob();
+        } else {
+          this.follow(id);
+        }
+      },
+      // Gone, expired, or someone else's — nothing to resume.
+      error: () => forgetJob(),
+    });
+  }
+
+  /** Retry watching a job we lost contact with. */
+  reconnect(): void {
+    const id = this._job()?.id ?? rememberedJob();
+    if (id) this.follow(id);
   }
 
   /** Stops polling. Called on navigation away and before a new submission. */
@@ -219,6 +312,8 @@ export class ReviewService {
 
   reset(): void {
     this.stop();
+    forgetJob();
+    this._lostContact.set(false);
     this._job.set(null);
     this._findings.set(null);
     this._failure.set(null);

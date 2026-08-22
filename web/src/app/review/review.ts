@@ -42,6 +42,7 @@ export class Review implements OnDestroy {
   protected readonly failure = this.reviews.failure;
   protected readonly submitting = this.reviews.submitting;
   protected readonly running = this.reviews.running;
+  protected readonly lostContact = this.reviews.lostContact;
 
   protected readonly file = signal<File | null>(null);
   protected readonly dragging = signal(false);
@@ -90,6 +91,9 @@ export class Review implements OnDestroy {
     // retry, a reconnect — would silently reset the occupancy group and the
     // sprinklered checkbox underneath someone who had already changed them.
     this.reviews.loadConfig((config) => this.applyDefaults(config.defaults));
+    // A reload must not strand a review that is still running, or one that has
+    // already finished, on the server.
+    this.reviews.resumeLastJob();
   }
 
   private applyDefaults(defaults: ReviewOptions): void {
@@ -186,6 +190,10 @@ export class Review implements OnDestroy {
     this.reviews.reset();
     this.file.set(null);
     this.clientError.set(null);
+  }
+
+  protected reconnect(): void {
+    this.reviews.reconnect();
   }
 
   /** Retries the current file with conversion switched on. */

@@ -183,6 +183,20 @@
         }
       </ul>
       <p class="hint">{{ currentJob.filename }} · {{ currentJob.elapsed_seconds }}s elapsed</p>
+
+      @if (lostContact()) {
+        <!-- The review runs on the server whether or not we can see it, so this
+             says "lost sight of", not "failed". A frozen progress bar with no
+             explanation is the worst of both. -->
+        <div class="note warn" role="status" style="margin-top: 16px">
+          <b>Lost contact with the server.</b>
+          The review itself is almost certainly still running — this is the
+          progress display failing, not the job. Retrying automatically.
+          <div class="row">
+            <button type="button" class="ghost" (click)="reconnect()">Reconnect now</button>
+          </div>
+        </div>
+      }
     </section>
   }
 
