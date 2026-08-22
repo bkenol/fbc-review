@@ -38,7 +38,7 @@ import dataclasses
 import logging
 import math
 import time
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import pymupdf
 
@@ -52,6 +52,13 @@ TRACED_LAYER = "traced linework (unclassified)"
 #: text while bounding the transform.
 MAX_LONG_EDGE_PX = 4400
 MIN_DPI, MAX_DPI = 120, 400
+
+#: Regions get a bigger pixel budget than whole pages. Reading one pasted table
+#: is cheap next to Hough-transforming a whole sheet, and code tables are set in
+#: small type — at the whole-page budget a 20-inch-wide table renders at about
+#: 210 dpi and Tesseract starts fusing adjacent words into one token.
+MAX_REGION_LONG_EDGE_PX = 9000
+MIN_REGION_DPI = 300
 
 # Hough parameters, in pixels of the rendered image.
 HOUGH_THRESHOLD = 80
@@ -204,6 +211,152 @@ def _draw_traced(
         shape.finish(color=(0.0, 0.45, 0.9), width=0.3, stroke_opacity=0.35, oc=oc_xref)
         shape.commit(overlay=True)
     return drawn
+
+
+def read_regions(
+    src_path: str,
+    regions_by_page: Dict[int, Sequence[Tuple[float, float, float, float]]],
+    dest_path: str,
+    *,
+    language: str = "eng",
+) -> ConversionReport:
+    """Recover text from images pasted onto otherwise-readable sheets.
+
+    A sheet plotted as vector can still paste its code-analysis table in as a
+    picture. The ITEC set does exactly that on G-002 and A-101, and its hand
+    review says so outright — "plotted from AutoCAD LT with no preserved layers
+    and raster code tables". Those sheets classify as `vector`, correctly, so a
+    whole-page rebuild never touches them and the table stays unreadable.
+
+    So OCR just the pasted regions and write the words back onto the original
+    page as an invisible text layer, in place. Nothing is re-rendered: the
+    vector geometry, the CAD layers and the existing live text are all left
+    exactly as they were, and the sheet simply gains the words that were
+    previously only pixels.
+    """
+    started = time.monotonic()
+    caps = support()
+    if not caps.ocr:
+        log.warning("region OCR requested but Tesseract is unavailable")
+
+    doc = pymupdf.open(src_path)
+    reports: List[PageReport] = []
+
+    try:
+        for number, boxes in sorted(regions_by_page.items()):
+            if number < 0 or number >= doc.page_count:
+                continue
+            page_started = time.monotonic()
+            page = doc[number]
+            recovered = 0
+            note = f"{len(boxes)} region(s)"
+
+            if caps.ocr:
+                for box in boxes:
+                    try:
+                        recovered += _ocr_region(page, pymupdf.Rect(*box), language)
+                    except Exception as exc:
+                        note += f"; region failed ({type(exc).__name__})"
+                        log.warning(
+                            "region OCR failed",
+                            extra={"page": number, "error": str(exc)},
+                        )
+            else:
+                note += "; skipped, Tesseract unavailable"
+
+            reports.append(
+                PageReport(
+                    page=number,
+                    ocr_chars=recovered,
+                    traced_segments=0,
+                    seconds=round(time.monotonic() - page_started, 2),
+                    note=note,
+                )
+            )
+
+        doc.save(dest_path, garbage=3, deflate=True)
+    finally:
+        doc.close()
+
+    report = ConversionReport(
+        converted_pages=reports,
+        ocr_used=caps.ocr,
+        vectorise_used=False,
+        seconds=time.monotonic() - started,
+    )
+    log.info(
+        "region text recovery complete",
+        extra={
+            "pages": len(reports),
+            "recovered_chars": report.total_chars,
+            "seconds": round(report.seconds, 2),
+            "ocr_used": caps.ocr,
+        },
+    )
+    return report
+
+
+def _ocr_region(page: pymupdf.Page, box: pymupdf.Rect, language: str) -> int:
+    """OCR one pasted image and lay its words back over it, invisibly.
+
+    Returns the number of characters recovered.
+    """
+    dpi = _region_dpi(box)
+    pix = page.get_pixmap(clip=box, dpi=dpi, alpha=False)
+    rebuilt = pymupdf.open("pdf", pix.pdfocr_tobytes(language=language))
+    try:
+        ocr_page = rebuilt[0]
+        if not ocr_page.rect.width or not ocr_page.rect.height:
+            return 0
+
+        # Map the OCR page's coordinate space back onto the region as it sits
+        # on the real sheet.
+        sx = box.width / ocr_page.rect.width
+        sy = box.height / ocr_page.rect.height
+
+        writer = pymupdf.TextWriter(page.rect)
+        recovered = 0
+
+        # Whole lines, not individual words.
+        #
+        # Writing word by word loses the gaps between them: the glyphs land at
+        # their own origins, PyMuPDF re-derives word boundaries from spacing on
+        # extraction, and adjacent cells fuse — "MIXED OCCUPANCY" comes back as
+        # "MIXEDOCCUPANCY", which no label match will ever find. A line carries
+        # real space characters, so the boundaries survive the round trip.
+        for block in ocr_page.get_text("dict").get("blocks", []):
+            for line in block.get("lines", []):
+                text = "".join(span.get("text", "") for span in line.get("spans", []))
+                text = text.strip()
+                if not text:
+                    continue
+                x0, y0, x1, y1 = line["bbox"]
+                height = max((y1 - y0) * sy, 1.0)
+                origin = pymupdf.Point(box.x0 + x0 * sx, box.y0 + y1 * sy)
+                try:
+                    writer.append(origin, text, fontsize=height * 0.85)
+                    recovered += len(text)
+                except Exception:
+                    # A glyph the base font cannot encode. Dropping one line is
+                    # better than losing the whole table.
+                    continue
+
+        if recovered:
+            # render_mode=3 is the invisible-text convention every OCR layer
+            # uses: extractable and searchable, never drawn over the drawing.
+            writer.write_text(page, render_mode=3)
+        return recovered
+    finally:
+        rebuilt.close()
+
+
+def _region_dpi(box: pymupdf.Rect) -> int:
+    """Enough resolution for small table text, without rendering a poster."""
+    longest_in = max(box.width, box.height) / 72.0
+    if longest_in <= 0:
+        return MIN_REGION_DPI
+    fits = int(MAX_REGION_LONG_EDGE_PX / longest_in)
+    return max(MIN_REGION_DPI, min(MAX_DPI, fits))
 
 
 def convert(

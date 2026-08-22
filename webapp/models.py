@@ -147,6 +147,17 @@ class Summary(BaseModel):
 
 
 # ── what kind of PDF was uploaded ─────────────────────────────────────────
+class RasterRegion(BaseModel):
+    """A pasted image large enough to plausibly hold a table."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    megapixels: float
+    coverage: float
+
+
 class SheetProfile(BaseModel):
     """Measured, not guessed: drawing-primitive count, live character count and
     how much of the page is covered by raster images."""
@@ -158,6 +169,7 @@ class SheetProfile(BaseModel):
     image_count: int
     image_coverage: float = Field(ge=0.0, le=1.0)
     reason: str
+    raster_regions: List[RasterRegion] = Field(default_factory=list)
 
 
 class SourceProfile(BaseModel):
@@ -171,7 +183,16 @@ class SourceProfile(BaseModel):
     kind: DocumentKind
     cad_layers: int
     reviewable_pages: int
-    raster_pages: List[int]
+    raster_pages: List[int] = Field(
+        default_factory=list, description="Sheets that are wholly images."
+    )
+    region_pages: List[int] = Field(
+        default_factory=list,
+        description=(
+            "Readable sheets that nonetheless paste part of the drawing in as an "
+            "image. A code-analysis table pasted that way is pixels, and needs OCR."
+        ),
+    )
     summary: str
     sheets: List[SheetProfile]
 

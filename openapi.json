@@ -646,6 +646,45 @@
         "title": "OccupancyGroup",
         "type": "object"
       },
+      "RasterRegion": {
+        "description": "A pasted image large enough to plausibly hold a table.",
+        "properties": {
+          "coverage": {
+            "title": "Coverage",
+            "type": "number"
+          },
+          "megapixels": {
+            "title": "Megapixels",
+            "type": "number"
+          },
+          "x0": {
+            "title": "X0",
+            "type": "number"
+          },
+          "x1": {
+            "title": "X1",
+            "type": "number"
+          },
+          "y0": {
+            "title": "Y0",
+            "type": "number"
+          },
+          "y1": {
+            "title": "Y1",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x0",
+          "y0",
+          "x1",
+          "y1",
+          "megapixels",
+          "coverage"
+        ],
+        "title": "RasterRegion",
+        "type": "object"
+      },
       "ReviewAccepted": {
         "properties": {
           "id": {
@@ -760,6 +799,13 @@
             "title": "Page",
             "type": "integer"
           },
+          "raster_regions": {
+            "items": {
+              "$ref": "#/components/schemas/RasterRegion"
+            },
+            "title": "Raster Regions",
+            "type": "array"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -799,10 +845,19 @@
             "type": "string"
           },
           "raster_pages": {
+            "description": "Sheets that are wholly images.",
             "items": {
               "type": "integer"
             },
             "title": "Raster Pages",
+            "type": "array"
+          },
+          "region_pages": {
+            "description": "Readable sheets that nonetheless paste part of the drawing in as an image. A code-analysis table pasted that way is pixels, and needs OCR.",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Region Pages",
             "type": "array"
           },
           "reviewable_pages": {
@@ -825,7 +880,6 @@
           "kind",
           "cad_layers",
           "reviewable_pages",
-          "raster_pages",
           "summary",
           "sheets"
         ],

@@ -167,6 +167,43 @@ def make_raster_pdf(pages: int = 1) -> bytes:
     return buf
 
 
+def make_pdf_with_pasted_table(pages: int = 1) -> bytes:
+    """A properly plotted sheet that pastes its code table in as a picture.
+
+    This is the ITEC case, and it is the common one: the sheet is genuinely
+    vector with live text, so a whole-sheet check calls it readable, while the
+    rows the rules actually need are pixels.
+    """
+    # Render the "table" to an image first, so its text is not live.
+    table = pymupdf.open()
+    tp = table.new_page(width=760, height=340)
+    rows = [
+        "USE AND OCCUPANCY CLASSIFICATION",
+        "OCCUPANCY: BUSINESS",
+        "MIXED OCCUPANCY? NO",
+        "OCCUPANCY SEPARATION RATING PROVIDED:",
+        "MULTIPLE - SEPARATED PER TABLE 508.4",
+        "CONSTRUCTION TYPE: II-B",
+    ]
+    y = 46
+    for row in rows:
+        tp.insert_text((30, y), row, fontsize=21)
+        y += 48
+    picture = tp.get_pixmap(dpi=200)
+    table.close()
+
+    doc = pymupdf.open()
+    for i in range(pages):
+        page = doc.new_page(width=1224, height=792)
+        for n in range(200):
+            page.draw_line((20 + n * 6, 40), (20 + n * 6, 560))
+        page.insert_text((40, 600), f"SHEET G-{i} GENERAL NOTES " * 6, fontsize=8)
+        page.insert_image(pymupdf.Rect(430, 620, 1190, 780), pixmap=picture)
+    buf = doc.tobytes()
+    doc.close()
+    return buf
+
+
 def make_blank_pdf(pages: int = 1) -> bytes:
     doc = pymupdf.open()
     for _ in range(pages):

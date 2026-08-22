@@ -338,6 +338,24 @@
             checked.
           </div>
         }
+
+        @if (pastedTablesUnread()) {
+          <div class="note warn">
+            <b>
+              {{ pastedTableSheets().length }} sheet(s) paste part of the drawing in as an
+              image.
+            </b>
+            Pages {{ pastedTableSheets().join(', ') }}. The sheets themselves are proper
+            vector, so they look fine — but a code-analysis table pasted in as a picture is
+            pixels, and nothing read it. If rules stood down for want of a value that is
+            printed on one of those sheets, that is why.
+            <div class="row">
+              <button type="button" class="ghost" (click)="retryWithConversion()">
+                Read those sheets and review again
+              </button>
+            </div>
+          </div>
+        }
       </div>
     </section>
   }

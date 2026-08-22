@@ -12,6 +12,7 @@ export * from './health';
 export * from './job';
 export * from './mail-status';
 export * from './occupancy-group';
+export * from './raster-region';
 export * from './review-accepted';
 export * from './review-options';
 export * from './sheet-profile';

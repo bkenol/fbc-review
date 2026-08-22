@@ -21,6 +21,7 @@ model/job.ts
 model/mail-status.ts
 model/models.ts
 model/occupancy-group.ts
+model/raster-region.ts
 model/review-accepted.ts
 model/review-options.ts
 model/sheet-profile.ts

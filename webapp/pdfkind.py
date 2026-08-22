@@ -29,6 +29,32 @@ MIN_VECTOR_ITEMS = 120
 MIN_LIVE_CHARS = 120
 IMAGE_COVERAGE_RASTER = 0.55
 
+# A sheet can be perfectly good vector and still hide its code-analysis table
+# inside a pasted image — the ITEC set does exactly that on G-002 and A-101,
+# and the hand review of it says so: "plotted from AutoCAD LT with no preserved
+# layers and raster code tables".
+#
+# Those sheets classify as `vector`, correctly, so a whole-sheet raster rebuild
+# never fires on them and the table stays unreadable. Regions are tracked
+# separately for that reason.
+MIN_REGION_COVERAGE = 0.04      # of the page, per image
+MIN_REGION_MEGAPIXELS = 0.4     # below this it is a logo, not a table
+
+
+@dataclasses.dataclass
+class RasterRegion:
+    """A pasted image big enough to plausibly hold a table."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    megapixels: float
+    coverage: float
+
+    def to_dict(self) -> dict:
+        return dataclasses.asdict(self)
+
 
 @dataclasses.dataclass
 class SheetProfile:
@@ -39,6 +65,12 @@ class SheetProfile:
     image_count: int
     image_coverage: float
     reason: str
+    raster_regions: List[RasterRegion] = dataclasses.field(default_factory=list)
+
+    @property
+    def has_readable_regions(self) -> bool:
+        """Raster worth OCR-ing, on a sheet that is otherwise fine."""
+        return self.kind in ("vector", "hybrid") and bool(self.raster_regions)
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
@@ -54,8 +86,13 @@ class DocumentProfile:
     summary: str
 
     @property
+    def region_pages(self) -> List[int]:
+        """Readable sheets that nonetheless hide content inside pasted images."""
+        return [s.page for s in self.sheets if s.has_readable_regions]
+
+    @property
     def needs_conversion(self) -> bool:
-        return bool(self.raster_pages)
+        return bool(self.raster_pages) or bool(self.region_pages)
 
     def to_dict(self) -> dict:
         return {
@@ -63,6 +100,7 @@ class DocumentProfile:
             "cad_layers": self.cad_layers,
             "reviewable_pages": self.reviewable_pages,
             "raster_pages": list(self.raster_pages),
+            "region_pages": list(self.region_pages),
             "summary": self.summary,
             "sheets": [s.to_dict() for s in self.sheets],
         }
@@ -90,29 +128,43 @@ def _vector_items(page: pymupdf.Page) -> int:
     return total
 
 
-def _image_coverage(page: pymupdf.Page) -> tuple[int, float]:
-    """Fraction of the page covered by raster images, clamped to 1.0."""
+def _images(page: pymupdf.Page):
+    """Coverage, count, and the regions big enough to be worth reading."""
     page_area = abs(page.rect.get_area())
     if page_area <= 0:
-        return 0, 0.0
+        return 0, 0.0, []
 
     covered = 0.0
     count = 0
+    regions: List[RasterRegion] = []
     try:
         for info in page.get_image_info():
             bbox = pymupdf.Rect(info["bbox"])
-            covered += abs(bbox.get_area())
+            area = abs(bbox.get_area())
+            covered += area
             count += 1
-    except Exception:
-        return 0, 0.0
 
-    return count, min(covered / page_area, 1.0)
+            coverage = area / page_area
+            megapixels = (info.get("width", 0) * info.get("height", 0)) / 1e6
+            if coverage >= MIN_REGION_COVERAGE and megapixels >= MIN_REGION_MEGAPIXELS:
+                regions.append(
+                    RasterRegion(
+                        x0=round(bbox.x0, 2), y0=round(bbox.y0, 2),
+                        x1=round(bbox.x1, 2), y1=round(bbox.y1, 2),
+                        megapixels=round(megapixels, 2),
+                        coverage=round(coverage, 3),
+                    )
+                )
+    except Exception:
+        return 0, 0.0, []
+
+    return count, min(covered / page_area, 1.0), regions
 
 
 def classify_page(page: pymupdf.Page) -> SheetProfile:
     items = _vector_items(page)
     chars = len((page.get_text() or "").strip())
-    images, coverage = _image_coverage(page)
+    images, coverage, regions = _images(page)
 
     has_vector = items >= MIN_VECTOR_ITEMS
     has_text = chars >= MIN_LIVE_CHARS
@@ -150,6 +202,7 @@ def classify_page(page: pymupdf.Page) -> SheetProfile:
         image_count=images,
         image_coverage=round(coverage, 3),
         reason=reason,
+        raster_regions=regions,
     )
 
 
@@ -184,12 +237,20 @@ def profile(path: str, doc: Optional[pymupdf.Document] = None) -> DocumentProfil
     else:
         kind = "mixed"
 
+    embedded = [s.page for s in sheets if s.has_readable_regions]
+
     if kind == "vector":
         summary = (
             f"{readable} of {len(sheets)} sheets are plotted as vector with live text"
             + (f", and {layers} CAD layers are preserved" if layers else "")
             + "."
         )
+        if embedded:
+            summary += (
+                f" {len(embedded)} sheet{'s' if len(embedded) != 1 else ''} paste part of "
+                "the drawing in as an image — a code-analysis table pasted that way is "
+                "pixels, and nothing can read it without OCR."
+            )
     elif kind == "raster":
         summary = (
             f"All {len(content_pages)} sheets are raster images with no live text or "

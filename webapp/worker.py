@@ -62,6 +62,7 @@ def run_review(
     store_files: "storage.Storage",
     convert_raster: bool = False,
     raster_pages: Optional[List[int]] = None,
+    raster_regions: Optional[Dict[int, List[Any]]] = None,
 ) -> None:
     """Executed on a worker thread. Never raises — every failure is recorded
     on the job document instead, because nothing is waiting on the return."""
@@ -83,16 +84,32 @@ def run_review(
         src = workdir / "source.pdf"
         store_files.download_to(upload_blob, str(src))
 
-        # ── rebuild scanned sheets, when asked ─────────────────────────────
-        if convert_raster and raster_pages:
+        # ── rebuild unreadable sheets, when asked ──────────────────────────
+        if convert_raster and (raster_pages or raster_regions):
             advance()
-            rebuilt = workdir / "converted.pdf"
-            report = convert.convert(str(src), raster_pages, str(rebuilt))
-            store.update(job_id, conversion=report.to_dict())
-            # Only adopt the rebuild if it actually produced a file; a failed
-            # OCR pass must not lose the original.
-            if rebuilt.exists() and rebuilt.stat().st_size > 0:
-                src = rebuilt
+            report = None
+
+            # Whole scanned sheets: re-render, OCR and trace.
+            if raster_pages:
+                rebuilt = workdir / "converted.pdf"
+                report = convert.convert(str(src), raster_pages, str(rebuilt))
+                if rebuilt.exists() and rebuilt.stat().st_size > 0:
+                    src = rebuilt
+
+            # Readable sheets that paste their code table in as a picture. Far
+            # more common than a wholly scanned set, and invisible to a
+            # whole-sheet check — the sheet is genuinely vector, the table is
+            # not. Only the pasted regions are read, and the vector content is
+            # left untouched.
+            if raster_regions:
+                read = workdir / "regions.pdf"
+                region_report = convert.read_regions(str(src), raster_regions, str(read))
+                if read.exists() and read.stat().st_size > 0:
+                    src = read
+                report = _merge_reports(report, region_report)
+
+            if report is not None:
+                store.update(job_id, conversion=report.to_dict())
 
         # ── extract ────────────────────────────────────────────────────────
         advance()
@@ -203,6 +220,20 @@ def run_review(
     finally:
         # The instance's disk is small and shared with the next request.
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _merge_reports(first, second):
+    """Combine the whole-sheet rebuild and the region read into one report."""
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return convert.ConversionReport(
+        converted_pages=[*first.converted_pages, *second.converted_pages],
+        ocr_used=first.ocr_used or second.ocr_used,
+        vectorise_used=first.vectorise_used or second.vectorise_used,
+        seconds=first.seconds + second.seconds,
+    )
 
 
 def _send_mail(options, filename, summary, result, pdf_path: str) -> None:

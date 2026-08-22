@@ -16,7 +16,14 @@ import { SheetProfile } from './sheet-profile';
 export interface SourceProfile { 
     cad_layers: number;
     kind: SourceProfileKindEnum;
-    raster_pages: Array<number>;
+    /**
+     * Sheets that are wholly images.
+     */
+    raster_pages?: Array<number>;
+    /**
+     * Readable sheets that nonetheless paste part of the drawing in as an image. A code-analysis table pasted that way is pixels, and needs OCR.
+     */
+    region_pages?: Array<number>;
     reviewable_pages: number;
     sheets: Array<SheetProfile>;
     summary: string;

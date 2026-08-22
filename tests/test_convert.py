@@ -222,3 +222,70 @@ def test_conversion_report_is_published_in_the_schema(client):
     assert "ConversionReport" in schemas
     assert "ConvertedPage" in schemas
     assert "convert_raster" in schemas["ReviewOptions"]["properties"]
+
+
+# ── reading tables pasted onto readable sheets ────────────────────────────
+def pasted_set(pages: int = 1) -> bytes:
+    from conftest import make_pdf_with_pasted_table
+
+    return make_pdf_with_pasted_table(pages=pages)
+
+
+def test_region_read_leaves_the_vector_content_alone():
+    """Only the pasted image is read. The sheet's own geometry and live text
+    must survive untouched — re-rendering a good sheet would destroy exactly
+    what the engine wants."""
+    src = write(pasted_set(), "pasted.pdf")
+    before = pdfkind.profile(src)
+    regions = {p: [(r.x0, r.y0, r.x1, r.y1) for r in before.sheets[p].raster_regions]
+               for p in before.region_pages}
+
+    dest = src.replace("pasted", "read")
+    convert.read_regions(src, regions, dest)
+
+    after = pdfkind.profile(dest)
+    assert after.sheets[0].vector_items == before.sheets[0].vector_items
+    assert after.sheets[0].live_chars >= before.sheets[0].live_chars
+
+
+@pytest.mark.skipif(not convert.support().ocr, reason="Tesseract not installed")
+def test_region_read_recovers_the_pasted_rows():
+    src = write(pasted_set(), "pasted.pdf")
+    before = pdfkind.profile(src)
+    regions = {p: [(r.x0, r.y0, r.x1, r.y1) for r in before.sheets[p].raster_regions]
+               for p in before.region_pages}
+
+    dest = src.replace("pasted", "read")
+    report = convert.read_regions(src, regions, dest)
+    assert report.ocr_used is True
+    assert report.total_chars > 0
+
+    text = pymupdf.open(dest)[0].get_text().upper()
+    # Word boundaries must survive the round trip. Writing the OCR back word by
+    # word fuses adjacent cells into "MIXEDOCCUPANCY", which no label match
+    # would ever find, so whole lines are written instead.
+    assert "MIXED OCCUPANCY" in text
+    assert "508.4" in text
+
+
+def test_region_read_without_ocr_is_a_no_op_not_a_failure():
+    src = write(pasted_set(), "pasted.pdf")
+    dest = src.replace("pasted", "read")
+    # An empty region map is the "nothing to do" case and must still produce a
+    # usable file rather than raising.
+    report = convert.read_regions(src, {}, dest)
+    assert report.converted_pages == []
+    assert Path(dest).exists()
+    assert pymupdf.open(dest).page_count == 1
+
+
+def test_a_pasted_table_set_gets_the_rebuild_stage_when_opted_in(client):
+    plain = post_review(client, make_pdf(pages=1))
+    plain_stages = client.get(f"/api/jobs/{plain.json()['id']}").json()["stages"]
+
+    pasted = post_review(
+        client, pasted_set(), options=json.dumps({"convert_raster": True}), name="pasted.pdf"
+    )
+    stages = client.get(f"/api/jobs/{pasted.json()['id']}").json()["stages"]
+    assert "Rebuilding scanned sheets" in stages
+    assert len(stages) == len(plain_stages) + 1

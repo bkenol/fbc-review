@@ -123,3 +123,53 @@ def test_source_profile_is_published_in_the_schema(client):
     assert "SourceProfile" in schemas
     assert "SheetProfile" in schemas
     assert "source" in schemas["Job"]["properties"]
+
+
+# ── pasted tables inside otherwise-readable sheets ────────────────────────
+def test_a_pasted_table_is_found_on_an_otherwise_vector_sheet():
+    """The ITEC case. The sheet is genuinely vector and classifies as such, so
+    a whole-sheet raster check never fires — while the code-analysis rows the
+    rules need sit inside a pasted image, unreadable."""
+    from conftest import make_pdf_with_pasted_table
+
+    prof = profile_of(make_pdf_with_pasted_table(pages=1))
+
+    assert prof.kind == "vector"
+    assert prof.raster_pages == []          # nothing is a *scan*
+    assert prof.region_pages == [0]         # but content is pasted in
+    assert prof.needs_conversion is True
+
+    sheet = prof.sheets[0]
+    assert sheet.kind == "vector"
+    assert sheet.has_readable_regions is True
+    assert len(sheet.raster_regions) == 1
+    assert sheet.raster_regions[0].megapixels > 0.4
+
+
+def test_a_clean_vector_sheet_reports_no_regions():
+    prof = profile_of(make_pdf(pages=2))
+    assert prof.region_pages == []
+    assert all(not s.has_readable_regions for s in prof.sheets)
+
+
+def test_the_summary_says_a_pasted_table_needs_ocr():
+    from conftest import make_pdf_with_pasted_table
+
+    prof = profile_of(make_pdf_with_pasted_table(pages=1))
+    assert "pixels" in prof.summary
+    assert "OCR" in prof.summary
+
+
+def test_regions_reach_the_job_and_the_schema(client):
+    from conftest import make_pdf_with_pasted_table
+
+    r = post_review(client, make_pdf_with_pasted_table(pages=1), name="pasted.pdf")
+    assert r.status_code == 202
+
+    source = client.get(f"/api/jobs/{r.json()['id']}").json()["source"]
+    assert source["region_pages"] == [0]
+    assert source["sheets"][0]["raster_regions"]
+
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    assert "RasterRegion" in schemas
+    assert "region_pages" in schemas["SourceProfile"]["properties"]

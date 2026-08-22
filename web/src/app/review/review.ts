@@ -82,6 +82,18 @@ export class Review implements OnDestroy {
   /** Sheets the parser could not read into. Not the same as sheets that passed. */
   protected readonly unreadableSheets = computed(() => this.job()?.source?.raster_pages ?? []);
 
+  /**
+   * Readable sheets that paste part of the drawing in as a picture. This is the
+   * common case, and the quiet one: the sheet is genuinely vector, so nothing
+   * looks wrong, while the code-analysis table on it is pixels.
+   */
+  protected readonly pastedTableSheets = computed(() => this.job()?.source?.region_pages ?? []);
+
+  /** True when those sheets went unread because the rebuild was left off. */
+  protected readonly pastedTablesUnread = computed(
+    () => this.pastedTableSheets().length > 0 && !this.job()?.conversion,
+  );
+
   constructor() {
     // Adopt the server's defaults once, rather than duplicating them here
     // where they would drift.

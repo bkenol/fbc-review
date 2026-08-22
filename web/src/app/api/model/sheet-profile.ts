@@ -7,6 +7,7 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { RasterRegion } from './raster-region';
 
 
 /**
@@ -18,6 +19,7 @@ export interface SheetProfile {
     kind: SheetProfileKindEnum;
     live_chars: number;
     page: number;
+    raster_regions?: Array<RasterRegion>;
     reason: string;
     vector_items: number;
 }

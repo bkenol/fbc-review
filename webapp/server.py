@@ -299,7 +299,10 @@ async def create_review(
     engine_options = ReviewOptions(
         **{k: v for k, v in parsed.model_dump().items() if k in engine_fields}
     )
-    job_stages = stages_for(parsed.convert_raster and bool(source.raster_pages))
+    # Regions count too: a vector sheet with its code table pasted in as a
+    # picture needs the rebuild stage just as much as a scanned one does.
+    needs_rebuild = parsed.convert_raster and bool(source.raster_pages or source.region_pages)
+    job_stages = stages_for(needs_rebuild)
 
     store.create(
         job_id=job_id,
@@ -326,6 +329,7 @@ async def create_review(
             "sprinklered": parsed.sprinklered,
             "source_kind": source.kind,
             "raster_pages": len(source.raster_pages),
+            "region_pages": len(source.region_pages),
         },
     )
 
@@ -342,6 +346,11 @@ async def create_review(
         store_files=files,
         convert_raster=parsed.convert_raster,
         raster_pages=list(source.raster_pages),
+        raster_regions={
+            sheet.page: [(r.x0, r.y0, r.x1, r.y1) for r in sheet.raster_regions]
+            for sheet in source.sheets
+            if sheet.has_readable_regions
+        },
     )
     return JSONResponse({"id": job_id}, status_code=202)
 
