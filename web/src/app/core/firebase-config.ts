@@ -6,8 +6,8 @@
  * and checking the email allowlist (webapp/auth.py). Committing them is normal
  * Firebase practice and is not a secret leak.
  *
- * Fill these in from the Firebase console: Project settings, "Your apps", the
- * web app's SDK configuration. DEPLOYMENT.md records where they came from.
+ * Written by scripts/provision.sh from `firebase apps:sdkconfig`. Re-running
+ * provisioning regenerates it; hand edits will be overwritten.
  */
 export interface FirebaseWebConfig {
   apiKey: string;

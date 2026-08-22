@@ -1,4 +1,4 @@
-# Deployment runbook — `review.omniflexfitness.com`
+# Deployment runbook — `fbc.omniflexfitness.com`
 
 Every command needed to stand this service up, and every decision taken while
 building it.
@@ -37,6 +37,36 @@ ng test --watch=false     8 passed (Vitest)
 ```
 
 ---
+
+## 0a. Deploying it — the short version
+
+Everything in sections 3 to 5 is automated by `scripts/provision.sh`. It is
+idempotent, so a failure halfway through is fixed by running it again.
+
+```bash
+gcloud auth login          # your own account, not a service account
+firebase login
+bash scripts/provision.sh
+```
+
+It stops and asks only where a decision is yours — which billing account to
+attach. Re-run it with that account:
+
+```bash
+FBC_BILLING_ACCOUNT=0X0X0X-0X0X0X-0X0X0X bash scripts/provision.sh
+```
+
+Overridable settings: `FBC_PROJECT_ID` (default `fbc-reviewer`), `FBC_REGION`
+(`us-east1`), `FBC_BUCKET`, `FBC_DOMAIN` (`fbc.omniflexfitness.com`),
+`FBC_ALLOWED_EMAILS`.
+
+The script refuses to run as a service account, because gcloud on this
+workstation was left authenticated as a CI identity for an unrelated project and
+provisioning with it would create everything in the wrong place.
+
+Two things it cannot do for you, both needing a browser: enabling the Google
+sign-in provider, and adding the custom domain plus its DNS records. It prints
+the console links for both when it finishes.
 
 ## 1. Prerequisites
 
@@ -290,7 +320,7 @@ and the reason here if you take it.
 
 ### Custom domain
 
-Add `review.omniflexfitness.com` in the Firebase Hosting console. It will print
+Add `fbc.omniflexfitness.com` in the Firebase Hosting console. It will print
 the exact records. **They go into the registrar by hand — this runbook does not
 touch DNS and no registrar credentials should be shared.**
 
@@ -304,7 +334,7 @@ Then:
 
 1. Wait for propagation, then confirm the TLS certificate is valid.
 2. Confirm HTTP redirects to HTTPS.
-3. **Add `review.omniflexfitness.com` to Firebase Auth → Settings → Authorised
+3. **Add `fbc.omniflexfitness.com` to Firebase Auth → Settings → Authorised
    domains.** Google sign-in works on `*.web.app` and fails on the custom domain
    without this. It catches everyone once.
 4. Add the custom domain to `cors.json` and re-apply it to the bucket.
@@ -500,7 +530,7 @@ record it here:
 ```bash
 gcloud run services update fbc-review --region=us-east1 --min-instances=0
 # then, after several minutes idle:
-curl -s -o /dev/null -w '%{time_total}\n' https://review.omniflexfitness.com/healthz
+curl -s -o /dev/null -w '%{time_total}\n' https://fbc.omniflexfitness.com/healthz
 ```
 
 Expect it to be poor by web standards: the image is 893 MB and importing
