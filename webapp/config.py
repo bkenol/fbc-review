@@ -46,6 +46,13 @@ class Settings:
     on_cloud_run: bool
     dev_unsafe_auth: bool
 
+    #: When set, the API also serves the built Angular bundle from this path.
+    #: Off in the Firebase Hosting deployment, where Hosting serves the client
+    #: from a CDN and rewrites only /api/** here. Used for single-origin
+    #: deployments — one container behind a tunnel or a plain VM — where there
+    #: is no CDN in front and cross-origin would mean CORS for no benefit.
+    static_dir: str
+
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
@@ -75,4 +82,5 @@ def settings() -> Settings:
         collection=os.environ.get("FBC_COLLECTION", "reviews"),
         on_cloud_run=on_cloud_run,
         dev_unsafe_auth=dev_unsafe,
+        static_dir=os.environ.get("FBC_STATIC_DIR", ""),
     )

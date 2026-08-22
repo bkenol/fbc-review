@@ -418,6 +418,12 @@
       "Health": {
         "description": "Deliberately cheap: no Firestore or Cloud Storage call. Cloud Run's\nstartup probe hits this.",
         "properties": {
+          "auth_required": {
+            "default": true,
+            "description": "Whether this deployment demands a Firebase ID token. False only on a deliberately open build. The client reads it here rather than inferring it, because guessing wrong in either direction is bad: guess `true` on an open deployment and the tool is unreachable; guess `false` on a real one and every request 401s behind a UI that claims you are signed in.",
+            "title": "Auth Required",
+            "type": "boolean"
+          },
           "ok": {
             "title": "Ok",
             "type": "boolean"

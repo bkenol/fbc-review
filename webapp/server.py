@@ -191,7 +191,12 @@ def _dev_files():
 def healthz() -> models.Health:
     # No Firestore, no Cloud Storage, no allowlist. Cloud Run's startup probe
     # hits this and it must answer before dependencies are warm.
-    return models.Health(ok=True, service="fbc-review", version=VERSION)
+    return models.Health(
+        ok=True,
+        service="fbc-review",
+        version=VERSION,
+        auth_required=not settings().dev_unsafe_auth,
+    )
 
 
 # -- config ----------------------------------------------------------------
@@ -458,6 +463,36 @@ if settings().dev_unsafe_auth:
         )
 
 
-# No route serves HTML. webapp/static/index.html was the reference client and
-# was removed once web/ reached parity; the Angular bundle is served by Firebase
-# Hosting, which rewrites only /api/** here.
+# -- the client, when this deployment serves it itself ---------------------
+# The Firebase Hosting deployment does not: Hosting serves the bundle from a CDN
+# and rewrites only /api/** here, so FBC_STATIC_DIR is unset and nothing below
+# runs. It exists for single-origin deployments — one container behind a tunnel,
+# or a plain VM — where putting a separate static host in front would buy
+# nothing and cost a CORS configuration.
+#
+# Mounted last, so /api, /healthz and /openapi.json are matched first.
+if settings().static_dir:
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from starlette.staticfiles import StaticFiles
+
+    class SinglePageFiles(StaticFiles):
+        """Static files with an SPA fallback.
+
+        The Angular router owns paths like /sign-in, which exist in the client
+        and not on disk. Without the fallback a reload on one of them 404s.
+        """
+
+        async def get_response(self, path: str, scope):
+            try:
+                return await super().get_response(path, scope)
+            except StarletteHTTPException as exc:
+                if exc.status_code == 404:
+                    return await super().get_response("index.html", scope)
+                raise
+
+    _static = Path(settings().static_dir)
+    if _static.is_dir():
+        app.mount("/", SinglePageFiles(directory=str(_static), html=True), name="client")
+        log.info("serving the client from disk", extra={"static_dir": str(_static)})
+    else:
+        log.warning("FBC_STATIC_DIR does not exist", extra={"static_dir": str(_static)})

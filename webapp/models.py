@@ -293,3 +293,14 @@ class Health(BaseModel):
     ok: bool
     service: str
     version: str
+    auth_required: bool = Field(
+        default=True,
+        description=(
+            "Whether this deployment demands a Firebase ID token. False only on a "
+            "deliberately open build. The client reads it here rather than "
+            "inferring it, because guessing wrong in either direction is bad: "
+            "guess `true` on an open deployment and the tool is unreachable; "
+            "guess `false` on a real one and every request 401s behind a UI that "
+            "claims you are signed in."
+        ),
+    )

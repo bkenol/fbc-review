@@ -8,7 +8,11 @@
       </p>
     </div>
     <p class="sub">
-      @if (auth.state() === 'allowed' || auth.state() === 'not-allowed') {
+      @if (auth.openAccess()) {
+        <!-- Nothing to sign out of, and saying so is better than showing a
+             button that does nothing. -->
+        Open access · no sign-in on this deployment
+      } @else if (auth.state() === 'allowed' || auth.state() === 'not-allowed') {
         {{ auth.email() }} ·
         <button type="button" class="ghost" style="padding: 4px 10px; font-size: 0.8rem"
                 (click)="auth.signOut()">Sign out</button>

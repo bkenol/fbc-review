@@ -8,7 +8,7 @@
  * The SDK's `User` is bridged into a signal, so templates react without any
  * manual change detection — this app is zoneless.
  */
-import { Injectable, computed, isDevMode, signal } from '@angular/core';
+import { Injectable, computed, signal } from '@angular/core';
 import { FirebaseApp, getApps, initializeApp } from 'firebase/app';
 import {
   Auth,
@@ -26,9 +26,9 @@ import { FIREBASE_CONFIG, isFirebaseConfigured } from './firebase-config';
  *  to get wrong: signed in with a real Google account, and still not allowed. */
 export type AccessState = 'starting' | 'signed-out' | 'checking' | 'allowed' | 'not-allowed';
 
-/** Stand-in for `ng serve` against a dev API. See the constructor. */
-const LOCAL_DEV_USER = {
-  email: 'local-dev@localhost',
+/** Stand-in on a deployment that has declared it does not want sign-in. */
+const OPEN_ACCESS_USER = {
+  email: 'open access',
   getIdToken: async () => null,
 } as unknown as User;
 
@@ -42,6 +42,7 @@ export class AuthService {
   private readonly _denied = signal<string | null>(null);
   private readonly _signingIn = signal(false);
   private readonly _error = signal<string | null>(null);
+  private readonly _openAccess = signal(false);
 
   /** The signed-in Firebase user, or null. */
   readonly user = this._user.asReadonly();
@@ -51,6 +52,8 @@ export class AuthService {
   readonly denied = this._denied.asReadonly();
   readonly signingIn = this._signingIn.asReadonly();
   readonly error = this._error.asReadonly();
+  /** True when the server said it does not require a token. */
+  readonly openAccess = this._openAccess.asReadonly();
 
   readonly configured = isFirebaseConfigured();
   readonly email = computed(() => this._user()?.email ?? null);
@@ -66,19 +69,14 @@ export class AuthService {
 
   constructor() {
     if (!this.configured) {
-      // Nothing to connect to yet.
+      // No Firebase project. Ask the server whether it actually wants a token
+      // before deciding the tool is unreachable.
       //
-      // Under `ng serve` against a dev API, stand in a local user so the tool
-      // page is reachable and can actually be used. This is not a security
-      // decision: the server verifies the token and checks the allowlist on
-      // every route, so a client that claims to be signed in simply gets 401s
-      // from a real deployment. isDevMode() is false in any `ng build` output,
-      // and a real deployment has Firebase configured so this branch is dead
-      // code there twice over.
-      if (isDevMode()) {
-        this._user.set(LOCAL_DEV_USER);
-      }
-      this._ready.set(true);
+      // Asking beats guessing in both directions: assume sign-in is required on
+      // a deliberately open deployment and the tool is unusable behind a
+      // sign-in button that cannot work; assume it is not on a real one and
+      // every request 401s behind a UI claiming you are signed in.
+      void this.probeOpenAccess();
       return;
     }
 
@@ -88,12 +86,41 @@ export class AuthService {
     onAuthStateChanged(this.auth, (user) => {
       this._user.set(user);
       if (!user) this._denied.set(null);
-      if (!this._ready()) {
-        this._ready.set(true);
-        this.readyResolvers.forEach((resolve) => resolve());
-        this.readyResolvers = [];
-      }
+      this.settleReady();
     });
+  }
+
+  /**
+   * Ask /healthz — which is unauthenticated by design — whether this
+   * deployment requires sign-in at all.
+   *
+   * Uses `fetch` rather than HttpClient on purpose: HttpClient would run the
+   * auth interceptor, which injects this service, and a service cannot cleanly
+   * depend on something that depends on it during construction.
+   */
+  private async probeOpenAccess(): Promise<void> {
+    try {
+      const response = await fetch('healthz', { cache: 'no-store' });
+      if (response.ok) {
+        const health = (await response.json()) as { auth_required?: boolean };
+        if (health.auth_required === false) {
+          this._openAccess.set(true);
+          this._user.set(OPEN_ACCESS_USER);
+        }
+      }
+    } catch {
+      // Unreachable server. Leave it requiring sign-in; the review page will
+      // surface the connection failure on its own.
+    } finally {
+      this.settleReady();
+    }
+  }
+
+  private settleReady(): void {
+    if (this._ready()) return;
+    this._ready.set(true);
+    this.readyResolvers.forEach((resolve) => resolve());
+    this.readyResolvers = [];
   }
 
   /** Resolves once the SDK has restored (or ruled out) a session. Route guards
