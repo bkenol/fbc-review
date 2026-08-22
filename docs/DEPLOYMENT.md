@@ -30,6 +30,7 @@ Test status on the current commit:
 
 ```
 pytest tests/ -v          62 passed, 1 skipped   (locally, no Tesseract)
+test_regression.py        OK  (FBC_TEST_PDF = the real Sculpted permit set)
 pytest inside the image   63 passed              (Python 3.12, with Tesseract)
 ng build                  clean, 0 template type errors
 ng test --watch=false     8 passed (Vitest)
@@ -534,8 +535,12 @@ Ticked only where actually verified. See the report for what is blocked and why.
       requests over 12 s idle after a job finished
 - [x] Cloud Logging output is structured JSON with job ids, and carries no PDF
       content or filenames
-- [ ] A real 35-sheet permit set completes end to end — **blocked**: no permit
-      set was available on disk
+- [x] A real permit set completes end to end. The 24-sheet Sculpted Hot Pilates
+      set was uploaded through the browser client: 28 pages out, 200 CAD layers
+      preserved, 34 live annotations, 13 markers placed, 17.4 MB, **14.6 s**.
+      The marked-up PDF was opened and read.
+- [x] **The regression gate passes against the real set** — the first time it
+      has ever actually run (see below)
 - [ ] The signed download URL works from a browser with no session, and expires
       — **blocked**: needs a real bucket
 - [ ] An expired signed URL triggers the re-fetch path — code written and
@@ -543,6 +548,52 @@ Ticked only where actually verified. See the report for what is blocked and why.
 - [ ] Cold start latency measured — **blocked**: not deployed
 - [ ] Billing alert set — **blocked**: no project
 - [ ] Custom domain, TLS, sign-in on the custom domain — **blocked**
+
+---
+
+## 9a. What the real permit sets showed
+
+Four sets from `Building Codes/Unreviewed Plans` were run through the engine.
+
+**Sculpted Hot Pilates (24 sheets, 17.8 MB)** reproduces the documented result
+exactly — 1 CRITICAL, 2 HIGH, 4 MEDIUM, 5 VERIFIED, 1 MEASURED, 1 abstention,
+matching `webapp/README.md` for A-3 sprinklered. 200 CAD layers, 6 cited code
+rows, all six schedules, 5 doors, scale on 13/24 pages with 12 at high
+confidence. `tests/test_regression.py` prints `OK` against it.
+
+**The other three produce zero findings and twelve abstentions**, and the reason
+is not what it looks like:
+
+| Set | Sheets | Verdict | CAD layers | Live text | Cited sections |
+| --- | --- | --- | --- | --- | --- |
+| Sculpted Hot Pilates | 24 | vector | **200** | 111 k chars | **6** |
+| ITEC Building Plans | 35 | vector | 0 | **223 k chars** | **0** |
+| JSP Naples Arch | 14 | vector | 0 | plenty | 0 |
+| JSP Naples MEP | 15 | vector | 0 | plenty | 0 |
+
+All four are **already proper vector PDFs with live text**. None of them is a
+scan, and the raster rebuild would do nothing for any of them — ITEC carries
+twice Sculpted's text.
+
+Two things are missing instead:
+
+1. **No parenthesised section citations.** `ARCHITECTURE.md` §3 explains that
+   everything is keyed on the cited section number because it is the most stable
+   token available — `(1006.2.1)` does not wrap or get abbreviated the way a
+   label does. Sculpted's drafter prints those citations; these drafters do not.
+   With no citation to key on, every code-datum rule abstains, which is the
+   citation-keying strategy failing honestly rather than guessing.
+2. **No optional content groups.** Sculpted preserves 200 CAD layers; the others
+   flatten them. `MEASURE.EGRESS_EXTENT` selects geometry by layer name, so it
+   abstains on all three regardless of anything else.
+
+This is precisely the Tier B case in `ARCHITECTURE.md` §2 — "mapping a drafter's
+idiosyncratic block heading to a known block type" — and it is the highest-value
+next piece of work. It is a *normalisation* problem, not a *rasterisation* one,
+and no amount of OCR addresses it.
+
+Sheet-code recovery also degrades on these sets: `sheet_index` returns `p1, p2,
+p3 …` rather than `G-0, A-1`, catching only the occasional `E-3` or `A-12`.
 
 ---
 
