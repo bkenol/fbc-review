@@ -35,6 +35,28 @@
   --primary: var(--blue-1);
   --primary-hover: var(--red-1);
   --primary-ink: var(--paper-white);
+
+  /* SURVEY GREEN — a third accent, added at the client's explicit request.
+   *
+   * colors.css says "No third accent", so this is a deliberate departure and the only
+   * one. It is worth stating why it was allowed: VERIFIED is the one severity that means
+   * the opposite of every other, and on a plan review "checked and sufficient" is the
+   * status a reviewer scans for first. Tick-presence alone was carrying that distinction
+   * and it was too quiet.
+   *
+   * The two steps are pitched to the system's own weights rather than picked by eye:
+   * --green-1 reads at 5.71:1 on --paper-1, which is --red-1's 5.79:1; --green-2 reads
+   * at 6.28:1 on --ink-1, which is --blue-3's 6.18:1. Both are less saturated than the
+   * red or the blue at the same step, so green never out-shouts an accent the system
+   * does own. It is used for one thing only — the verified state — and never as a fill.
+   */
+  --green-1: #1e6b45;
+  --green-2: #5fa97f;
+
+  --verified: var(--green-1);
+
+  /* How much of a severity's own colour tints its chip. */
+  --sev-tint: 12%;
 }
 
 /* ── dark ──────────────────────────────────────────────────────────────────
@@ -71,8 +93,13 @@
     --border-strong: var(--ink-5);
     --border-input: color-mix(in srgb, var(--ink-4) 60%, var(--ink-1));
 
-    --accent-dimension: var(--red-2);
+    /* --red-2 alone is 4.02:1 on --ink-1 — under 4.5 before anything is tinted behind
+       it, which the severity chips now do. Lifted toward the paper step until it clears:
+       5.21:1 plain, 4.67:1 on a card, 4.77:1 on its own chip. Still a ramp mix, still no
+       new hex. */
+    --accent-dimension: color-mix(in srgb, var(--red-2) 80%, var(--paper-1));
     --annotation: var(--blue-3);
+    --verified: var(--green-2);
     --link: var(--blue-3);
     --link-hover: var(--red-2);
     --focus-ring: var(--blue-3);
@@ -292,7 +319,7 @@ a:hover {
   flex: none;
   font: var(--type-label);
   letter-spacing: var(--ls-label);
-  color: var(--text-muted);
+  color: var(--primary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -575,9 +602,11 @@ progress::-moz-progress-bar {
   border-color: var(--primary);
   background: var(--primary);
 }
+/* A stage that has been through is the same green as a verified finding — the page uses
+   one colour for "this is done and it held". */
 .stages li.ok .dot {
-  border-color: var(--text-muted);
-  background: var(--text-muted);
+  border-color: var(--verified);
+  background: var(--verified);
 }
 
 /* Elapsed seconds, and every other figure on this screen, in mono. */
@@ -589,6 +618,48 @@ progress::-moz-progress-bar {
   letter-spacing: 0.04em;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* ── severity colour ───────────────────────────────────────────────────────
+ * One place decides what a severity looks like. Every element that expresses one — the
+ * tally figure and its rule, the chip, the finding id, the row's left rule — reads --sev
+ * from here and nothing re-states a hue.
+ *
+ * The mapping is read off the design project's register artboard, and it is the reverse
+ * of the one docs/DESIGN-BRIEF-Claude-Design.md asks for. That is not an oversight: the
+ * brief §4 assigns red to CRITICAL/HIGH and blue to MEASURED, and the artboard drawn
+ * against that brief assigns them the other way round. The drawing is the later artefact
+ * and the one the client pointed at, so it wins; the brief is left as the record of what
+ * was asked rather than edited to match. It reads better too — colors.css gives red to
+ * "dimensions, ticks, scope numbers", which is literally what a MEASURED finding is.
+ *
+ *   CRITICAL, HIGH   drafting blue     the two that stop a permit
+ *   MEDIUM, LOW      the ink ramp      separated by weight, not hue. --text-body, not
+ *                                      --text-strong: on ink the strong step is nearly
+ *                                      white and its dimension rule out-shouted CRITICAL
+ *   MEASURED         engineer red      colors.css gives red to "dimensions, ticks,
+ *                                      scope numbers", and a value read off the drawing
+ *                                      rather than stated on it is exactly a dimension
+ *   VERIFIED         survey green      the client's addition; see :root
+ *
+ * MEDIUM and LOW stay on the ink ramp deliberately. Six hues would leave nothing for the
+ * accented four to stand out from, and the artboard keeps them neutral too.
+ */
+.CRITICAL,
+.HIGH {
+  --sev: var(--annotation);
+}
+.MEDIUM {
+  --sev: var(--text-body);
+}
+.LOW {
+  --sev: var(--text-muted);
+}
+.MEASURED {
+  --sev: var(--accent-dimension);
+}
+.VERIFIED {
+  --sev: var(--verified);
 }
 
 /* ── DimensionRule — the severity tally ────────────────────────────────────
@@ -670,24 +741,18 @@ progress::-moz-progress-bar {
   color: var(--text-muted);
 }
 
-/* Red for the two that stop a permit — it is already the dimension-and-scope colour, so
-   it is doing the same job here. Survey blue for a reading taken off the drawing. The
-   ink ramp for the rest. No third accent. */
-.dim.CRITICAL,
-.dim.HIGH {
-  color: var(--accent-dimension);
+/* The figure, the rule and both terminators are one currentColor, so the whole dimension
+   run takes the severity's colour rather than just the number. */
+.dim {
+  color: var(--sev, var(--text-strong));
 }
-.dim.MEASURED {
-  color: var(--annotation);
-}
-.dim.MEDIUM,
-.dim.LOW,
-.dim.VERIFIED {
-  color: var(--text-strong);
-}
-/* A count of zero is not a finding and must not read as one. */
+/* A count of zero is not a finding and must not read as one — it drops out of the
+   severity's colour entirely rather than sitting there in a quieter version of it. */
 .dim.zero {
   color: var(--text-muted);
+}
+.dim.zero .lab {
+  color: var(--text-faint);
 }
 
 /* ── findings table ────────────────────────────────────────────────────────*/
@@ -755,47 +820,76 @@ tbody tr:hover td .title {
   color: var(--accent-dimension);
 }
 
-/* Severity labels are mono uppercase throughout. Below the two accents the difference is
-   carried by rule weight and tick presence, never by a third hue. */
+/* The severity chip. Mono uppercase on a wash of its own colour, inside a hairline of
+   the same — the system's flat-card recipe at label scale. Radius 0, no shadow, and the
+   wash is a tint rather than a fill, which is what keeps red and blue inside their 3 %
+   and 2 % of the page while still being unmissable.
+   Every pairing here clears 4.5:1 against its own tint; the tightest is MEASURED in the
+   light scheme at 4.52:1. */
 td.sev {
   font: var(--type-label);
   letter-spacing: var(--ls-label);
   white-space: nowrap;
-  color: var(--text-body);
 }
-td.sev.CRITICAL,
-td.sev.HIGH {
-  color: var(--accent-dimension);
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--sev, var(--text-muted)) 40%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--sev, var(--text-muted)) var(--sev-tint),
+    var(--surface-sunk)
+  );
+  color: var(--sev, var(--text-body));
+  transition: var(--transition-colour);
 }
-td.sev.CRITICAL {
+/* Ink at 12 % reads far heavier than a hue at 12 %: left alone, MEDIUM and LOW came out
+   as the loudest boxes on the sheet and inverted the whole hierarchy. The neutral
+   severities keep the chip shape but give up the wash. */
+.MEDIUM .chip,
+.LOW .chip {
+  --sev-tint: 4%;
+  border-color: var(--border-hairline);
+}
+
+/* CRITICAL is the only severity that reverses. One row on a sheet reads as a stamp;
+   more than one and the register would go to plaid. */
+td.sev.CRITICAL .chip {
+  background: var(--sev);
+  border-color: var(--sev);
+  color: var(--text-reverse);
   font-weight: var(--weight-bold);
 }
-td.sev.MEASURED {
-  color: var(--annotation);
-}
-td.sev.MEDIUM {
-  color: var(--text-strong);
+.MEDIUM .chip {
   font-weight: var(--weight-semibold);
 }
-td.sev.LOW {
-  color: var(--text-muted);
+.LOW .chip {
   font-weight: var(--weight-regular);
+}
+/* The tick sits inside the VERIFIED chip and takes the chip's colour. */
+.chip .tick {
+  margin-right: 0;
+  position: relative;
+  top: -2px;
+}
+
+/* The id is the other place the severity shows, so a scan down the left edge of the
+   register is already colour-sorted before any chip is read. */
+tbody td.ref:first-child {
+  color: var(--sev, var(--text-muted));
 }
 
 /* The row's left rule carries the same distinction at the same budget. */
 tbody tr td:first-child {
-  border-left: 2px solid transparent;
+  border-left: 2px solid var(--sev, var(--border-hairline));
   padding-left: 10px;
 }
-tbody tr.CRITICAL td:first-child,
-tbody tr.HIGH td:first-child {
-  border-left-color: var(--accent-dimension);
-}
-tbody tr.MEASURED td:first-child {
-  border-left-color: var(--annotation);
-}
+/* MEDIUM and LOW are on the ink ramp, and a 2px ink rule on every second row would read
+   as a table border rather than a severity. They keep the hairline. */
 tbody tr.MEDIUM td:first-child,
-tbody tr.VERIFIED td:first-child {
+tbody tr.LOW td:first-child {
   border-left-color: var(--border-hairline);
 }
 
@@ -902,6 +996,25 @@ tbody tr.VERIFIED td:first-child {
 .note.warn b {
   color: var(--annotation);
 }
+/* The worst-finding callout is a CRITICAL finding, so it takes the CRITICAL colour
+   rather than the error red. --accent-dimension stays reserved for the notes that mean
+   something went wrong with the run itself — a rejected sign-in, a failed upload, a job
+   that died. A critical finding is the review working, not failing. */
+.note.CRITICAL {
+  border-left-color: var(--sev);
+}
+.note.CRITICAL b {
+  color: var(--sev);
+}
+.note.ok {
+  border-left-color: var(--verified);
+}
+.note.ok b {
+  color: var(--verified);
+}
+.note.ok .tick {
+  color: var(--verified);
+}
 .note ul {
   margin: var(--space-2) 0 0;
   padding-left: var(--space-6);
@@ -941,8 +1054,9 @@ footer {
  * The questionnaire is a form of the same kind as the review parameters, so it
  * borrows the same field, label and hint rules. What it adds is a wording
  * toggle, a collapsible group and one live line saying what answering buys.
- * Nothing here introduces a new colour: the system has two accents and the
- * declaration is not a third thing.
+ * Nothing here introduces a colour. The system owns two accents and the survey
+ * green added for VERIFIED; the declaration is not a fourth thing, so every
+ * element below is on the ink ramp or borrows the row's own --sev.
  */
 .vocab {
   display: flex;
@@ -1065,10 +1179,24 @@ td .basis {
   font-style: italic;
   color: var(--text-muted);
 }
-.conflict-tag {
-  display: block;
-  margin-top: 2px;
-  font: var(--type-label);
-  letter-spacing: var(--ls-label);
-  color: var(--annotation);
+/* A conflict is a status, not a seventh severity, so this tag takes the row's own
+ * --sev rather than reaching for a hue. The system owns two accents and one deliberate
+ * green; "where did this finding come from" does not earn a fourth.
+ *
+ * What separates it from the severity chip beside it is the border, dashed rather than
+ * solid — the same mark the marked-up PDF puts on the drawing for the same thing, so
+ * the screen and the sheet say it the same way. It gives up the wash as well, which
+ * keeps the severity chip the louder of the two.
+ */
+/* Scoped through `td.sev` so it out-ranks the CRITICAL chip reversal above, which
+   would otherwise turn this into a second filled stamp on a critical row. */
+td.sev .chip.conflict {
+  /* Its own line under the severity. `td.sev` is nowrap, so left inline the two
+     chips together set the column's width and pushed the finding text over. */
+  display: flex;
+  width: fit-content;
+  margin-top: 4px;
+  background: none;
+  border-style: dashed;
+  font-weight: var(--weight-regular);
 }

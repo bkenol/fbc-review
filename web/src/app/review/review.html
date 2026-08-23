@@ -279,13 +279,13 @@
       </div>
 
       @if (critical(); as worst) {
-        <div class="note bad">
+        <div class="note CRITICAL">
           <b>{{ worst.title }}</b
           ><br />{{ worst.result }}
         </div>
       } @else {
-        <div class="note">
-          <b>No critical findings.</b>
+        <div class="note ok">
+          <b><span class="tick" aria-hidden="true"></span>No critical findings.</b>
           {{ summary.open }} open item{{ summary.open === 1 ? '' : 's' }}.
         </div>
       }
@@ -421,14 +421,18 @@
                   <td class="ref">{{ finding.fid }}</td>
                   <td class="ref">{{ finding.sheet }}</td>
                   <td class="sev {{ finding.severity }}">
-                    <!-- Tick presence, not a third colour, is what separates
-                         checked-and-passed from the rest of the ink ramp. -->
-                    @if (finding.severity === 'VERIFIED') {
-                      <span class="tick" aria-hidden="true"></span>
-                    }
-                    {{ finding.severity }}
+                    <!-- The chip carries the severity's colour. The tick still marks
+                         checked-and-passed, now inside it. -->
+                    <span class="chip">
+                      @if (finding.severity === 'VERIFIED') {
+                        <span class="tick" aria-hidden="true"></span>
+                      }
+                      {{ finding.severity }}
+                    </span>
+                    <!-- A conflict is a status, not a severity: the row keeps its own
+                         colour and this says where the finding came from. -->
                     @if (finding.status === 'CONFLICT') {
-                      <span class="conflict-tag">Declared vs drawn</span>
+                      <span class="chip conflict">Declared vs drawn</span>
                     }
                   </td>
                   <td>
@@ -465,9 +469,7 @@
       @if (abstentions().length) {
         <div class="note warn" style="margin-top: 24px">
           <b>
-            Not checked — {{ abstentions().length }} rule{{
-              abstentions().length === 1 ? '' : 's'
-            }}
+            Not checked — {{ abstentions().length }} rule{{ abstentions().length === 1 ? '' : 's' }}
             declined to run.
           </b>
           These were not evaluated. That is not the same as passing.
