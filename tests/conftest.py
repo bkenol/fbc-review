@@ -43,11 +43,12 @@ class FakeJobStore:
         self._lock = threading.Lock()
         self.done = threading.Event()
 
-    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob, stages, source=None):
+    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob, stages, source=None, declaration=None):
         record = {
             "id": job_id, "uid": uid, "email": email, "filename": filename,
             "bytes": size_bytes, "pages": pages, "state": jobs_mod.QUEUED, "stage": 0,
-            "options": options, "upload_blob": upload_blob, "source": source, "summary": None, "conversion": None,
+            "options": options, "declaration": declaration,
+            "upload_blob": upload_blob, "source": source, "summary": None, "conversion": None,
             "stages": list(stages),
             "error": None, "error_code": None,
             "created_at": jobs_mod.utcnow(), "started_at": None, "finished_at": None,
@@ -283,6 +284,9 @@ def anon_client(monkeypatch, store, files):
     settings.cache_clear()
 
 
-def upload_form(pdf: bytes, options: Optional[str] = None, name: str = "set.pdf"):
+def upload_form(pdf: bytes, options: Optional[str] = None, name: str = "set.pdf",
+                declaration: Optional[str] = None):
     data = {"review_options": options if options is not None else "{}"}
+    if declaration is not None:
+        data["declaration"] = declaration
     return {"files": {"file": (name, io.BytesIO(pdf), "application/pdf")}, "data": data}

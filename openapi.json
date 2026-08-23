@@ -27,6 +27,12 @@
       },
       "Body_createReview": {
         "properties": {
+          "declaration": {
+            "default": "{}",
+            "description": "A JSON-encoded ProjectDeclaration: what the applicant says the building is. Optional in whole and in part \u2014 every field may be omitted, and omitting the part entirely reproduces the review exactly as it ran before declarations existed. Values are validated against the schema `/api/config` publishes.",
+            "title": "Declaration",
+            "type": "string"
+          },
           "file": {
             "contentMediaType": "application/octet-stream",
             "description": "The permit set, as a PDF.",
@@ -48,6 +54,30 @@
       },
       "ConfigResponse": {
         "properties": {
+          "declaration_fields": {
+            "description": "The whole questionnaire, as data. Adding a field or an enum value in `fbcreview/declaration_schema.py` reaches the client through here with no frontend change.",
+            "items": {
+              "$ref": "#/components/schemas/DeclarationField"
+            },
+            "title": "Declaration Fields",
+            "type": "array"
+          },
+          "declaration_groups": {
+            "description": "Question groups, in the order the form should show them.",
+            "items": {
+              "$ref": "#/components/schemas/DeclarationGroup"
+            },
+            "title": "Declaration Groups",
+            "type": "array"
+          },
+          "declaration_unlockable": {
+            "description": "Every rule any declaration field unlocks, deduplicated.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Declaration Unlockable",
+            "type": "array"
+          },
           "defaults": {
             "$ref": "#/components/schemas/ReviewOptions"
           },
@@ -121,7 +151,10 @@
           "retain_days",
           "rules",
           "mail",
-          "defaults"
+          "defaults",
+          "declaration_groups",
+          "declaration_fields",
+          "declaration_unlockable"
         ],
         "title": "ConfigResponse",
         "type": "object"
@@ -205,6 +238,176 @@
           "seconds"
         ],
         "title": "ConvertedPage",
+        "type": "object"
+      },
+      "DeclarationField": {
+        "description": "One question, in both vocabularies.\n\nThe client renders whatever this describes and must not carry a copy of any\nlabel, help text or enum value: a code label that exists in two places will\ndrift, and a wrong code label is a liability rather than a typo.",
+        "properties": {
+          "choice_labels": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice Labels"
+          },
+          "choices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choices"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "enum",
+              "bool",
+              "number",
+              "integer",
+              "text"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "pro_help": {
+            "title": "Pro Help",
+            "type": "string"
+          },
+          "pro_label": {
+            "title": "Pro Label",
+            "type": "string"
+          },
+          "simple_help": {
+            "title": "Simple Help",
+            "type": "string"
+          },
+          "simple_label": {
+            "title": "Simple Label",
+            "type": "string"
+          },
+          "tolerance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeclarationTolerance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unit": {
+            "default": "",
+            "title": "Unit",
+            "type": "string"
+          },
+          "unlocks": {
+            "description": "Rule ids this answer enables. The client divides by these to say how many checks will stand down without it.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Unlocks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "pro_label",
+          "pro_help",
+          "simple_label",
+          "simple_help",
+          "group"
+        ],
+        "title": "DeclarationField",
+        "type": "object"
+      },
+      "DeclarationGroup": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ],
+        "title": "DeclarationGroup",
+        "type": "object"
+      },
+      "DeclarationReport": {
+        "description": "What was submitted and what the drawings said back. The audit trail.",
+        "properties": {
+          "answered": {
+            "title": "Answered",
+            "type": "integer"
+          },
+          "declaration": {
+            "$ref": "#/components/schemas/ProjectDeclaration"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/ReconciledField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "total_fields": {
+            "title": "Total Fields",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "declaration",
+          "answered",
+          "total_fields",
+          "fields"
+        ],
+        "title": "DeclarationReport",
+        "type": "object"
+      },
+      "DeclarationTolerance": {
+        "description": "How far apart two numbers may be before they count as disagreeing.\n\nEffective tolerance is `max(abs, rel * value)`. Rounding on a drawing is not\na conflict; a different governing row is.",
+        "properties": {
+          "abs": {
+            "title": "Abs",
+            "type": "number"
+          },
+          "rel": {
+            "title": "Rel",
+            "type": "number"
+          }
+        },
+        "required": [
+          "abs",
+          "rel"
+        ],
+        "title": "DeclarationTolerance",
         "type": "object"
       },
       "Downloads": {
@@ -301,6 +504,17 @@
             "title": "Anchor",
             "type": "string"
           },
+          "basis": {
+            "default": "drawings",
+            "description": "What the finding rests on. `declaration` means the drawings do not state the value it depends on, and the card says so \u2014 the markup must never attribute to the drawings something the drawings do not say.",
+            "enum": [
+              "drawings",
+              "declaration",
+              "both"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
           "body": {
             "default": "",
             "title": "Body",
@@ -339,6 +553,17 @@
             "title": "Rule Id",
             "type": "string"
           },
+          "scenario": {
+            "default": "both",
+            "description": "Which reading produced this. `both` means it came out the same whether the set was evaluated as drawn or as declared, which is the common case. `as_drawn` means it appeared only against the drawings; `as_declared` only against the declaration.",
+            "enum": [
+              "both",
+              "as_drawn",
+              "as_declared"
+            ],
+            "title": "Scenario",
+            "type": "string"
+          },
           "severity": {
             "enum": [
               "CRITICAL",
@@ -358,7 +583,8 @@
           "status": {
             "enum": [
               "OPEN",
-              "PASS"
+              "PASS",
+              "CONFLICT"
             ],
             "title": "Status",
             "type": "string"
@@ -388,6 +614,18 @@
       "FindingsDocument": {
         "description": "The exact shape of `findings.json` in the bucket.\n\nNo endpoint serves this \u2014 the browser fetches it from the signed URL \u2014 but\nit is published into `components.schemas` (see `server.custom_openapi`) so\nthe generated TypeScript client carries the type. Without that the findings\ntable would be the one part of the client typed by hand, which is precisely\nthe part most likely to drift.",
         "properties": {
+          "declaration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeclarationReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Present when a project declaration was submitted."
+          },
           "findings": {
             "items": {
               "$ref": "#/components/schemas/Finding"
@@ -466,6 +704,17 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "declaration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectDeclaration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What was submitted with the review, if anything."
           },
           "downloads": {
             "anyOf": [
@@ -652,6 +901,186 @@
         "title": "OccupancyGroup",
         "type": "object"
       },
+      "ProjectDeclaration": {
+        "additionalProperties": false,
+        "description": "What the applicant says the building is, answered before uploading.\n\nEvery field is optional and `null` means unanswered. There is deliberately\nno \"unknown\" sentinel: a rule that receives `null` abstains, and it can\nnever mistake a placeholder for an answer.\n\nMirrors `fbcreview.declaration.ProjectDeclaration`. Values are validated\nagainst `fbcreview.declaration_schema` before a review starts, so an enum\nvalue this build does not know is a 400 naming the field rather than a\nsilently dropped answer.",
+        "properties": {
+          "building_area_sf": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Building Area Sf"
+          },
+          "code_edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Edition"
+          },
+          "construction_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Construction Type"
+          },
+          "exposure_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exposure Category"
+          },
+          "height_ft": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height Ft"
+          },
+          "jurisdiction": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jurisdiction"
+          },
+          "mixed_occupancy": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mixed Occupancy"
+          },
+          "occupancy_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occupancy Group"
+          },
+          "risk_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Category"
+          },
+          "separation_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Separation Method"
+          },
+          "sprinkler_system": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sprinkler System"
+          },
+          "stories": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stories"
+          },
+          "total_area_sf": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Area Sf"
+          },
+          "wind_speed_mph": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wind Speed Mph"
+          },
+          "zoning": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zoning"
+          }
+        },
+        "title": "ProjectDeclaration",
+        "type": "object"
+      },
       "RasterRegion": {
         "description": "A pasted image large enough to plausibly hold a table.",
         "properties": {
@@ -689,6 +1118,75 @@
           "coverage"
         ],
         "title": "RasterRegion",
+        "type": "object"
+      },
+      "ReconciledField": {
+        "description": "One field, with what each source said about it and how they compare.",
+        "properties": {
+          "declared": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Rendered for display.",
+            "title": "Declared"
+          },
+          "drawn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Drawn"
+          },
+          "drawn_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The sheet the drawn value was read from.",
+            "title": "Drawn Source"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "CORROBORATED",
+              "CONFLICT",
+              "DECLARED_ONLY",
+              "DRAWN_ONLY",
+              "UNKNOWN"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "state"
+        ],
+        "title": "ReconciledField",
         "type": "object"
       },
       "ReviewAccepted": {
@@ -756,6 +1254,7 @@
           },
           "occupancy_group": {
             "default": "A-3",
+            "description": "Deprecated. Occupancy group is a fact about the building, not a review setting, and belongs in the project declaration. Sent explicitly, it seeds `declaration.occupancy_group` when the declaration does not state one; left at its default it is ignored and nothing is assumed.",
             "title": "Occupancy Group",
             "type": "string"
           },
@@ -767,6 +1266,7 @@
           },
           "sprinklered": {
             "default": true,
+            "description": "Deprecated, as `occupancy_group`. Sent explicitly it seeds `declaration.sprinkler_system` as an NFPA 13 system or none.",
             "title": "Sprinklered",
             "type": "boolean"
           }
@@ -908,6 +1408,12 @@
           },
           "cad_layers": {
             "title": "Cad Layers",
+            "type": "integer"
+          },
+          "conflicts": {
+            "default": 0,
+            "description": "Findings where the declaration and the drawings disagree.",
+            "title": "Conflicts",
             "type": "integer"
           },
           "counts": {
@@ -1216,6 +1722,128 @@
           }
         },
         "summary": "Get Job",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/api/jobs/{job_id}/declaration": {
+      "get": {
+        "operationId": "getJobDeclaration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDeclaration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "What was declared with a review. For support and for the audit trail.",
         "tags": [
           "reviews"
         ]

@@ -16,7 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field
 JobState = Literal["queued", "running", "done", "error"]
 Severity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "VERIFIED", "MEASURED"]
 MinSeverity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
-FindingStatus = Literal["OPEN", "PASS"]
+FindingStatus = Literal["OPEN", "PASS", "CONFLICT"]
+FindingScenario = Literal["both", "as_drawn", "as_declared"]
+FindingBasis = Literal["drawings", "declaration", "both"]
+ReconciledState = Literal[
+    "CORROBORATED", "CONFLICT", "DECLARED_ONLY", "DRAWN_ONLY", "UNKNOWN"
+]
+DeclarationFieldKind = Literal["enum", "bool", "number", "integer", "text"]
 SheetKind = Literal["vector", "hybrid", "raster", "blank"]
 DocumentKind = Literal["vector", "mixed", "raster", "blank"]
 
@@ -31,6 +37,103 @@ class ErrorResponse(BaseModel):
     """The only shape any failure takes."""
 
     error: ErrorDetail
+
+
+# ── the project declaration ───────────────────────────────────────────────
+class ProjectDeclaration(BaseModel):
+    """What the applicant says the building is, answered before uploading.
+
+    Every field is optional and `null` means unanswered. There is deliberately
+    no "unknown" sentinel: a rule that receives `null` abstains, and it can
+    never mistake a placeholder for an answer.
+
+    Mirrors `fbcreview.declaration.ProjectDeclaration`. Values are validated
+    against `fbcreview.declaration_schema` before a review starts, so an enum
+    value this build does not know is a 400 naming the field rather than a
+    silently dropped answer.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    occupancy_group: Optional[str] = None
+    mixed_occupancy: Optional[bool] = None
+    separation_method: Optional[str] = None
+    construction_type: Optional[str] = None
+    building_area_sf: Optional[float] = Field(default=None, ge=0)
+    total_area_sf: Optional[float] = Field(default=None, ge=0)
+    height_ft: Optional[float] = Field(default=None, ge=0)
+    stories: Optional[int] = Field(default=None, ge=0)
+    sprinkler_system: Optional[str] = None
+    wind_speed_mph: Optional[float] = Field(default=None, ge=0)
+    exposure_category: Optional[str] = None
+    risk_category: Optional[str] = None
+    zoning: Optional[str] = Field(default=None, max_length=200)
+    jurisdiction: Optional[str] = Field(default=None, max_length=200)
+    code_edition: Optional[str] = None
+
+
+class DeclarationTolerance(BaseModel):
+    """How far apart two numbers may be before they count as disagreeing.
+
+    Effective tolerance is `max(abs, rel * value)`. Rounding on a drawing is not
+    a conflict; a different governing row is.
+    """
+
+    abs: float
+    rel: float
+
+
+class DeclarationField(BaseModel):
+    """One question, in both vocabularies.
+
+    The client renders whatever this describes and must not carry a copy of any
+    label, help text or enum value: a code label that exists in two places will
+    drift, and a wrong code label is a liability rather than a typo.
+    """
+
+    key: str
+    kind: DeclarationFieldKind
+    pro_label: str
+    pro_help: str
+    simple_label: str
+    simple_help: str
+    group: str
+    choices: Optional[List[str]] = None
+    choice_labels: Optional[Dict[str, str]] = None
+    unit: str = ""
+    unlocks: List[str] = Field(
+        default_factory=list,
+        description="Rule ids this answer enables. The client divides by these to say "
+                    "how many checks will stand down without it.",
+    )
+    tolerance: Optional[DeclarationTolerance] = None
+
+
+class DeclarationGroup(BaseModel):
+    key: str
+    label: str
+
+
+class ReconciledField(BaseModel):
+    """One field, with what each source said about it and how they compare."""
+
+    field: str
+    state: ReconciledState
+    declared: Optional[str] = Field(default=None, description="Rendered for display.")
+    drawn: Optional[str] = None
+    drawn_source: Optional[str] = Field(
+        default=None, description="The sheet the drawn value was read from."
+    )
+    note: str = ""
+
+
+class DeclarationReport(BaseModel):
+    """What was submitted and what the drawings said back. The audit trail."""
+
+    declaration: ProjectDeclaration
+    answered: int
+    total_fields: int
+    fields: List[ReconciledField]
 
 
 # ── config ────────────────────────────────────────────────────────────────
@@ -56,8 +159,22 @@ class ReviewOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     edition: str = "fbc2023"
-    occupancy_group: str = "A-3"
-    sprinklered: bool = True
+    occupancy_group: str = Field(
+        default="A-3",
+        description=(
+            "Deprecated. Occupancy group is a fact about the building, not a review "
+            "setting, and belongs in the project declaration. Sent explicitly, it seeds "
+            "`declaration.occupancy_group` when the declaration does not state one; "
+            "left at its default it is ignored and nothing is assumed."
+        ),
+    )
+    sprinklered: bool = Field(
+        default=True,
+        description=(
+            "Deprecated, as `occupancy_group`. Sent explicitly it seeds "
+            "`declaration.sprinkler_system` as an NFPA 13 system or none."
+        ),
+    )
     min_severity: MinSeverity = "LOW"
     include_verified: bool = True
     include_measured: bool = True
@@ -90,6 +207,19 @@ class ConfigResponse(BaseModel):
     rules: List[str] = Field(description="Rule ids registered in this build.")
     mail: MailStatus
     defaults: ReviewOptions
+    declaration_groups: List[DeclarationGroup] = Field(
+        description="Question groups, in the order the form should show them."
+    )
+    declaration_fields: List[DeclarationField] = Field(
+        description=(
+            "The whole questionnaire, as data. Adding a field or an enum value in "
+            "`fbcreview/declaration_schema.py` reaches the client through here with no "
+            "frontend change."
+        )
+    )
+    declaration_unlockable: List[str] = Field(
+        description="Every rule any declaration field unlocks, deduplicated."
+    )
 
 
 # ── findings ──────────────────────────────────────────────────────────────
@@ -111,6 +241,23 @@ class Finding(BaseModel):
     action: str = ""
     body: str = ""
     hit: int = 0
+    scenario: FindingScenario = Field(
+        default="both",
+        description=(
+            "Which reading produced this. `both` means it came out the same whether the "
+            "set was evaluated as drawn or as declared, which is the common case. "
+            "`as_drawn` means it appeared only against the drawings; `as_declared` only "
+            "against the declaration."
+        ),
+    )
+    basis: FindingBasis = Field(
+        default="drawings",
+        description=(
+            "What the finding rests on. `declaration` means the drawings do not state "
+            "the value it depends on, and the card says so — the markup must never "
+            "attribute to the drawings something the drawings do not say."
+        ),
+    )
 
 
 class Abstention(BaseModel):
@@ -138,6 +285,10 @@ class Summary(BaseModel):
     counts: Dict[str, int] = Field(description="Finding count keyed by severity.")
     open: int
     verified: int
+    conflicts: int = Field(
+        default=0,
+        description="Findings where the declaration and the drawings disagree.",
+    )
     abstentions: List[Abstention]
     rules_run: int
     scale_pages: int
@@ -248,6 +399,9 @@ class Job(BaseModel):
     stage_label: str
     stages: List[str]
     options: ReviewOptions
+    declaration: Optional[ProjectDeclaration] = Field(
+        default=None, description="What was submitted with the review, if anything."
+    )
     bytes: int
     pages: Optional[int] = None
     source: Optional[SourceProfile] = Field(
@@ -281,6 +435,9 @@ class FindingsDocument(BaseModel):
 
     job_id: str
     options: ReviewOptions
+    declaration: Optional[DeclarationReport] = Field(
+        default=None, description="Present when a project declaration was submitted."
+    )
     summary: Summary
     findings: List[Finding]
 

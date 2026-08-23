@@ -81,6 +81,9 @@ class JobStore:
         # this list, and an empty one reports a finished job at stage 0.
         stages: List[str],
         source: Optional[Dict[str, Any]] = None,
+        # The declaration is part of the audit trail: the register prints what
+        # the applicant asserted, and support has to be able to read it back.
+        declaration: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         record = {
             "id": job_id,
@@ -93,6 +96,7 @@ class JobStore:
             "stage": 0,
             "stages": stages,
             "options": options,
+            "declaration": declaration,
             "upload_blob": upload_blob,
             "source": source,
             "summary": None,

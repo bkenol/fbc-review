@@ -5,14 +5,15 @@ from . import rule, Finding, RuleResult
 from ..confidence import Abstention
 from ..codes import fbc2023 as C
 from ..facts import ProjectFacts
+from ..reconcile import legacy_context
 
 def _ctx(f):
-    """Occupancy group and sprinkler status: from the review options the user
-    chose, falling back to what the drawing's own project-data block states."""
-    o = f.meta.get("options")
-    if o is not None:
-        return o.occupancy_group, o.sprinklered
-    return f.meta.get("occupancy_group", "A-3"), f.meta.get("sprinklered", True)
+    """Occupancy group and sprinkler status.
+
+    From the project declaration when the applicant stated one, otherwise the
+    fallback these rules have always used. See `reconcile.legacy_context`.
+    """
+    return legacy_context(f)
 
 
 def _datum(facts, section):
@@ -151,8 +152,11 @@ def capacity_factor(f: ProjectFacts, out: RuleResult):
 @rule("EGRESS.EXIT_COUNT")
 def exit_count(f: ProjectFacts, out: RuleResult):
     GROUP, SPRINKLERED = _ctx(f)
+    from .r_occupancy import computed_load
     d = _datum(f, "1006.3.2") or _datum(f, "1006.3.3")
-    ol = f.meta.get("occupant_load")
+    # Table 1004.5 can produce the load when the sheets do not state one; what
+    # the sheets state still wins where it is readable.
+    ol = f.meta.get("occupant_load") or computed_load(f, declared_only=True)
     if not ol:
         out.abstentions.append(Abstention("EGRESS.EXIT_COUNT", "occupant load not extracted"))
         return

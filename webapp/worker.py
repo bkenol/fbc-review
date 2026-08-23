@@ -19,10 +19,11 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from fbcreview.declaration import ProjectDeclaration
 from fbcreview.options import ReviewOptions
 from fbcreview.pipeline import build_facts
 from fbcreview.render.markup import render
-from fbcreview.rules import registered, run_all
+from fbcreview.rules import ACTIONABLE, registered, run_all
 from webapp import convert, mailer, storage
 from webapp.jobs import JobStore
 
@@ -59,6 +60,7 @@ def run_review(
     upload_blob: str,
     options: ReviewOptions,
     store: JobStore,
+    declaration: Optional[ProjectDeclaration] = None,
     store_files: "storage.Storage",
     convert_raster: bool = False,
     raster_pages: Optional[List[int]] = None,
@@ -118,14 +120,15 @@ def run_review(
 
         # ── rules ──────────────────────────────────────────────────────────
         advance()
-        result = run_all(facts, options)
+        result = run_all(facts, options, declaration)
 
         # ── render ─────────────────────────────────────────────────────────
         advance()
         pdf_name = f"{Path(filename).stem} — CODE REVIEW.pdf"
         out_pdf = workdir / "markup.pdf"
         info = render(
-            str(src), str(out_pdf), result.findings, facts.sheets, options, result.abstentions
+            str(src), str(out_pdf), result.findings, facts.sheets, options,
+            result.abstentions, result.reconciled
         )
 
         counts: Dict[str, int] = {}
@@ -145,8 +148,11 @@ def run_review(
             "annotations": info["annots"],
             "marked": info["marked"],
             "counts": counts,
-            "open": sum(1 for f in result.findings if f.status == "OPEN"),
-            "verified": sum(1 for f in result.findings if f.status != "OPEN"),
+            # A conflict is something to act on, so it counts as open. It is a
+            # status, not a severity — the ink ramp still says how much it matters.
+            "open": sum(1 for f in result.findings if f.status in ACTIONABLE),
+            "verified": sum(1 for f in result.findings if f.status not in ACTIONABLE),
+            "conflicts": sum(1 for f in result.findings if f.status == "CONFLICT"),
             "abstentions": abstentions,
             "rules_run": len(registered()),
             "scale_pages": sum(1 for g in facts.geometry.values() if g.scale_pt_per_ft),
@@ -161,6 +167,7 @@ def run_review(
                 {
                     "job_id": job_id,
                     "options": options.to_dict(),
+                    "declaration": _declaration_report(result.reconciled),
                     "summary": summary,
                     "findings": findings,
                 },
@@ -220,6 +227,51 @@ def run_review(
     finally:
         # The instance's disk is small and shared with the next request.
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _declaration_report(reconciled) -> Optional[Dict[str, Any]]:
+    """What was declared and what the drawings said back.
+
+    Written into findings.json so the client can show the same audit record the
+    marked-up PDF prints, without a second round trip.
+    """
+    if reconciled is None or reconciled.declaration.is_empty():
+        return None
+
+    from fbcreview.declaration_schema import FIELDS
+
+    def render(value):
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return "Yes" if value else "No"
+        if isinstance(value, float) and value == int(value):
+            return f"{int(value):,}"
+        if isinstance(value, float):
+            return f"{value:,.2f}"
+        if isinstance(value, int):
+            return f"{value:,}"
+        return str(value)
+
+    fields = []
+    for key in (f.key for f in FIELDS):
+        rec = reconciled.fields.get(key)
+        if rec is None:
+            continue
+        fields.append({
+            "field": key,
+            "state": rec.state,
+            "declared": render(rec.declared_value),
+            "drawn": render(rec.drawn_value),
+            "drawn_source": rec.drawn.source if rec.drawn else None,
+            "note": (rec.drawn.note if rec.drawn else "") or "",
+        })
+    return {
+        "declaration": reconciled.declaration.to_dict(),
+        "answered": reconciled.declaration.answered_count(),
+        "total_fields": len(FIELDS),
+        "fields": fields,
+    }
 
 
 def _merge_reports(first, second):
