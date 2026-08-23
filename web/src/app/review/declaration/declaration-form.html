@@ -1,0 +1,124 @@
+@let currentMode = mode();
+
+<div class="vocab" role="group" aria-label="Question wording">
+  <span class="vocab-label">Wording</span>
+  <button
+    type="button"
+    class="vocab-btn"
+    [class.on]="currentMode === 'pro'"
+    [attr.aria-pressed]="currentMode === 'pro'"
+    (click)="setMode('pro')"
+  >
+    Code
+  </button>
+  <button
+    type="button"
+    class="vocab-btn"
+    [class.on]="currentMode === 'simple'"
+    [attr.aria-pressed]="currentMode === 'simple'"
+    (click)="setMode('simple')"
+  >
+    Plain
+  </button>
+</div>
+
+<p class="hint">
+  Answer what you know. Every question is optional, and a blank is not a guess — anything you leave
+  out is read off the drawings, or the check that needs it stands down and says so. What you do
+  answer is checked <b>against</b> the drawings, not instead of them.
+</p>
+
+<!-- The one line that makes abstention visible. It is the honest way to ask for
+     completion: the tool is saying what it will refuse to guess at. -->
+<p class="tally" aria-live="polite">
+  <b>{{ answered() }} of {{ total() }} answered</b>
+  @if (standingDown() > 0) {
+    — {{ standingDown() }} check{{ standingDown() === 1 ? '' : 's' }} will stand down without the
+    rest, unless the drawings state them.
+  } @else {
+    — every check these unlock can run.
+  }
+</p>
+
+<div [formGroup]="form()">
+  @for (group of groups(); track group.key) {
+    @let inGroup = fieldsIn(group.key);
+    @if (inGroup.length) {
+      <details class="qgroup" open>
+        <summary>
+          <span class="qgroup-name">{{ group.label }}</span>
+          <span class="qgroup-count">{{ answeredIn(group.key) }} / {{ inGroup.length }}</span>
+        </summary>
+
+        <div class="grid">
+          @for (field of inGroup; track field.key) {
+            <div>
+              <label class="f" [attr.for]="'decl-' + field.key">
+                {{ label(field) }}
+                @if (field.unit) {
+                  <span class="unit">({{ field.unit }})</span>
+                }
+              </label>
+
+              @switch (field.kind) {
+                @case ('enum') {
+                  <select
+                    [id]="'decl-' + field.key"
+                    [formControlName]="field.key"
+                    [attr.aria-describedby]="'help-' + field.key"
+                    (input)="onEdit()"
+                  >
+                    <option value="">Not answered</option>
+                    @for (choice of field.choices ?? []; track choice) {
+                      <option [value]="choice">{{ choiceLabel(field, choice) }}</option>
+                    }
+                  </select>
+                }
+                @case ('bool') {
+                  <!-- Three states, not a checkbox. A checkbox cannot say "I did
+                       not answer", and unanswered is a real answer here. -->
+                  <select
+                    [id]="'decl-' + field.key"
+                    [formControlName]="field.key"
+                    [attr.aria-describedby]="'help-' + field.key"
+                    (input)="onEdit()"
+                  >
+                    <option value="">Not answered</option>
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </select>
+                }
+                @default {
+                  <input
+                    [id]="'decl-' + field.key"
+                    [type]="field.kind === 'text' ? 'text' : 'number'"
+                    [formControlName]="field.key"
+                    [attr.inputmode]="field.kind === 'text' ? null : 'decimal'"
+                    [attr.step]="field.kind === 'integer' ? '1' : 'any'"
+                    [attr.min]="field.kind === 'text' ? null : '0'"
+                    [attr.aria-describedby]="'help-' + field.key"
+                    (input)="onEdit()"
+                    autocomplete="off"
+                    placeholder="From the drawings"
+                  />
+                }
+              }
+
+              <p class="hint" [id]="'help-' + field.key">{{ help(field) }}</p>
+            </div>
+          }
+        </div>
+      </details>
+    }
+  }
+</div>
+
+<div class="row">
+  <button type="button" class="ghost" (click)="clear()" [disabled]="!anyAnswered()">
+    Skip — read it from my drawings
+  </button>
+  <span class="hint" style="margin: 0">
+    Clears every answer. That is the path the tool took before this form existed, and it still
+    works.
+  </span>
+</div>

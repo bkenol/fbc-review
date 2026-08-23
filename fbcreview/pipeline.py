@@ -10,7 +10,9 @@ from .extract.blocks import code_data_block, labelled_values, normalise, to_feet
 from .extract.schedules import find_schedule, split_merged_row
 from .rules import run_all, RuleResult, registered
 from .rules import (r_egress, r_doors, r_mechanical, r_electrical,   # noqa: F401
-                    r_crosssheet, r_geometry)
+                    r_crosssheet, r_geometry, r_declaration, r_heightarea,
+                    r_occupancy, r_structural, r_code)
+from .declaration import ProjectDeclaration
 
 _FTIN = re.compile(r"(\d+)\s*'\s*-\s*(\d+)")
 
@@ -52,6 +54,20 @@ def build_facts(path: str) -> ProjectFacts:
         if not s:
             continue
         sch = find_schedule(doc, s.index, title, code)
+        if sch:
+            facts.schedules.append(sch)
+
+    # Occupant-load tables are not on a predictable sheet: a tenant fit-out puts
+    # one on the life-safety sheet, a shell puts one on the first floor plan.
+    # Sheets are filtered on their own text first, so this costs a find_tables()
+    # only where the words actually appear.
+    for s in facts.sheets:
+        if "OCCUPANT LOAD" not in (text.get(s.index) or "").upper():
+            continue
+        if any(sch.page == s.index and "OCCUPANT" in sch.name.upper()
+               for sch in facts.schedules):
+            continue
+        sch = find_schedule(doc, s.index, "OCCUPANT LOAD", s.code)
         if sch:
             facts.schedules.append(sch)
 
@@ -133,5 +149,11 @@ def _f(vals, i):
         return None
 
 
-def review(path: str) -> RuleResult:
-    return run_all(build_facts(path))
+def review(path: str, options=None, declaration=None) -> RuleResult:
+    """PDF in, findings out.
+
+    `declaration` is a ProjectDeclaration — the answers the applicant gave before
+    uploading. Omitting it reproduces the review exactly as it ran before the
+    declaration existed.
+    """
+    return run_all(build_facts(path), options, declaration)

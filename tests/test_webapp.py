@@ -354,7 +354,10 @@ def test_config_is_typed_and_drives_the_form(client):
 
     assert body["severities"] == ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
     assert len(body["stages"]) == 5
-    assert len(body["rules"]) == 12
+    # The rule corpus grows; what config must publish is the whole registry.
+    from fbcreview.rules import registered
+
+    assert body["rules"] == registered()
     assert body["mail"]["configured"] is False
     assert body["defaults"]["occupancy_group"] == "A-3"
 

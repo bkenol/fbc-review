@@ -1,0 +1,166 @@
+{
+  "rules": [
+    "DOORS.CLEAR_WIDTH",
+    "EGRESS.CAPACITY_FACTOR",
+    "EGRESS.COMMON_PATH",
+    "EGRESS.CORRIDOR_WIDTH",
+    "EGRESS.DEAD_END",
+    "EGRESS.EXIT_COUNT",
+    "EGRESS.TRAVEL_DISTANCE",
+    "ELEC.PANEL_LOADING",
+    "MEASURE.EGRESS_EXTENT",
+    "MECH.OUTDOOR_AIR_CAPACITY",
+    "XSHEET.BUILDING_AREA",
+    "XSHEET.RISK_CATEGORY"
+  ],
+  "sets": {
+    "sculpted_like": {
+      "findings": [
+        {
+          "fid": "H-02",
+          "rule_id": "EGRESS.COMMON_PATH",
+          "status": "OPEN",
+          "severity": "HIGH",
+          "discipline": "Means of egress",
+          "page": 0,
+          "sheet": "G-0",
+          "anchor": "COMMON PATH OF EGRESS TRAVEL",
+          "title": "Common path requirement understated on G-0",
+          "checked": "The common path of egress travel requirement stated in the code data block, against Table 1006.2.1 for the occupancy and sprinkler status declared on this sheet.",
+          "result": "G-0 states 50 LF required. Table 1006.2.1, Group A with a sprinkler system, is 75 feet. Provided is 38'-2\", so there is no physical deficiency \u2014 but the stated requirement is wrong.",
+          "code": "FBC-B 1006.2.1 \u00b7 Table 1006.2.1",
+          "action": "Change 50 LF to 75 LF.",
+          "body": "",
+          "hit": 0
+        },
+        {
+          "fid": "M-03",
+          "rule_id": "XSHEET.RISK_CATEGORY",
+          "status": "OPEN",
+          "severity": "MEDIUM",
+          "discipline": "Structural / Occupancy",
+          "page": 0,
+          "sheet": "G-0",
+          "anchor": "RISK CATEGORY",
+          "title": "Risk Category III does not match the stated occupant load",
+          "checked": "The assigned risk category against Table 1604.5 and the occupant load stated on the same sheet.",
+          "result": "Risk Category III is assigned. Table 1604.5 sets RC III at a primary assembly occupancy with an occupant load greater than 300. The stated occupant load is 70. RC III is conservative \u2014 it raises design wind pressures \u2014 but it is inconsistent with the occupant load on the same sheet.",
+          "code": "FBC-B Table 1604.5",
+          "action": "Confirm Risk Category II, or state the basis for III.",
+          "body": "",
+          "hit": 0
+        },
+        {
+          "fid": "M-04",
+          "rule_id": "XSHEET.BUILDING_AREA",
+          "status": "OPEN",
+          "severity": "MEDIUM",
+          "discipline": "Occupancy",
+          "page": 0,
+          "sheet": "G-0",
+          "anchor": "1,436 SF",
+          "title": "Building area disagrees between sheets",
+          "checked": "The building area stated on each general sheet, compared, and the basis stated for each.",
+          "result": "G-0 states 1,436 SF; the G-1 occupancy tables total 1,375 SF. Difference 61 SF (4.2 percent). Most likely gross versus net, but Table 1004.5 factors are basis-specific, so the basis has to be explicit or the occupant load cannot be independently checked.",
+          "code": "FBC-B 1004.5 \u00b7 FBC-EBC 601.2",
+          "action": "Label both areas with their basis (gross or net).",
+          "body": "",
+          "hit": 0
+        },
+        {
+          "fid": "V-01",
+          "rule_id": "EGRESS.TRAVEL_DISTANCE",
+          "status": "PASS",
+          "severity": "VERIFIED",
+          "discipline": "Means of egress",
+          "page": 0,
+          "sheet": "G-0",
+          "anchor": "MAX TRAVEL DISTANCE",
+          "title": "Travel distance limit \u2014 correct",
+          "checked": "The stated travel distance limit against Table 1017.2 for this occupancy and sprinkler status.",
+          "result": "Table 1017.2, Group A with a sprinkler system = 250 feet. Sheet states 250 LF, provided 69'-4\".",
+          "code": "FBC-B Table 1017.2",
+          "action": "None.",
+          "body": "",
+          "hit": 0
+        },
+        {
+          "fid": "V-02",
+          "rule_id": "EGRESS.DEAD_END",
+          "status": "PASS",
+          "severity": "VERIFIED",
+          "discipline": "Means of egress",
+          "page": 0,
+          "sheet": "G-0",
+          "anchor": "DEAD END CORRIDOR",
+          "title": "Dead-end limit 20 LF \u2014 correct for Group A",
+          "checked": "The stated dead-end limit against 1020.5 and the group list in its sprinklered exception.",
+          "result": "1020.5 sets 20 feet. The 50-foot sprinklered exception covers Groups B, E, F, I-1, M, R-1, R-2, S, U only \u2014 Group A is not in the list, so 20 feet governs. Sheet states 20 LF.",
+          "code": "FBC-B 1020.5",
+          "action": "None.",
+          "body": "",
+          "hit": 0
+        },
+        {
+          "fid": "V-03",
+          "rule_id": "EGRESS.CORRIDOR_WIDTH",
+          "status": "PASS",
+          "severity": "VERIFIED",
+          "discipline": "Means of egress",
+          "page": 0,
+          "sheet": "G-0",
+          "anchor": "MIN. CORRIDOR WIDTH",
+          "title": "Corridor width and the 1020.3 citation are both correct",
+          "checked": "The stated corridor width and the section number cited beside it against the 2023 FBC text.",
+          "result": "Table 1020.3, 'any facilities not listed' = 44 inches. Sheet states 44\", provided 60\". In the 2023 FBC the width requirement sits at 1020.3 \u2014 older editions number it differently, so the citation is worth confirming and it is right.",
+          "code": "FBC-B 1020.3 \u00b7 Table 1020.3",
+          "action": "None.",
+          "body": "",
+          "hit": 0
+        }
+      ],
+      "abstentions": [
+        "DOORS.CLEAR_WIDTH",
+        "EGRESS.CAPACITY_FACTOR",
+        "EGRESS.EXIT_COUNT",
+        "ELEC.PANEL_LOADING",
+        "MEASURE.EGRESS_EXTENT",
+        "MECH.OUTDOOR_AIR_CAPACITY"
+      ]
+    },
+    "itec_raster": {
+      "findings": [],
+      "abstentions": [
+        "DOORS.CLEAR_WIDTH",
+        "EGRESS.CAPACITY_FACTOR",
+        "EGRESS.COMMON_PATH",
+        "EGRESS.CORRIDOR_WIDTH",
+        "EGRESS.DEAD_END",
+        "EGRESS.EXIT_COUNT",
+        "EGRESS.TRAVEL_DISTANCE",
+        "ELEC.PANEL_LOADING",
+        "MEASURE.EGRESS_EXTENT",
+        "MECH.OUTDOOR_AIR_CAPACITY",
+        "XSHEET.BUILDING_AREA",
+        "XSHEET.RISK_CATEGORY"
+      ]
+    },
+    "itec_live": {
+      "findings": [],
+      "abstentions": [
+        "DOORS.CLEAR_WIDTH",
+        "EGRESS.CAPACITY_FACTOR",
+        "EGRESS.COMMON_PATH",
+        "EGRESS.CORRIDOR_WIDTH",
+        "EGRESS.DEAD_END",
+        "EGRESS.EXIT_COUNT",
+        "EGRESS.TRAVEL_DISTANCE",
+        "ELEC.PANEL_LOADING",
+        "MEASURE.EGRESS_EXTENT",
+        "MECH.OUTDOOR_AIR_CAPACITY",
+        "XSHEET.BUILDING_AREA",
+        "XSHEET.RISK_CATEGORY"
+      ]
+    }
+  }
+}

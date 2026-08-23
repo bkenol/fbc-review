@@ -7,6 +7,7 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { ProjectDeclaration } from './project-declaration';
 import { ReviewOptions } from './review-options';
 import { Summary } from './summary';
 import { ConversionReport } from './conversion-report';
@@ -21,6 +22,10 @@ export interface Job {
      */
     conversion?: ConversionReport | null;
     created_at: string;
+    /**
+     * What was submitted with the review, if anything.
+     */
+    declaration?: ProjectDeclaration | null;
     /**
      * Present only while state is `done`.
      */

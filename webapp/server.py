@@ -24,7 +24,10 @@ from typing import Any, Dict, Optional
 from fastapi import Depends, FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
-from fbcreview.options import EDITIONS, OCCUPANCY_GROUPS, SEVERITY_ORDER, ReviewOptions
+from fbcreview import declaration_schema
+from fbcreview.declaration import ProjectDeclaration
+from fbcreview.options import (AVAILABLE_EDITIONS, EDITIONS, OCCUPANCY_GROUPS,
+                               SEVERITY_ORDER, ReviewOptions)
 from fbcreview.rules import registered
 from webapp import errors, logging_config, mailer, models, storage, upload
 from webapp.auth import User, current_user
@@ -211,7 +214,7 @@ def config(user: User = Depends(current_user)) -> models.ConfigResponse:
     return models.ConfigResponse(
         occupancy_groups=[models.OccupancyGroup(id=i, label=l) for i, l in OCCUPANCY_GROUPS],
         editions=[
-            models.Edition(id=k, label=v, available=(k == "fbc2023"))
+            models.Edition(id=k, label=v, available=(k in AVAILABLE_EDITIONS))
             for k, v in EDITIONS.items()
         ],
         severities=list(SEVERITY_ORDER),
@@ -222,6 +225,15 @@ def config(user: User = Depends(current_user)) -> models.ConfigResponse:
         rules=registered(),
         mail=models.MailStatus(configured=mailer.configured(), status=mailer.status()),
         defaults=models.ReviewOptions(),
+        # Served whole, from the one module that defines it. The client renders
+        # what it is handed and carries no copy of a label or an enum value.
+        declaration_groups=[
+            models.DeclarationGroup(key=k, label=l) for k, l in declaration_schema.GROUPS
+        ],
+        declaration_fields=[
+            models.DeclarationField.model_validate(f) for f in declaration_schema.to_dicts()
+        ],
+        declaration_unlockable=list(declaration_schema.ALL_UNLOCKED),
     )
 
 
@@ -242,6 +254,15 @@ async def create_review(
     # generates a method with two parameters of that name, which does not
     # compile.
     review_options: str = Form("{}", description="A JSON-encoded ReviewOptions object."),
+    declaration: str = Form(
+        "{}",
+        description=(
+            "A JSON-encoded ProjectDeclaration: what the applicant says the building is. "
+            "Optional in whole and in part — every field may be omitted, and omitting the "
+            "part entirely reproduces the review exactly as it ran before declarations "
+            "existed. Values are validated against the schema `/api/config` publishes."
+        ),
+    ),
     user: User = Depends(current_user),
     store: JobStore = Depends(job_store),
     files: Storage = Depends(file_store),
@@ -273,6 +294,8 @@ async def create_review(
             errors.INVALID_REQUEST,
             f"{parsed.occupancy_group} is not an occupancy group this build reviews.",
         )
+
+    declared = _parse_declaration(declaration, parsed, raw)
 
     # Rate limits are checked before the body is streamed, so a throttled user
     # does not get to spend our bandwidth first.
@@ -320,6 +343,9 @@ async def create_review(
         upload_blob=blob,
         stages=job_stages,
         source=source.to_dict(),
+        # Part of the audit trail, not a convenience: the register prints what
+        # was asserted, and support has to be able to see it after the fact.
+        declaration=declared.to_dict(),
     )
 
     log.info(
@@ -330,8 +356,7 @@ async def create_review(
             "email": user.email,
             "pages": pages,
             "bytes": size,
-            "occupancy_group": parsed.occupancy_group,
-            "sprinklered": parsed.sprinklered,
+            "declared_fields": declared.answered_count(),
             "source_kind": source.kind,
             "raster_pages": len(source.raster_pages),
             "region_pages": len(source.region_pages),
@@ -347,6 +372,7 @@ async def create_review(
         filename=filename,
         upload_blob=blob,
         options=engine_options,
+        declaration=declared,
         store=store,
         store_files=files,
         convert_raster=parsed.convert_raster,
@@ -358,6 +384,45 @@ async def create_review(
         },
     )
     return JSONResponse({"id": job_id}, status_code=202)
+
+
+def _parse_declaration(body: str, options: models.ReviewOptions,
+                       raw_options: Dict[str, Any]) -> ProjectDeclaration:
+    """The submitted declaration, validated against the published schema.
+
+    Nothing is silently dropped or coerced. An enum value this build does not
+    know is a 400 naming the field, because accepting it quietly would mean
+    reviewing the set against something the user did not choose.
+
+    `occupancy_group` and `sprinklered` on ReviewOptions are the deprecated
+    bridge: they are building facts that used to live in the wrong place. They
+    seed the declaration only when the client sent them explicitly and the
+    declaration itself is silent — a defaulted value is not an answer, and a
+    blank field is not permission to guess.
+    """
+    try:
+        parsed: Dict[str, Any] = json.loads(body or "{}")
+    except json.JSONDecodeError:
+        raise ApiError(400, errors.INVALID_REQUEST, "declaration must be a JSON object.")
+    if not isinstance(parsed, dict):
+        raise ApiError(400, errors.INVALID_REQUEST, "declaration must be a JSON object.")
+
+    parsed = {k: v for k, v in parsed.items() if v is not None and v != ""}
+
+    problems = declaration_schema.validate(parsed)
+    if problems:
+        raise ApiError(400, errors.INVALID_REQUEST, " ".join(problems))
+
+    if "occupancy_group" not in parsed and "occupancy_group" in raw_options:
+        parsed["occupancy_group"] = options.occupancy_group
+    if "sprinkler_system" not in parsed and "sprinklered" in raw_options:
+        parsed["sprinkler_system"] = "nfpa13" if options.sprinklered else "none"
+
+    try:
+        wire = models.ProjectDeclaration.model_validate(parsed)
+    except Exception as exc:
+        raise ApiError(400, errors.INVALID_REQUEST, f"Invalid declaration: {exc}")
+    return ProjectDeclaration.from_dict(wire.model_dump())
 
 
 # -- poll ------------------------------------------------------------------
@@ -417,6 +482,11 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
         stage_label=stages[min(stage, len(stages) - 1)],
         stages=stages,
         options=models.ReviewOptions.model_validate(record.get("options") or {}),
+        declaration=(
+            models.ProjectDeclaration.model_validate(record["declaration"])
+            if record.get("declaration")
+            else None
+        ),
         bytes=int(record.get("bytes", 0) or 0),
         pages=record.get("pages"),
         source=(
@@ -438,6 +508,26 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
         finished_at=finished,
         elapsed_seconds=round(elapsed, 1),
     )
+
+
+@app.get(
+    "/api/jobs/{job_id}/declaration",
+    response_model=models.ProjectDeclaration,
+    tags=["reviews"],
+    operation_id="getJobDeclaration",
+    summary="What was declared with a review. For support and for the audit trail.",
+)
+def get_job_declaration(
+    job_id: str,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+) -> models.ProjectDeclaration:
+    record = store.get(job_id)
+    # Absent rather than forbidden, as elsewhere: a job id must not be probeable
+    # for existence.
+    if not record or record.get("uid") != user.uid:
+        raise ApiError(404, errors.NOT_FOUND, "No such review.")
+    return models.ProjectDeclaration.model_validate(record.get("declaration") or {})
 
 
 # -- dev-only artefact download -------------------------------------------

@@ -18,6 +18,10 @@ export interface Summary {
     annotations: number;
     cad_layers: number;
     /**
+     * Findings where the declaration and the drawings disagree.
+     */
+    conflicts?: number;
+    /**
      * Finding count keyed by severity.
      */
     counts: { [key: string]: number; };

@@ -12,8 +12,7 @@
     </div>
     <div class="note bad">{{ auth.denied() }}</div>
     <p class="hint">
-      You are signed in as {{ auth.email() }}. Access is granted per address by the
-      administrator.
+      You are signed in as {{ auth.email() }}. Access is granted per address by the administrator.
     </p>
     <div class="row">
       <button type="button" class="ghost" (click)="auth.signOut()">Sign out</button>
@@ -23,9 +22,30 @@
   <!-- ── 01 · the set ───────────────────────────────────────────────────── -->
   @if (!currentJob) {
     <form (ngSubmit)="submit()" [formGroup]="form" novalidate>
+      <!-- ── 01 · the project declaration ───────────────────────────────────
+           Before the file, not after it. The questionnaire is a second source
+           of truth alongside the drawings, so it is asked once, up front, and
+           submitted with the set in one go. -->
       <section class="step">
         <div class="step-head">
           <span class="mark">01</span>
+          <h2>Project declaration</h2>
+        </div>
+
+        @if (cfg; as loaded) {
+          <app-declaration-form
+            [fields]="loaded.declaration_fields"
+            [groups]="loaded.declaration_groups"
+            [unlockable]="loaded.declaration_unlockable"
+          />
+        } @else {
+          <p class="hint" aria-live="polite">Loading the questions…</p>
+        }
+      </section>
+
+      <section class="step">
+        <div class="step-head">
+          <span class="mark">02</span>
           <h2>The permit set</h2>
         </div>
 
@@ -60,10 +80,10 @@
         }
       </section>
 
-      <!-- ── 02 · parameters ──────────────────────────────────────────────── -->
+      <!-- ── 03 · parameters ──────────────────────────────────────────────── -->
       <section class="step">
         <div class="step-head">
-          <span class="mark">02</span>
+          <span class="mark">03</span>
           <h2>Review parameters</h2>
         </div>
 
@@ -81,7 +101,7 @@
               />
             </div>
             <div>
-              <label class="f" for="edition">Code edition</label>
+              <label class="f" for="edition">Review against</label>
               <select id="edition" formControlName="edition">
                 @for (edition of cfg?.editions ?? []; track edition.id) {
                   <!-- An unavailable edition is listed and disabled, never hidden. -->
@@ -90,24 +110,16 @@
                   </option>
                 }
               </select>
+              <!-- Occupancy group and sprinkler status used to sit here. They are
+                   facts about the building rather than settings for the review,
+                   so they are questions in the declaration above, where they are
+                   checked against the drawings instead of overriding them. -->
+              <p class="hint">
+                Which corpus the review runs against. Which edition the set was
+                <i>drawn</i> to is question 15 of the declaration, and if you answer it that answer
+                wins.
+              </p>
             </div>
-            <div>
-              <label class="f" for="occupancy_group">Occupancy group</label>
-              <select id="occupancy_group" formControlName="occupancy_group">
-                @for (group of cfg?.occupancy_groups ?? []; track group.id) {
-                  <option [value]="group.id">{{ group.label }}</option>
-                }
-              </select>
-              <p class="hint">Drives Chapter 10 — travel distance, common path, dead ends.</p>
-            </div>
-          </div>
-
-          <div class="check">
-            <input id="sprinklered" type="checkbox" formControlName="sprinklered" />
-            <label for="sprinklered">
-              <span class="h">Automatic sprinkler system</span>
-              <span class="d">Per 903.3.1.1 or 903.3.1.2. Changes most Chapter 10 limits.</span>
-            </label>
           </div>
         </fieldset>
 
@@ -180,13 +192,13 @@
     </form>
   }
 
-  <!-- ── 03 · running ─────────────────────────────────────────────────────
+  <!-- ── 04 · running ─────────────────────────────────────────────────────
        A real 24-sheet set takes about fifteen seconds, so this state is brief
        and must not be theatrical. -->
   @if (currentJob && running()) {
     <section class="step">
       <div class="step-head">
-        <span class="mark">03</span>
+        <span class="mark">04</span>
         <h2>Reviewing</h2>
       </div>
 
@@ -204,9 +216,7 @@
         }
       </ul>
 
-      <p class="figures">
-        {{ currentJob.filename }} · {{ currentJob.elapsed_seconds }} s elapsed
-      </p>
+      <p class="figures">{{ currentJob.filename }} · {{ currentJob.elapsed_seconds }} s elapsed</p>
 
       @if (lostContact()) {
         <!-- The review runs on the server whether or not we can see it, so this
@@ -260,17 +270,18 @@
     </section>
   }
 
-  <!-- ── 03 · result ─────────────────────────────────────────────────────── -->
+  <!-- ── 04 · result ─────────────────────────────────────────────────────── -->
   @if (currentJob && currentJob.state === 'done' && currentJob.summary; as summary) {
     <section class="step">
       <div class="step-head">
-        <span class="mark">03</span>
+        <span class="mark">04</span>
         <h2>Result</h2>
       </div>
 
       @if (critical(); as worst) {
         <div class="note CRITICAL">
-          <b>{{ worst.title }}</b><br />{{ worst.result }}
+          <b>{{ worst.title }}</b
+          ><br />{{ worst.result }}
         </div>
       } @else {
         <div class="note ok">
@@ -313,19 +324,82 @@
 
       <!-- The provenance line, in mono. It is the credibility of the screen. -->
       <p class="figures">
-        {{ summary.sheets }} sheets · {{ summary.pages }} pages out ·
-        {{ summary.cad_layers }} CAD layers preserved · {{ summary.annotations }} live
-        annotations · {{ summary.marked }} markers placed · {{ summary.rules_run }} rules ·
-        scale resolved on {{ summary.scale_pages }}/{{ summary.sheets }} pages ·
-        {{ megabytes(summary.pdf_bytes) | number: '1.1-1' }} MB ·
+        {{ summary.sheets }} sheets · {{ summary.pages }} pages out · {{ summary.cad_layers }} CAD
+        layers preserved · {{ summary.annotations }} live annotations · {{ summary.marked }} markers
+        placed · {{ summary.rules_run }} rules · scale resolved on {{ summary.scale_pages }}/{{
+          summary.sheets
+        }}
+        pages · {{ megabytes(summary.pdf_bytes) | number: '1.1-1' }} MB ·
         {{ currentJob.elapsed_seconds }} s
       </p>
     </section>
 
-    <!-- ── 04 · findings register ─────────────────────────────────────────── -->
+    <!-- ── 05 · declared versus drawn ───────────────────────────────────────
+         Its own section, above the register: a disagreement between what the
+         applicant said and what the set says is the finding a human reviewer
+         would otherwise have to read two sheets to notice. -->
+    @if (conflicts().length || divergent().length || declaredBasis().length) {
+      <section class="step">
+        <div class="step-head">
+          <span class="mark">05</span>
+          <h2>Declared versus drawn</h2>
+        </div>
+
+        @if (conflicts().length) {
+          <div class="note warn">
+            <b>
+              {{ conflicts().length }} field{{ conflicts().length === 1 ? '' : 's' }} where your
+              declaration and the set disagree.
+            </b>
+            The whole rule set was run twice — once against the drawings, once against your answers.
+            On-sheet markers show the as-drawn outcome, because the permit is issued against what
+            was submitted.
+            <ul class="annotations">
+              @for (finding of conflicts(); track finding.fid) {
+                <li>
+                  <span class="xtick" aria-hidden="true"></span>
+                  <span class="annot-name">{{ finding.sheet }}</span>
+                  — {{ finding.title }}
+                </li>
+              }
+            </ul>
+          </div>
+        }
+
+        @if (divergent().length) {
+          <div class="note">
+            <b>
+              {{ divergent().length }} check{{ divergent().length === 1 ? '' : 's' }} came out
+              differently under each reading.
+            </b>
+            <ul class="annotations">
+              @for (finding of divergent(); track finding.fid + finding.scenario) {
+                <li>
+                  <span class="annot-name">{{ finding.fid }}</span>
+                  {{ finding.title }} — {{ scenarioNote(finding) }}
+                </li>
+              }
+            </ul>
+          </div>
+        }
+
+        @if (declaredBasis().length) {
+          <div class="note">
+            <b>
+              {{ declaredBasis().length }}
+              finding{{ declaredBasis().length === 1 ? '' : 's' }} rest on your declaration.
+            </b>
+            The drawings do not state the values these depend on. They are marked as such in the
+            PDF, and the markup never attributes them to the sheet.
+          </div>
+        }
+      </section>
+    }
+
+    <!-- ── 06 · findings register ─────────────────────────────────────────── -->
     <section class="step">
       <div class="step-head">
-        <span class="mark">04</span>
+        <span class="mark">06</span>
         <h2>Findings</h2>
       </div>
 
@@ -352,12 +426,28 @@
                     <span class="chip">
                       @if (finding.severity === 'VERIFIED') {
                         <span class="tick" aria-hidden="true"></span>
-                      }{{ finding.severity }}
+                      }
+                      {{ finding.severity }}
                     </span>
+                    <!-- A conflict is a status, not a severity: the row keeps its own
+                         colour and this says where the finding came from. -->
+                    @if (finding.status === 'CONFLICT') {
+                      <span class="chip conflict">Declared vs drawn</span>
+                    }
                   </td>
                   <td>
                     <b class="title">{{ finding.title }}</b>
                     <span class="body">{{ finding.result }}</span>
+                    <!-- Never let the markup imply the drawings said something
+                         they did not. -->
+                    @if (finding.basis === 'declaration') {
+                      <span class="basis">
+                        Based on the project declaration; the drawings do not state this.
+                      </span>
+                    }
+                    @if (finding.scenario !== 'both') {
+                      <span class="basis">{{ scenarioNote(finding) }}</span>
+                    }
                   </td>
                   <td class="ref">{{ finding.code }}</td>
                 </tr>
@@ -379,8 +469,8 @@
       @if (abstentions().length) {
         <div class="note warn" style="margin-top: 24px">
           <b>
-            Not checked — {{ abstentions().length }}
-            rule{{ abstentions().length === 1 ? '' : 's' }} declined to run.
+            Not checked — {{ abstentions().length }} rule{{ abstentions().length === 1 ? '' : 's' }}
+            declined to run.
           </b>
           These were not evaluated. That is not the same as passing.
           <ul class="annotations">
@@ -398,8 +488,7 @@
       @if (unreadableSheets().length) {
         <div class="note warn">
           <b>{{ unreadableSheets().length }} sheet(s) could not be read into.</b>
-          Pages {{ unreadableSheets().join(', ') }} are raster images. Nothing on them was
-          checked.
+          Pages {{ unreadableSheets().join(', ') }} are raster images. Nothing on them was checked.
         </div>
       }
 
@@ -409,9 +498,9 @@
             {{ pastedTableSheets().length }} sheet(s) paste part of the drawing in as an image.
           </b>
           Pages {{ pastedTableSheets().join(', ') }}. The sheets themselves are proper vector, so
-          they look fine — but a code-analysis table pasted in as a picture is pixels, and
-          nothing read it. If rules stood down for want of a value that is printed on one of
-          those sheets, that is why.
+          they look fine — but a code-analysis table pasted in as a picture is pixels, and nothing
+          read it. If rules stood down for want of a value that is printed on one of those sheets,
+          that is why.
           <div class="row">
             <button type="button" class="ghost" (click)="retryWithConversion()">
               Read those sheets and review again

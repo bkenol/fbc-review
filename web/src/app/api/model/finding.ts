@@ -15,6 +15,10 @@
 export interface Finding { 
     action?: string;
     anchor: string;
+    /**
+     * What the finding rests on. `declaration` means the drawings do not state the value it depends on, and the card says so — the markup must never attribute to the drawings something the drawings do not say.
+     */
+    basis?: FindingBasisEnum;
     body?: string;
     checked: string;
     code: string;
@@ -24,11 +28,25 @@ export interface Finding {
     page: number;
     result: string;
     rule_id: string;
+    /**
+     * Which reading produced this. `both` means it came out the same whether the set was evaluated as drawn or as declared, which is the common case. `as_drawn` means it appeared only against the drawings; `as_declared` only against the declaration.
+     */
+    scenario?: FindingScenarioEnum;
     severity: FindingSeverityEnum;
     sheet: string;
     status: FindingStatusEnum;
     title: string;
 }
+export enum FindingBasisEnum {
+    Drawings = 'drawings',
+    Declaration = 'declaration',
+    Both = 'both'
+};
+export enum FindingScenarioEnum {
+    Both = 'both',
+    AsDrawn = 'as_drawn',
+    AsDeclared = 'as_declared'
+};
 export enum FindingSeverityEnum {
     Critical = 'CRITICAL',
     High = 'HIGH',
@@ -39,7 +57,8 @@ export enum FindingSeverityEnum {
 };
 export enum FindingStatusEnum {
     Open = 'OPEN',
-    Pass = 'PASS'
+    Pass = 'PASS',
+    Conflict = 'CONFLICT'
 };
 
 

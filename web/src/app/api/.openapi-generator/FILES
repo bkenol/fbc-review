@@ -10,6 +10,10 @@ model/abstention.ts
 model/config-response.ts
 model/conversion-report.ts
 model/converted-page.ts
+model/declaration-field.ts
+model/declaration-group.ts
+model/declaration-report.ts
+model/declaration-tolerance.ts
 model/downloads.ts
 model/edition.ts
 model/error-detail.ts
@@ -21,7 +25,9 @@ model/job.ts
 model/mail-status.ts
 model/models.ts
 model/occupancy-group.ts
+model/project-declaration.ts
 model/raster-region.ts
+model/reconciled-field.ts
 model/review-accepted.ts
 model/review-options.ts
 model/sheet-profile.ts

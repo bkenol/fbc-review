@@ -71,7 +71,11 @@ def test_findings_json_matches_the_published_type():
 
     assert document.job_id == "job-1"
     assert document.summary.findings_count == len(document.findings)
-    assert document.summary.rules_run == 12
+    # Not a frozen count: the number of rules moves whenever the corpus grows.
+    # What must hold is that the published figure is the registry's own size.
+    from fbcreview.rules import registered
+
+    assert document.summary.rules_run == len(registered())
 
 
 def test_summary_stays_well_under_the_firestore_document_limit():

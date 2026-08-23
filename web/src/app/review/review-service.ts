@@ -29,6 +29,7 @@ import {
   Finding,
   FindingsDocument,
   Job,
+  ProjectDeclaration,
   ReviewOptions,
   ReviewsApi,
 } from '../api';
@@ -130,14 +131,19 @@ export class ReviewService {
   }
 
   // ── submit ──────────────────────────────────────────────────────────────
-  submit(file: File, options: ReviewOptions): void {
+  /**
+   * One continuous submit: the questionnaire and the file go up together. The
+   * declaration is deliberately not a second phase — an extract-then-confirm
+   * job model would make the user wait to be asked what they already knew.
+   */
+  submit(file: File, options: ReviewOptions, declaration: ProjectDeclaration = {}): void {
     this._failure.set(null);
     this._findings.set(null);
     this._job.set(null);
     this._submitting.set(true);
 
     this.reviews
-      .createReview(file, JSON.stringify(options))
+      .createReview(file, JSON.stringify(declaration), JSON.stringify(options))
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (accepted) => {

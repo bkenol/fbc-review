@@ -6,21 +6,26 @@
  * fbcreview/options.py needs no change here.
  */
 import { DecimalPipe } from '@angular/common';
-import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
+import { Component, OnDestroy, computed, inject, signal, viewChild } from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 
 import { Finding, ReviewOptions, ReviewOptionsMinSeverityEnum } from '../api';
 import { AuthService } from '../core/auth';
+import { DeclarationForm } from './declaration/declaration-form';
 import { ReviewService } from './review-service';
 
 /** Tally order. VERIFIED and MEASURED last: they are coverage, not problems. */
 const TALLY = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'MEASURED', 'VERIFIED'] as const;
 
+/**
+ * Review settings only. Occupancy group and sprinkler status used to live here
+ * and were always in the wrong place — they are facts about the building, and
+ * they are now questions 1 and 9 of the project declaration, where they are
+ * reconciled against the drawings instead of overriding them.
+ */
 interface OptionsForm {
   project_name: FormControl<string>;
   edition: FormControl<string>;
-  occupancy_group: FormControl<string>;
-  sprinklered: FormControl<boolean>;
   min_severity: FormControl<ReviewOptionsMinSeverityEnum>;
   include_verified: FormControl<boolean>;
   include_measured: FormControl<boolean>;
@@ -29,7 +34,7 @@ interface OptionsForm {
 
 @Component({
   selector: 'app-review',
-  imports: [ReactiveFormsModule, DecimalPipe],
+  imports: [ReactiveFormsModule, DecimalPipe, DeclarationForm],
   templateUrl: './review.html',
 })
 export class Review implements OnDestroy {
@@ -44,6 +49,8 @@ export class Review implements OnDestroy {
   protected readonly running = this.reviews.running;
   protected readonly lostContact = this.reviews.lostContact;
 
+  protected readonly declarationForm = viewChild(DeclarationForm);
+
   protected readonly file = signal<File | null>(null);
   protected readonly dragging = signal(false);
   protected readonly clientError = signal<string | null>(null);
@@ -52,8 +59,6 @@ export class Review implements OnDestroy {
   protected readonly form = new FormGroup<OptionsForm>({
     project_name: new FormControl('', { nonNullable: true }),
     edition: new FormControl('fbc2023', { nonNullable: true }),
-    occupancy_group: new FormControl('A-3', { nonNullable: true }),
-    sprinklered: new FormControl(true, { nonNullable: true }),
     min_severity: new FormControl(ReviewOptionsMinSeverityEnum.Low, { nonNullable: true }),
     include_verified: new FormControl(true, { nonNullable: true }),
     include_measured: new FormControl(true, { nonNullable: true }),
@@ -78,6 +83,36 @@ export class Review implements OnDestroy {
   );
 
   protected readonly abstentions = computed(() => this.job()?.summary?.abstentions ?? []);
+
+  /** Fields where the declaration and the drawings disagree. */
+  protected readonly conflicts = computed(
+    () => this.findings()?.filter((f) => f.status === 'CONFLICT') ?? [],
+  );
+
+  /** Findings that rest on an answer rather than on anything printed. */
+  protected readonly declaredBasis = computed(
+    () => this.findings()?.filter((f) => f.basis === 'declaration') ?? [],
+  );
+
+  /** Checks that came out differently under the two readings. */
+  protected readonly divergent = computed(
+    () => this.findings()?.filter((f) => f.scenario !== 'both') ?? [],
+  );
+
+  protected scenarioNote(finding: Finding): string {
+    const failing = finding.status === 'OPEN' || finding.status === 'CONFLICT';
+    if (finding.scenario === 'as_drawn') {
+      return failing
+        ? 'Fails as drawn. Passes as you described it.'
+        : 'Holds as drawn. Comes out differently as you described it.';
+    }
+    if (finding.scenario === 'as_declared') {
+      return failing
+        ? 'Passes as drawn. Fails as you described it.'
+        : 'Holds as you described it. Comes out differently as drawn.';
+    }
+    return '';
+  }
 
   /** Sheets the parser could not read into. Not the same as sheets that passed. */
   protected readonly unreadableSheets = computed(() => this.job()?.source?.raster_pages ?? []);
@@ -112,8 +147,6 @@ export class Review implements OnDestroy {
     this.form.patchValue(
       {
         edition: defaults.edition ?? 'fbc2023',
-        occupancy_group: defaults.occupancy_group ?? 'A-3',
-        sprinklered: defaults.sprinklered ?? true,
         min_severity: defaults.min_severity ?? ReviewOptionsMinSeverityEnum.Low,
         include_verified: defaults.include_verified ?? true,
         include_measured: defaults.include_measured ?? true,
@@ -185,17 +218,18 @@ export class Review implements OnDestroy {
     if (!file || this.submitting()) return;
 
     const value = this.form.getRawValue();
+    // `occupancy_group` and `sprinklered` are deliberately not sent: the server
+    // treats them as a deprecated bridge into the declaration, and sending the
+    // form's untouched default would turn "nobody said" into "the user said".
     const options: ReviewOptions = {
       edition: value.edition,
-      occupancy_group: value.occupancy_group,
-      sprinklered: value.sprinklered,
       min_severity: value.min_severity,
       include_verified: value.include_verified,
       include_measured: value.include_measured,
       convert_raster: value.convert_raster,
       project_name: value.project_name,
     };
-    this.reviews.submit(file, options);
+    this.reviews.submit(file, options, this.declarationForm()?.value() ?? {});
   }
 
   protected startOver(): void {

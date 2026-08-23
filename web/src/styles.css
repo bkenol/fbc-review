@@ -1049,3 +1049,154 @@ footer {
     animation: none !important;
   }
 }
+
+/* ── project declaration ───────────────────────────────────────────────────
+ * The questionnaire is a form of the same kind as the review parameters, so it
+ * borrows the same field, label and hint rules. What it adds is a wording
+ * toggle, a collapsible group and one live line saying what answering buys.
+ * Nothing here introduces a colour. The system owns two accents and the survey
+ * green added for VERIFIED; the declaration is not a fourth thing, so every
+ * element below is on the ink ramp or borrows the row's own --sev.
+ */
+.vocab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.vocab-label {
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-right: var(--space-1);
+}
+/* A pair of pressed states, not a switch: both wordings are equally valid and
+   neither is the "off" position. */
+.vocab-btn {
+  padding: 4px 12px;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border-input);
+  transition: var(--transition-colour);
+}
+.vocab-btn:hover {
+  color: var(--text-strong);
+  border-color: var(--text-strong);
+  background: transparent;
+}
+.vocab-btn.on {
+  color: var(--text-reverse);
+  background: var(--surface-inverse);
+  border-color: var(--surface-inverse);
+}
+
+/* The line that makes abstention visible. Deliberately plain text on a rule
+   rather than a badge: it is a statement about coverage, not a score. */
+.tally {
+  margin: var(--space-4) 0 var(--space-5);
+  padding: var(--space-3) 0;
+  border-top: var(--hairline);
+  border-bottom: var(--hairline);
+  max-width: var(--measure);
+  font: var(--type-small);
+  color: var(--text-body);
+}
+.tally b {
+  font: var(--type-dimension);
+  color: var(--text-strong);
+}
+
+.qgroup {
+  border-top: var(--hairline);
+  padding: var(--space-4) 0 var(--space-5);
+}
+.qgroup:first-of-type {
+  border-top: 0;
+}
+.qgroup > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  cursor: pointer;
+  list-style: none;
+}
+.qgroup > summary::-webkit-details-marker {
+  display: none;
+}
+.qgroup-name {
+  font: var(--type-eyebrow);
+  letter-spacing: var(--ls-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* The count leads with a rule, the way a dimension does elsewhere. */
+.qgroup-count {
+  flex: none;
+  font: var(--type-dimension);
+  color: var(--text-faint);
+}
+.qgroup[open] .qgroup-name,
+.qgroup > summary:hover .qgroup-name {
+  color: var(--text-strong);
+}
+.qgroup > summary:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: var(--focus-offset);
+}
+label.f .unit {
+  color: var(--text-faint);
+  text-transform: none;
+}
+input[type='number'] {
+  width: 100%;
+  padding: 10px 12px;
+  font: var(--type-small);
+  color: var(--text-strong);
+  background: var(--surface-card);
+  border: 1px solid var(--border-input);
+  transition: var(--transition-colour);
+}
+input[type='number']:hover {
+  border-color: var(--text-strong);
+}
+
+/* ── declared basis, on a finding row ──────────────────────────────────────
+ * A finding resting on an answer says so wherever it appears. The markup must
+ * never attribute to the drawings something the drawings do not state, and the
+ * screen keeps the same promise.
+ */
+td .basis {
+  display: block;
+  margin-top: var(--space-1);
+  max-width: var(--measure);
+  font: var(--type-small);
+  font-style: italic;
+  color: var(--text-muted);
+}
+/* A conflict is a status, not a seventh severity, so this tag takes the row's own
+ * --sev rather than reaching for a hue. The system owns two accents and one deliberate
+ * green; "where did this finding come from" does not earn a fourth.
+ *
+ * What separates it from the severity chip beside it is the border, dashed rather than
+ * solid — the same mark the marked-up PDF puts on the drawing for the same thing, so
+ * the screen and the sheet say it the same way. It gives up the wash as well, which
+ * keeps the severity chip the louder of the two.
+ */
+/* Scoped through `td.sev` so it out-ranks the CRITICAL chip reversal above, which
+   would otherwise turn this into a second filled stamp on a critical row. */
+td.sev .chip.conflict {
+  /* Its own line under the severity. `td.sev` is nowrap, so left inline the two
+     chips together set the column's width and pushed the finding text over. */
+  display: flex;
+  width: fit-content;
+  margin-top: 4px;
+  background: none;
+  border-style: dashed;
+  font-weight: var(--weight-regular);
+}

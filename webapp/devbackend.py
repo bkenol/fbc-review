@@ -57,12 +57,13 @@ class LocalJobStore:
 
     def create(
         self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob,
-        stages: List[str], source=None,
+        stages: List[str], source=None, declaration=None,
     ) -> Dict[str, Any]:
         record = {
             "id": job_id, "uid": uid, "email": email, "filename": filename,
             "bytes": size_bytes, "pages": pages, "state": QUEUED, "stage": 0,
-            "stages": list(stages), "options": options, "upload_blob": upload_blob,
+            "stages": list(stages), "options": options, "declaration": declaration,
+            "upload_blob": upload_blob,
             "source": source, "summary": None, "conversion": None,
             "error": None, "error_code": None,
             "created_at": utcnow(), "started_at": None, "finished_at": None,
