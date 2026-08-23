@@ -1,0 +1,25 @@
+/* MERIDIAN — SPACE & LAYOUT
+   48px minor / 240px major drafting grid. Left-aligned and generous; no centred body text. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 22px;
+  --space-6: 28px;
+  --space-7: 40px;
+  --space-8: 56px;
+  --space-9: 64px;
+  --space-10: 96px;
+
+  --grid-minor: 48px;
+  --grid-major: 240px;
+
+  --page-max: 1200px;
+  --page-gutter: 40px;
+  --measure: 72ch;
+
+  --section-gap: var(--space-10);
+  --block-gap: var(--space-7);
+  --stack-gap: var(--space-4);
+}

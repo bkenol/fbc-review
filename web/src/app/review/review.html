@@ -297,7 +297,7 @@
         @for (severity of tallyOrder; track severity) {
           <div class="dim {{ severity }}" [class.zero]="count(severity) === 0">
             <b class="fig">{{ count(severity) }}</b>
-            <span class="rule" aria-hidden="true"></span>
+            <span class="rule" aria-hidden="true"><span class="slash"></span></span>
             <span class="lab">{{ severity }}</span>
           </div>
         }

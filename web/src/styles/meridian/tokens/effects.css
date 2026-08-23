@@ -1,0 +1,35 @@
+/* MERIDIAN — SURFACES, HAIRLINES, MOTION
+   Radius 0 everywhere. Hairlines separate content; elevation does not.
+   No frosted glass, no backdrop blur, no translucent UI overlays. */
+:root {
+  --radius: 0;
+  --hairline: 1px solid var(--border-hairline);
+  --hairline-strong: 1px solid var(--ink-1);
+  --rule-dimension: 1px solid var(--red-1);
+
+  /* Exists for the rare floating element only, and is nearly invisible by design. */
+  --shadow-lift: 0 1px 2px rgba(22, 25, 28, 0.06);
+
+  --ease: cubic-bezier(0.2, 0, 0.2, 1); /* @kind other */
+  --dur-colour: 120ms; /* @kind other */
+  --dur-move: 200ms; /* @kind other */
+  --transition-colour: color var(--dur-colour) var(--ease), background-color var(--dur-colour) var(--ease), border-color var(--dur-colour) var(--ease);
+
+  --focus-outline: 1px solid var(--focus-ring);
+  --focus-offset: 2px;
+
+  /* Drafting grid: cool slate, 5% minor / 8.5% major, scaled by --tweak-grid-opacity.
+     The plates carry drafting grids of their own, so this one is meant to be dialled back
+     wherever the two would compete. */
+  --grid-line-minor: rgba(52, 84, 130, calc(0.05 * var(--tweak-grid-opacity, 1)));
+  --grid-line-major: rgba(52, 84, 130, calc(0.085 * var(--tweak-grid-opacity, 1)));
+  /* Pitches, scaled by --tweak-grid-scale so density and size move together and the 48:240
+     (1:5) minor-to-major relationship survives at any setting. */
+  --grid-pitch-minor: calc(var(--grid-minor) * var(--tweak-grid-scale, 1));
+  --grid-pitch-major: calc(var(--grid-major) * var(--tweak-grid-scale, 1));
+  --sheet-grid:
+    repeating-linear-gradient(to right, var(--grid-line-minor) 0 1px, transparent 1px var(--grid-pitch-minor)),
+    repeating-linear-gradient(to bottom, var(--grid-line-minor) 0 1px, transparent 1px var(--grid-pitch-minor)),
+    repeating-linear-gradient(to right, var(--grid-line-major) 0 1px, transparent 1px var(--grid-pitch-major)),
+    repeating-linear-gradient(to bottom, var(--grid-line-major) 0 1px, transparent 1px var(--grid-pitch-major));
+}

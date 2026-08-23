@@ -1,0 +1,42 @@
+/* MERIDIAN — FONTS
+   Majesty Bold — display and headings. THE REAL BRAND FACE, supplied by the client.
+     Source Serif 4 stays loaded as its fallback for any surface that cannot load the .otf
+     (email, some PDF engines) and as the qualifier serif inside the logo.
+   IBM Plex Sans — body copy and all normal paragraph text (voice). PLACEHOLDER.
+   IBM Plex Mono — labels, dimensions, annotations, code (measure). PLACEHOLDER.
+   The two Plex families are drawn from the same skeleton, so sans body copy and mono
+   dimension figures sit on the same rhythm. Both are free and Google-hosted; swap them for
+   licensed families by replacing the @import and changing --font-sans / --font-mono.
+
+   ── TWO DEVIATIONS FROM THE SYSTEM COPY OF THIS FILE, AND WHY ────────────────
+   Everything else under styles/meridian/ is byte-for-byte the design system. This file
+   is not, because two things in it cannot survive the Angular build unchanged.
+
+   1. The webfont @import moved to web/src/index.html as <link rel="preconnect"> plus
+      <link rel="stylesheet">. A CSS @import is only valid before every other rule, and
+      the build concatenates this file into one bundle with the application layer after
+      it — the @import would land mid-bundle and be dropped. A <link> in the document
+      head is the same request, ordered correctly, and it starts earlier because it does
+      not wait on the stylesheet to parse. The families and weights are identical.
+      Hosting's CSP was widened for exactly those two font hosts and nothing else.
+
+   2. The Majesty src points at the built asset path rather than ../assets/fonts/.
+      Angular serves web/public/** from the site root, so the system's relative path
+      does not resolve here.
+
+   ── THE BINARY IS NOT IN THIS REPOSITORY YET ────────────────────────────────
+   Majesty-Bold.otf is 277 kB and the system's own readme says to convert it to WOFF2
+   before production, since the OTF is several times heavier over the wire. Drop
+   Majesty-Bold.woff2 into web/public/fonts/ and headings pick it up with no other
+   change. Until then this @font-face simply does not resolve and headings render in
+   Source Serif 4 — which is the fallback the system designed for this exact case, not
+   a substitution invented here. */
+@font-face {
+  font-family: 'Majesty';
+  src:
+    url('/fonts/Majesty-Bold.woff2') format('woff2'),
+    url('/fonts/Majesty-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}

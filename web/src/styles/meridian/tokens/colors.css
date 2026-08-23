@@ -1,0 +1,53 @@
+/* MERIDIAN — COLOUR
+   Target distribution: paper 62% / graphite 33% / red 3% / blue 2%.
+   No third accent. No gradients anywhere in the system. */
+:root {
+  /* Ink — graphite ramp, biases cool as it desaturates */
+  --ink-1: #16191C;
+  --ink-2: #2B2F33;
+  --ink-3: #555B61;
+  --ink-4: #8B9299;
+  --ink-5: #B9C0C7;
+
+  /* Paper — cool sheet, never warm cream */
+  --paper-white: #FFFFFF;
+  --paper-0: #F1F2F3;
+  --paper-1: #EEF1F5;
+  --paper-2: #E6EBF1;
+  --paper-edge: #D3DAE2;
+
+  /* Engineer red — dimensions, ticks, scope numbers, primary hover. Never a fill. */
+  --red-1: #B3251E;
+  --red-2: #D24A3C;
+
+  /* Drafting blue — links, focus, annotations, faint wash */
+  --blue-1: #1F4E9C;
+  --blue-2: #345482;
+  --blue-3: #7D9BC4;
+
+  /* ---- Semantic aliases ---- */
+  --text-strong: var(--ink-1);
+  --text-body: var(--ink-2);
+  --text-muted: var(--ink-3);
+  --text-faint: var(--ink-4);
+  --text-reverse: var(--paper-1);
+
+  --surface-page: var(--paper-1);
+  --surface-card: var(--paper-white);
+  --surface-sheet: var(--paper-1);
+  --surface-sunk: var(--paper-2);
+  --surface-inverse: var(--ink-1);
+
+  --border-hairline: var(--paper-edge);
+  --border-strong: var(--ink-1);
+  --border-input: var(--ink-4);
+
+  --accent-dimension: var(--red-1);
+  --accent-reverse: var(--red-2);
+  --annotation: var(--blue-2);
+  --wash: var(--blue-3);
+
+  --link: var(--blue-1);
+  --link-hover: var(--red-1);
+  --focus-ring: var(--blue-1);
+}
