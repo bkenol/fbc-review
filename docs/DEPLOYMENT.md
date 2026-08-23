@@ -83,6 +83,57 @@ Two things it cannot do for you, both needing a browser: enabling the Google
 sign-in provider, and adding the custom domain plus its DNS records. It prints
 the console links for both when it finishes.
 
+## 0b. Running it on another machine
+
+Everything that matters is committed, so moving between machines is a clone plus
+one script.
+
+```bash
+git clone https://github.com/bkenol/fbc-review.git
+cd fbc-review
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
+
+It checks prerequisites first and names what is missing rather than failing
+halfway through, then creates the virtualenv, installs both dependency trees,
+builds the client and runs the tests.
+
+Deliberately not in git, and what to do about each:
+
+| Not committed | Why | How to get it |
+| --- | --- | --- |
+| `samples/*.pdf` | Client drawings never go in a repository | Re-copy from the Drive folder `Meridian/Building Codes/Unreviewed Plans` |
+| `.venv/`, `web/node_modules/` | Machine-specific | `scripts\setup.ps1` |
+| `web/dist/` | Build output | `scripts\setup.ps1` |
+| `.devdata/` | Local job scratch for the dev backend | Recreated on demand; disposable |
+
+Nothing else is machine-specific. There is no state on the laptop worth moving:
+no deployed service, no cloud credentials in the repo, and job records live in
+`.devdata`, which is throwaway.
+
+### Sharing it over a public URL
+
+`scripts/share.ps1` runs the whole app as one container on one port, with the
+API serving the client so there is a single origin and no CORS. Then:
+
+```bash
+tailscale funnel 8060
+```
+
+Funnel is enabled once per tailnet; the CLI prints the approval link if it is
+not. Each machine gets its own hostname, so the desktop's URL differs from the
+laptop's, and only one machine serves a given hostname.
+
+**That mode has authentication switched off.** Anyone with the URL can upload a
+set and spend your CPU. What limits the damage is that the per-user rate limits
+collapse to a global cap when every request shares one identity — 3 concurrent
+and 10 reviews an hour — plus the 120 MB and 300-page upload caps. Fine for a
+short unlisted test; not something to leave running.
+
+```bash
+tailscale funnel reset; docker rm -f fbc-test
+```
+
 ## 1. Prerequisites
 
 | Tool | Version used | Note |
