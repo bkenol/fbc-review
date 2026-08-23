@@ -1,458 +1,935 @@
-/* FBC Code Review — global styles.
+/* FBC Code Reviewer — the Meridian Design System, applied.
  *
- * Ported from webapp/static/index.html, which is a finished design rather than
- * a placeholder. Kept deliberately: `color-scheme: light dark` plus
- * `accent-color` so form controls follow the OS theme with no theme toggle to
- * build, get wrong, or persist.
+ * The system itself is vendored under styles/meridian/ and imported below. Every file
+ * under styles/meridian/tokens/ is byte-for-byte the client's design project, with the
+ * single documented exception noted at the top of tokens/fonts.css. Nothing in this file
+ * edits those tokens; it consumes them, and adds only what the system does not decide.
  *
- * No CSS framework. This is one page.
+ * Where the design brief (docs/DESIGN-BRIEF-Claude-Design.md) and the system disagree,
+ * the system wins — that is the brief's own instruction. The brief decides three things
+ * the system has no opinion on, because they are about this product rather than the
+ * brand: how six severities map onto two accents, that the tally reads as a dimension
+ * run, and that the abstention register reads as an annotation.
+ *
+ * No CSS framework, no component library. This is one page.
+ */
+@import url('styles/meridian/meridian.css');
+
+/* ── project scheme ────────────────────────────────────────────────────────
+ * Two decisions that belong to this product rather than to the system.
+ *
+ * BLUE PRIMARY. The design project carries a blue-primary and a red-primary scheme;
+ * this app is the blue one. The system's own hover rule is unchanged and still applies —
+ * colors.css reserves --red-1 for "dimensions, scope numbers, primary hover" — so the
+ * primary action rests in drafting blue and swaps to engineer red on hover.
+ *
+ * THE DRAFTING GRID IS ON. --tweak-grid-opacity ships at 0 because the system's
+ * illustration plates carry drafting grids of their own and a second grid behind them
+ * clashes. This app carries no plates at all, which is the case the readme says to turn
+ * it up for: "deliberately, on bands that carry no plate". It is set here rather than in
+ * the vendored token so the system file stays a clean drop-in.
  */
 :root {
-  color-scheme: light dark;
-  --ink: #0b1220;
-  --bg: #f4f6f9;
-  --card: #ffffff;
-  --line: #d7dce4;
-  --muted: #5b6572;
-  --text: #151a22;
-  --brand: #1a56b0;
-  --brand-ink: #ffffff;
-  --crit: #cc0f0f;
-  --high: #d97400;
-  --med: #a58000;
-  --low: #1a56b0;
-  --ok: #0a6b32;
-  --meas: #c7008c;
-  --shadow: 0 1px 2px rgba(11, 18, 32, 0.06), 0 8px 24px rgba(11, 18, 32, 0.06);
-  --r: 10px;
+  --tweak-grid-opacity: 0.6;
+
+  --primary: var(--blue-1);
+  --primary-hover: var(--red-1);
+  --primary-ink: var(--paper-white);
 }
 
+/* ── dark ──────────────────────────────────────────────────────────────────
+ * DERIVED, NOT TRANSCRIBED — the one thing here that is not the designer's.
+ *
+ * The design project's "Blue Primary — Dark" artboard is inside a zip this environment
+ * cannot open, so the dark scheme below was built rather than read. It is constrained to
+ * make that as small a liberty as possible: every value is either a step from the
+ * system's own ramps or a color-mix of two of them. No new hex is introduced anywhere.
+ *
+ * The re-pointing follows the system's stated intent for each ramp. --red-2 is described
+ * in colors.css as --accent-reverse and in the readme as the reverse accent, so it takes
+ * over dimension duty where --red-1 goes muddy on a dark ground. --blue-3 is the
+ * lightest blue the system has, so it takes annotations, links and focus where --blue-1
+ * and --blue-2 no longer carry.
+ *
+ * Replace this block when the artboard becomes readable.
+ */
 @media (prefers-color-scheme: dark) {
   :root {
-    --ink: #e8ecf3;
-    --bg: #0d1117;
-    --card: #151b24;
-    --line: #2a3240;
-    --muted: #98a3b3;
-    --text: #e8ecf3;
-    --brand: #5c9bff;
-    --brand-ink: #08101f;
-    --crit: #ff6b6b;
-    --high: #ffa04d;
-    --med: #e5c04a;
-    --low: #7fb0ff;
-    --ok: #4ecb85;
-    --meas: #ff7ad4;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --surface-page: var(--ink-1);
+    --surface-sheet: var(--ink-1);
+    --surface-card: color-mix(in srgb, var(--ink-2) 45%, var(--ink-1));
+    --surface-sunk: color-mix(in srgb, #000 24%, var(--ink-1));
+    --surface-inverse: var(--paper-1);
+
+    --text-strong: var(--paper-1);
+    --text-body: var(--ink-5);
+    --text-muted: var(--ink-4);
+    --text-faint: color-mix(in srgb, var(--ink-4) 74%, var(--ink-1));
+    --text-reverse: var(--ink-1);
+
+    --border-hairline: color-mix(in srgb, var(--ink-5) 20%, var(--ink-1));
+    --border-strong: var(--ink-5);
+    --border-input: color-mix(in srgb, var(--ink-4) 60%, var(--ink-1));
+
+    --accent-dimension: var(--red-2);
+    --annotation: var(--blue-3);
+    --link: var(--blue-3);
+    --link-hover: var(--red-2);
+    --focus-ring: var(--blue-3);
+
+    --primary: var(--blue-3);
+    --primary-hover: var(--red-2);
+    --primary-ink: var(--ink-1);
+
+    /* The grid is cool slate against paper; on ink it has to carry its own light. */
+    --grid-line-minor: rgba(160, 186, 220, calc(0.05 * var(--tweak-grid-opacity, 1)));
+    --grid-line-major: rgba(160, 186, 220, calc(0.085 * var(--tweak-grid-opacity, 1)));
   }
 }
 
+/* ── base ──────────────────────────────────────────────────────────────────*/
 * {
   box-sizing: border-box;
 }
 
+html {
+  background: var(--surface-page);
+}
+
 body {
+  position: relative; /* the masthead overlays this */
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  accent-color: var(--brand);
-  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial,
-    sans-serif;
+  background: var(--surface-page);
+  background-image: var(--sheet-grid);
+  color: var(--text-body);
+  accent-color: var(--primary);
+  font: var(--type-body);
+  -webkit-font-smoothing: antialiased;
 }
 
-.wrap {
-  max-width: 1060px;
-  margin: 0 auto;
-  padding: 32px 20px 80px;
+/* Radius 0 everywhere. Stated once rather than on thirty selectors. */
+input,
+select,
+textarea,
+button,
+progress,
+.btn,
+.drop,
+.note {
+  border-radius: var(--radius);
 }
 
-header {
+/* Headings are the display face and nothing else is. Majesty ships in one weight, so
+   hierarchy comes from size alone — never from weight. */
+h1,
+h2,
+h3 {
+  margin: 0;
+  color: var(--text-strong);
+}
+h1 {
+  /* The system sets display at a flat 52px. Clamped here only so it survives a phone;
+     the ceiling is the system's value. */
+  font: var(--type-display);
+  font-size: clamp(32px, 4.6vw, var(--size-display));
+  letter-spacing: var(--ls-display);
+  max-width: 18ch;
+}
+h2 {
+  font: var(--type-h2);
+  font-size: clamp(23px, 2.6vw, var(--size-h2));
+}
+h3 {
+  font: var(--type-h3);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--link);
+  transition: var(--transition-colour);
+}
+a:hover {
+  color: var(--link-hover);
+}
+
+/* ── masthead ──────────────────────────────────────────────────────────────
+ * The system's site header: an absolute overlay, never sticky. Transparent, above the
+ * page, occupying no layout space, and it scrolls away rather than following the reader
+ * down. It is pointer-events: none so the sheet stays live between the links; the
+ * wordmark and the controls re-enable them.
+ *
+ * Because it takes no space, every view adds its own 96px top clearance — --space-10,
+ * which is the system's figure for exactly this.
+ */
+.masthead {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  pointer-events: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-2) var(--space-6);
   align-items: baseline;
   justify-content: space-between;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 26px;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--space-6) var(--page-gutter) var(--space-4);
+  border-bottom: var(--hairline);
+}
+.masthead a,
+.masthead button {
+  pointer-events: auto;
 }
 
-h1 {
-  font-size: 1.5rem;
-  margin: 0;
-  letter-spacing: -0.01em;
+.wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  text-decoration: none;
+  color: inherit;
 }
-h1 span {
-  color: var(--muted);
-  font-weight: 400;
+.wordmark:hover {
+  color: inherit;
 }
-
-.sub {
-  color: var(--muted);
-  font-size: 0.875rem;
-  margin: 4px 0 0;
-}
-
-h2 {
-  font-size: 1.05rem;
-  margin: 0 0 14px;
-  letter-spacing: 0.02em;
+/* MERIDIAN in the serif at 0.06em over a mono qualifier at 0.28em, per the system's
+   wordmark spec. The mark itself is placeholder artwork in the system and no logo files
+   were supplied, so this is the lockup's type only — no invented glyph. */
+.wordmark .house {
+  font: var(--weight-bold) 15px/1 var(--font-serif);
+  letter-spacing: 0.06em;
+  color: var(--text-strong);
   text-transform: uppercase;
-  color: var(--muted);
+}
+.wordmark .tool {
+  font: var(--type-label);
+  letter-spacing: 0.28em;
+  color: var(--text-muted);
+  text-transform: uppercase;
 }
 
-.card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  padding: 22px;
-  box-shadow: var(--shadow);
-  margin-bottom: 22px;
+.session {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  font: var(--type-label);
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
 }
 
-/* ── drop zone ─────────────────────────────────────────── */
+/* ── the sheet ─────────────────────────────────────────────────────────────
+ * Left-aligned throughout. The system forbids centred body text, and this screen is
+ * dense with figures that are harder to compare off a ragged left edge.
+ */
+.wrap {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--space-10) var(--page-gutter) var(--space-10);
+}
+
+@media (max-width: 720px) {
+  .wrap {
+    padding-top: 132px; /* the masthead wraps to two rows here */
+    padding-left: var(--space-5);
+    padding-right: var(--space-5);
+  }
+  .masthead {
+    padding-left: var(--space-5);
+    padding-right: var(--space-5);
+  }
+}
+
+/* ── opening claim ─────────────────────────────────────────────────────────*/
+.eyebrow {
+  margin-bottom: var(--space-4);
+  font: var(--type-eyebrow);
+  letter-spacing: var(--ls-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* An annotation, in the system's sense: an underlined mono fragment in survey blue. */
+.claim {
+  margin-top: var(--space-5);
+  font: var(--type-annotation);
+  color: var(--annotation);
+}
+.claim span {
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 2px;
+}
+
+.lede {
+  margin-top: var(--space-5);
+  max-width: var(--measure);
+  font: var(--type-lead);
+  color: var(--text-body);
+}
+
+/* ── stepped page ──────────────────────────────────────────────────────────
+ * Each state is a step on one scrolling sheet. The heavy top rule reads as a section
+ * cut; the mono marker in the head is the step number.
+ */
+.step {
+  border-top: var(--hairline-strong);
+  margin-top: var(--section-gap);
+  padding-top: var(--space-6);
+}
+
+.step-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-bottom: var(--block-gap);
+}
+
+.mark {
+  flex: none;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── drop zone ─────────────────────────────────────────────────────────────*/
 .drop {
   position: relative;
   display: block;
-  border: 2px dashed var(--line);
-  border-radius: var(--r);
-  padding: 38px 24px;
-  text-align: center;
+  border: 1px dashed var(--border-input);
+  background: var(--surface-sunk);
+  padding: var(--space-8) var(--space-6);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-  background: color-mix(in srgb, var(--card) 92%, var(--bg));
+  transition: var(--transition-colour);
 }
 .drop:hover,
-.drop:focus-within {
-  border-color: var(--brand);
+.drop:focus-within,
+.drop.over {
+  border-color: var(--primary);
+  border-style: solid;
 }
 .drop.over {
-  border-color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 10%, var(--card));
+  background: var(--surface-card);
 }
-/* A real file input, full-bleed and transparent, so the keyboard and screen
-   reader path is the native one rather than a div pretending to be a button. */
+/* A real file input, full-bleed and transparent, so the keyboard and screen reader path
+   is the native one rather than a div pretending to be a button. */
 .drop input[type='file'] {
   position: absolute;
   inset: 0;
-  opacity: 0;
-  cursor: pointer;
   width: 100%;
   height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 .drop .big {
   display: block;
-  font-size: 1.05rem;
-  font-weight: 600;
+  font: var(--type-lead);
+  color: var(--text-strong);
 }
 .drop .small {
   display: block;
-  color: var(--muted);
-  font-size: 0.875rem;
-  margin-top: 6px;
+  margin-top: var(--space-2);
+  max-width: var(--measure);
+  font: var(--type-small);
+  color: var(--text-muted);
 }
 .filechip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: center;
-  margin-top: 14px;
-  font-size: 0.9rem;
-  color: var(--ok);
-  font-weight: 600;
+  display: block;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: var(--hairline);
+  font: var(--type-dimension);
+  color: var(--text-strong);
 }
 
-/* ── form ──────────────────────────────────────────────── */
+/* ── form ──────────────────────────────────────────────────────────────────*/
 fieldset {
   border: 0;
-  padding: 0;
-  margin: 0 0 20px;
+  border-top: var(--hairline);
+  padding: var(--space-6) 0 0;
+  margin: 0 0 var(--block-gap);
+}
+fieldset:first-of-type {
+  border-top: 0;
+  padding-top: 0;
 }
 legend {
-  font-size: 0.75rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 700;
   padding: 0;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-4);
+  font: var(--type-eyebrow);
+  letter-spacing: var(--ls-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 .grid {
   display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: var(--space-5) var(--space-6);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 label.f {
   display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2);
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
+/* Square hairline field with a mono label, per the system's Input. */
 input[type='text'],
 input[type='email'],
 select,
 textarea {
   width: 100%;
-  padding: 9px 11px;
-  font: inherit;
-  font-size: 0.925rem;
-  color: var(--text);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  padding: 10px 12px;
+  font: var(--type-small);
+  color: var(--text-strong);
+  background: var(--surface-card);
+  border: 1px solid var(--border-input);
+  transition: var(--transition-colour);
 }
+input[type='text']:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--text-strong);
+}
+select:disabled,
+option:disabled,
+input:disabled {
+  color: var(--text-faint);
+}
+
+/* 1px --blue-1 outline at 2px offset. Square, like everything else. */
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 button:focus-visible,
 a:focus-visible,
 .drop:focus-within {
-  outline: 2px solid var(--brand);
-  outline-offset: 2px;
+  outline: var(--focus-outline);
+  outline-offset: var(--focus-offset);
 }
+
 .check {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: flex-start;
-  font-size: 0.9rem;
-  padding: 8px 0;
+  padding: var(--space-3) 0;
+  border-top: var(--hairline);
+}
+.check:first-of-type {
+  margin-top: var(--space-2);
 }
 .check input {
-  margin-top: 3px;
   flex: none;
-  width: 17px;
-  height: 17px;
+  margin-top: 3px;
+  width: 15px;
+  height: 15px;
 }
 .check .h {
-  font-weight: 600;
   display: block;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-strong);
 }
+/* Each switch carries one line saying what it actually changes. Not decorative. */
 .check .d {
-  color: var(--muted);
-  font-size: 0.8rem;
+  display: block;
+  margin-top: var(--space-1);
+  max-width: var(--measure);
+  font: var(--type-small);
+  color: var(--text-muted);
 }
 .hint {
-  color: var(--muted);
-  font-size: 0.78rem;
-  margin-top: 5px;
+  margin-top: var(--space-2);
+  max-width: var(--measure);
+  font: var(--type-small);
+  color: var(--text-muted);
 }
 .row {
   display: flex;
-  gap: 14px;
-  align-items: center;
   flex-wrap: wrap;
-  margin-top: 8px;
+  gap: var(--space-3) var(--space-4);
+  align-items: center;
+  margin-top: var(--space-5);
 }
 
+/* ── buttons ───────────────────────────────────────────────────────────────
+ * Verbs, in mono caps. Hover is a decisive colour swap on the system's 120ms colour
+ * transition — nothing scales, shrinks or bounces, and nothing moves.
+ *
+ * Primary rests in drafting blue and swaps to engineer red, which is the hover colour
+ * colors.css reserves for it. Secondary inverts to filled graphite, per the system.
+ */
 button,
 .btn {
-  font: inherit;
-  font-weight: 650;
-  padding: 11px 22px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: var(--brand);
-  color: var(--brand-ink);
-  cursor: pointer;
-  text-decoration: none;
   display: inline-block;
+  padding: 12px 22px;
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink);
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: var(--transition-colour);
+}
+button:hover:not(:disabled),
+.btn:hover {
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
+  color: var(--paper-white);
 }
 button:disabled,
 .btn[aria-disabled='true'] {
-  opacity: 0.5;
+  border-color: var(--border-hairline);
+  background: var(--surface-sunk);
+  color: var(--text-faint);
   cursor: not-allowed;
 }
 button.ghost,
 .btn.ghost {
   background: transparent;
-  color: var(--text);
-  border-color: var(--line);
+  border-color: var(--border-input);
+  color: var(--text-strong);
+}
+button.ghost:hover:not(:disabled),
+.btn.ghost:hover {
+  background: var(--text-strong);
+  border-color: var(--text-strong);
+  color: var(--text-reverse);
+}
+/* Sits inline in the masthead, so it reads as a link rather than a control. */
+button.inline {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-hairline);
+  letter-spacing: 0.06em;
+}
+button.inline:hover:not(:disabled) {
+  background: none;
+  color: var(--link-hover);
+  border-bottom-color: var(--link-hover);
 }
 
-/* ── progress + results ────────────────────────────────── */
+/* ── progress ──────────────────────────────────────────────────────────────
+ * A real 24-sheet set takes about fifteen seconds. This state is brief and must not be
+ * theatrical: a hairline bar and a list of named stages.
+ */
 progress {
+  display: block;
   width: 100%;
-  height: 8px;
-  border-radius: 99px;
-  overflow: hidden;
+  height: 3px;
+  border: 0;
+  background: var(--surface-sunk);
+  appearance: none;
 }
+progress::-webkit-progress-bar {
+  background: var(--surface-sunk);
+}
+progress::-webkit-progress-value {
+  background: var(--primary);
+}
+progress::-moz-progress-bar {
+  background: var(--primary);
+}
+
 .stages {
   list-style: none;
-  margin: 16px 0 0;
+  margin: var(--space-6) 0 0;
   padding: 0;
-  font-size: 0.875rem;
 }
 .stages li {
   display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 4px 0;
-  color: var(--muted);
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) 0;
+  border-top: var(--hairline);
+  font: var(--type-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
+.stages li:first-child {
+  border-top: 0;
+}
+/* A station marker, not an icon: a hairline square that fills as it is reached. */
 .stages li .dot {
+  flex: none;
   width: 9px;
   height: 9px;
-  border-radius: 99px;
-  background: var(--line);
-  flex: none;
+  border: 1px solid var(--border-input);
+  align-self: center;
 }
 .stages li.on {
-  color: var(--text);
-  font-weight: 600;
+  color: var(--text-strong);
 }
 .stages li.on .dot {
-  background: var(--brand);
+  border-color: var(--primary);
+  background: var(--primary);
 }
 .stages li.ok .dot {
-  background: var(--ok);
+  border-color: var(--text-muted);
+  background: var(--text-muted);
 }
 
-.tally {
+/* Elapsed seconds, and every other figure on this screen, in mono. */
+.figures {
+  margin-top: var(--space-5);
+  font: var(--type-label);
+  font-size: var(--size-code);
+  line-height: var(--lh-code);
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── DimensionRule — the severity tally ────────────────────────────────────
+ * The brief's resolution of the six-severity problem: a dimension run, not a row of stat
+ * cards. Figures in mono above a rule, labels below, and the system's terminator — a
+ * tick plus a 45° slash at each end.
+ */
+.dimrun {
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
-  margin-bottom: 20px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0 var(--space-5);
+  margin: var(--block-gap) 0;
 }
-.t {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 11px 12px;
-  background: var(--card);
+@media (max-width: 760px) {
+  .dimrun {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: var(--space-6);
+  }
 }
-.t b {
+.dim {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text-strong);
+}
+.dim .fig {
+  font: var(--type-dimension);
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+}
+.dim .rule {
+  position: relative;
   display: block;
-  font-size: 1.5rem;
-  line-height: 1.15;
+  height: 1px;
+  background: currentColor;
 }
-.t span {
-  font-size: 0.68rem;
-  letter-spacing: 0.09em;
+/* The terminator: a vertical tick and a 45° slash, at each end. Drafting notation drawn
+   as geometry — the system has no icon set and this is its glyph vocabulary. */
+.dim .rule::before,
+.dim .rule::after {
+  content: '';
+  position: absolute;
+  top: -5px;
+  width: 1px;
+  height: 11px;
+  background: currentColor;
+}
+.dim .rule::before {
+  left: 0;
+}
+.dim .rule::after {
+  right: 0;
+}
+.dim .slash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.dim .slash::before,
+.dim .slash::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  width: 1px;
+  height: 9px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+.dim .slash::before {
+  left: 0;
+}
+.dim .slash::after {
+  right: 0;
+}
+.dim .lab {
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
-  color: var(--muted);
-}
-.t.CRITICAL b {
-  color: var(--crit);
-}
-.t.HIGH b {
-  color: var(--high);
-}
-.t.MEDIUM b {
-  color: var(--med);
-}
-.t.LOW b {
-  color: var(--low);
-}
-.t.VERIFIED b {
-  color: var(--ok);
-}
-.t.MEASURED b {
-  color: var(--meas);
+  color: var(--text-muted);
 }
 
+/* Red for the two that stop a permit — it is already the dimension-and-scope colour, so
+   it is doing the same job here. Survey blue for a reading taken off the drawing. The
+   ink ramp for the rest. No third accent. */
+.dim.CRITICAL,
+.dim.HIGH {
+  color: var(--accent-dimension);
+}
+.dim.MEASURED {
+  color: var(--annotation);
+}
+.dim.MEDIUM,
+.dim.LOW,
+.dim.VERIFIED {
+  color: var(--text-strong);
+}
+/* A count of zero is not a finding and must not read as one. */
+.dim.zero {
+  color: var(--text-muted);
+}
+
+/* ── findings table ────────────────────────────────────────────────────────*/
 .tablewrap {
   overflow-x: auto;
 }
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.86rem;
+  font: var(--type-small);
 }
 th {
+  padding: var(--space-2) var(--space-3);
   text-align: left;
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
+  border-bottom: var(--hairline-strong);
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
-  color: var(--muted);
-  border-bottom: 1px solid var(--line);
-  padding: 7px 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 td {
-  border-bottom: 1px solid var(--line);
-  padding: 9px;
+  padding: var(--space-3);
+  border-bottom: var(--hairline);
+  border-top: 1px solid transparent;
   vertical-align: top;
+  color: var(--text-body);
 }
 td:first-child,
 td:nth-child(2) {
   white-space: nowrap;
 }
 th:first-child {
-  width: 64px;
+  width: 76px;
 }
 th:nth-child(2) {
-  width: 62px;
+  width: 70px;
 }
 th:nth-child(3) {
-  width: 92px;
+  width: 112px;
 }
 th:last-child {
-  width: 170px;
+  width: 190px;
 }
+td .title {
+  display: block;
+  color: var(--text-strong);
+  transition: var(--transition-colour);
+}
+td .body {
+  display: block;
+  margin-top: 2px;
+  max-width: var(--measure);
+}
+td.ref {
+  font: var(--type-code);
+  color: var(--text-muted);
+}
+
+/* The system's table hover: a red 1px top rule and a red title. Nothing moves. */
+tbody tr:hover td {
+  border-top-color: var(--accent-dimension);
+}
+tbody tr:hover td .title {
+  color: var(--accent-dimension);
+}
+
+/* Severity labels are mono uppercase throughout. Below the two accents the difference is
+   carried by rule weight and tick presence, never by a third hue. */
 td.sev {
-  font-weight: 700;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
   white-space: nowrap;
-  font-size: 0.74rem;
-  letter-spacing: 0.04em;
+  color: var(--text-body);
+}
+td.sev.CRITICAL,
+td.sev.HIGH {
+  color: var(--accent-dimension);
 }
 td.sev.CRITICAL {
-  color: var(--crit);
-}
-td.sev.HIGH {
-  color: var(--high);
-}
-td.sev.MEDIUM {
-  color: var(--med);
-}
-td.sev.LOW {
-  color: var(--low);
-}
-td.sev.VERIFIED {
-  color: var(--ok);
+  font-weight: var(--weight-bold);
 }
 td.sev.MEASURED {
-  color: var(--meas);
+  color: var(--annotation);
+}
+td.sev.MEDIUM {
+  color: var(--text-strong);
+  font-weight: var(--weight-semibold);
+}
+td.sev.LOW {
+  color: var(--text-muted);
+  font-weight: var(--weight-regular);
+}
+
+/* The row's left rule carries the same distinction at the same budget. */
+tbody tr td:first-child {
+  border-left: 2px solid transparent;
+  padding-left: 10px;
+}
+tbody tr.CRITICAL td:first-child,
+tbody tr.HIGH td:first-child {
+  border-left-color: var(--accent-dimension);
+}
+tbody tr.MEASURED td:first-child {
+  border-left-color: var(--annotation);
+}
+tbody tr.MEDIUM td:first-child,
+tbody tr.VERIFIED td:first-child {
+  border-left-color: var(--border-hairline);
+}
+
+/* ── drafting notation ─────────────────────────────────────────────────────
+ * The system deliberately has no icon set: no icon font, no sprite sheet, no PNG icons,
+ * never emoji and never unicode symbols as icons. Its glyph vocabulary is drafting
+ * notation drawn as geometry, and these are two of the three.
+ */
+/* A tick for what was checked and passed. */
+.tick {
+  display: inline-block;
+  width: 9px;
+  height: 5px;
+  margin-right: 6px;
+  border-left: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(-45deg);
+  vertical-align: 3px;
+}
+/* The cross tick: a small red plus marking a reference point. A plus, not a multiply —
+   the system is specific about this. */
+.xtick {
+  position: relative;
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: var(--space-2);
+  color: var(--accent-dimension);
+  vertical-align: -1px;
+}
+.xtick::before,
+.xtick::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+}
+.xtick::before {
+  left: 0;
+  top: 4px;
+  width: 9px;
+  height: 1px;
+}
+.xtick::after {
+  top: 0;
+  left: 4px;
+  width: 1px;
+  height: 9px;
+}
+
+/* ── Annotation — the abstention register ──────────────────────────────────
+ * The system's Annotation: an underlined mono fragment in survey blue with an optional
+ * red cross tick. The brief calls this the single most important visual decision on the
+ * screen — a rule that declined to run is a callout on the drawing, not an error
+ * message, and "not checked" must never look like "checked and passed".
+ */
+.annotations {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+}
+.annotations li {
+  padding: var(--space-2) 0;
+  border-top: var(--hairline);
+  font: var(--type-small);
+  color: var(--text-body);
+}
+.annotations li:first-child {
+  border-top: 0;
+}
+.annot-name {
+  font: var(--type-annotation);
+  color: var(--annotation);
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 1px;
+}
+
+/* ── notes ─────────────────────────────────────────────────────────────────
+ * Cards are flat: 1px hairline, no shadow, no radius. Hairlines separate content;
+ * elevation does not.
+ */
+.note {
+  border: var(--hairline);
+  border-left: 2px solid var(--text-strong);
+  background: var(--surface-card);
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-4);
+  font: var(--type-small);
+  color: var(--text-body);
+  max-width: 92ch;
+}
+.note b {
+  color: var(--text-strong);
+  font-weight: var(--weight-semibold);
+}
+.note.bad {
+  border-left-color: var(--accent-dimension);
+}
+.note.bad b {
+  color: var(--accent-dimension);
+}
+.note.warn {
+  border-left-color: var(--annotation);
+}
+.note.warn b {
+  color: var(--annotation);
+}
+.note ul {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-6);
+}
+.note .row {
+  margin-top: var(--space-3);
 }
 
 code {
-  font: 0.82em ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: color-mix(in srgb, var(--muted) 14%, transparent);
-  padding: 1px 5px;
-  border-radius: 4px;
+  font: var(--type-code);
+  color: var(--text-strong);
 }
 
-.note {
-  border-left: 4px solid var(--brand);
-  background: color-mix(in srgb, var(--brand) 8%, transparent);
-  padding: 12px 15px;
-  border-radius: 0 7px 7px 0;
-  font-size: 0.86rem;
-  margin-bottom: 18px;
-}
-.note.warn {
-  border-color: var(--high);
-  background: color-mix(in srgb, var(--high) 10%, transparent);
-}
-.note.bad {
-  border-color: var(--crit);
-  background: color-mix(in srgb, var(--crit) 10%, transparent);
-}
-.note ul {
-  margin: 8px 0 0;
-  padding-left: 20px;
-}
-
+/* ── footer ────────────────────────────────────────────────────────────────
+ * The disclaimer is required on every state and is not negotiable prose.
+ */
 footer {
-  color: var(--muted);
-  font-size: 0.78rem;
-  text-align: center;
-  margin-top: 34px;
+  margin-top: var(--section-gap);
+  padding-top: var(--space-4);
+  border-top: var(--hairline);
+  max-width: 92ch;
+  font: var(--type-small);
+  color: var(--text-muted);
 }
 
-.centred {
-  text-align: center;
-  padding: 40px 20px;
-}
-
+/* The system's motion budget is 120ms for colour and 200ms for anything larger, and it
+   forbids entrance animations outright. Nothing here animates position or size, so this
+   only has to stand the colour transitions down. */
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

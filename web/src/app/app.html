@@ -1,35 +1,54 @@
+<!-- The header is the absolute overlay the system specifies: it sits over the
+     top of the sheet rather than taking a band out of it, and it scrolls away.
+     No fill, one hairline, no nav. -->
+<header class="masthead">
+  <a class="wordmark" href="/">
+    <span class="house">Meridian</span>
+    <span class="tool">FBC Code Reviewer</span>
+  </a>
+
+  <p class="session">
+    @if (auth.openAccess()) {
+      <!-- Nothing to sign out of, and saying so is better than showing a
+           button that does nothing. -->
+      <span>Open access · no sign-in on this deployment</span>
+    } @else if (auth.state() === 'allowed' || auth.state() === 'not-allowed') {
+      <span>{{ auth.email() }}</span>
+      <button type="button" class="inline" (click)="auth.signOut()">Sign out</button>
+    } @else {
+      &nbsp;
+    }
+  </p>
+</header>
+
 <div class="wrap">
-  <header>
-    <div>
-      <h1>FBC Code Review <span>· pre-submittal</span></h1>
-      <p class="sub">
-        Drop a vector permit set. Every stated code value is checked against the section it
-        cites, the arithmetic is redone, and the egress paths are measured off the drawing.
-      </p>
-    </div>
-    <p class="sub">
-      @if (auth.openAccess()) {
-        <!-- Nothing to sign out of, and saying so is better than showing a
-             button that does nothing. -->
-        Open access · no sign-in on this deployment
-      } @else if (auth.state() === 'allowed' || auth.state() === 'not-allowed') {
-        {{ auth.email() }} ·
-        <button type="button" class="ghost" style="padding: 4px 10px; font-size: 0.8rem"
-                (click)="auth.signOut()">Sign out</button>
-      } @else {
-        &nbsp;
-      }
-    </p>
-  </header>
+  <!-- Headline shape is the system's: a concrete claim with a measure in it. -->
+  <p class="eyebrow">Pre-submittal plan review</p>
+  <h1>Every stated value checked against the section it cites.</h1>
+  <p class="claim"><span>Twelve rules, zero model calls, fifteen seconds.</span></p>
+  <p class="lede">
+    Drop a vector permit set. Every stated code value is checked against the section it
+    cites, the arithmetic is redone, and the egress paths are measured off the drawing at
+    the scale recorded inside the file. A rule that cannot get the input it needs abstains
+    and says so.
+  </p>
 
   @if (auth.state() === 'starting') {
-    <p class="centred hint" aria-live="polite">Checking your session…</p>
+    <section class="step">
+      <div class="step-head">
+        <span class="mark">00</span>
+        <h2>Checking your session</h2>
+      </div>
+      <p class="hint" aria-live="polite">One moment.</p>
+    </section>
   } @else {
     <router-outlet />
   }
 
+  <!-- Required on every state, and not negotiable prose. -->
   <footer>
-    Advisory only. A licensed design professional remains responsible for code compliance — this
-    is not a plan approval and does not replace review by the authority having jurisdiction.
+    Advisory only. A licensed design professional remains responsible for code compliance —
+    this is not a plan approval and does not replace review by the authority having
+    jurisdiction.
   </footer>
 </div>

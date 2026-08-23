@@ -1,0 +1,55 @@
+/* MERIDIAN — TYPE
+   Three families, and the split is structural:
+     display for intent (Majesty Bold — the brand face, headings only)
+     sans    for voice  (body copy, paragraphs, UI text)
+     mono    for measure (labels, dimensions, annotations, code)
+   Never set body copy in the display face, and never set a label in it either. */
+:root {
+  --font-display: "Majesty", "Source Serif 4", Georgia, serif;
+  --font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-sans: "IBM Plex Sans", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+
+  --weight-regular: 400;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Display scale — Majesty Bold, headings only. It is a heavier, more decorative face than the
+     serif it replaces, so the steps run larger and the display tracking opens up rather than
+     tightening. Majesty ships in one weight (700). */
+  --size-display: 52px;
+  --lh-display: 1.08; /* @kind other */
+  --ls-display: 0.005em;
+  --size-h2: 30px;
+  --size-h3: 22px;
+
+  /* Sans scale — prose and UI text */
+  --size-lead: 19px;
+  --lh-lead: 1.5; /* @kind other */
+  --size-body: 17px;
+  --lh-body: 1.55; /* @kind other */
+  --size-small: 15px;
+
+  /* Mono scale — measure */
+  --size-eyebrow: 12px;
+  --ls-eyebrow: 0.18em;
+  --size-label: 12px;
+  --ls-label: 0.14em;
+  --size-dimension: 16px;
+  --size-annotation: 15px;
+  --size-code: 13px;
+  --lh-code: 1.65; /* @kind other */
+
+  /* ---- Semantic composites ---- */
+  --type-display: var(--weight-bold) var(--size-display)/var(--lh-display) var(--font-display);
+  --type-h2: var(--weight-bold) var(--size-h2)/1.18 var(--font-display);
+  --type-h3: var(--weight-bold) var(--size-h3)/1.28 var(--font-display);
+  --type-lead: var(--weight-regular) var(--size-lead)/var(--lh-lead) var(--font-sans);
+  --type-body: var(--weight-regular) var(--size-body)/var(--lh-body) var(--font-sans);
+  --type-small: var(--weight-regular) var(--size-small)/1.5 var(--font-sans);
+  --type-eyebrow: var(--weight-regular) var(--size-eyebrow)/1.4 var(--font-mono);
+  --type-label: 500 var(--size-label)/1.4 var(--font-mono);
+  --type-dimension: var(--weight-regular) var(--size-dimension)/1.3 var(--font-mono);
+  --type-annotation: var(--weight-regular) var(--size-annotation)/1.4 var(--font-mono);
+  --type-code: var(--weight-regular) var(--size-code)/var(--lh-code) var(--font-mono);
+}

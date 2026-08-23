@@ -1,0 +1,62 @@
+/* MERIDIAN — TWEAK LEVERS
+   These five mirror the style-board sliders 1:1. The defaults below are the values the
+   client settled on, and they are ALREADY BAKED INTO assets/illustrations/*.png — so the
+   derived filters resolve to identity at these defaults and the system renders correctly
+   with no JS and no overrides. Override any one on :root (or on a section) and every
+   [data-plate] wrapper re-tunes live. */
+:root {
+  --tweak-paper-temp: -8; /* @kind other */        /* -60 cool ... +60 warm */
+  --tweak-page-lightness: 95%; /* @kind other */   /* 82% ... 100% */
+  --tweak-accent-amount: 1.1; /* @kind other */    /* 0 ... 2.2   (0 = fully monochrome) */
+  --tweak-ink-contrast: 1.05; /* @kind other */    /* 0.75 ... 1.45 */
+  --tweak-ink-density: 1.06; /* @kind other */     /* 0.88 ... 1.12 */
+
+  /* Two grid levers, and the only ones NOT baked into the artwork — so their full range is live.
+     The plates carry drafting grids of their own, so the page grid behind them competes. The
+     default is therefore OFF: turn it up deliberately, on bands that carry no plate. */
+  --tweak-grid-opacity: 0; /* @kind other */        /* 0 off ... 2 double */
+  --tweak-column-opacity: 0.5; /* @kind other */    /* 0 off ... 1 — the page-length plate column */
+  --tweak-field-opacity: 0.4; /* @kind other */     /* 0 off ... 1 — the generated drafting field */
+
+  /* FROSTED GLASS. Outline buttons are transparent by design, so over an illustration plate their
+     label competes with the artwork. A frosted-glass backdrop blur settles the plate behind the
+     button without tinting it. This is a deliberate, scoped exception to the system's
+     no-frosted-glass rule: outline buttons only, never panels, cards or navigation.
+     0 restores the strict rule. */
+  --tweak-frosted-glass: 3px; /* @kind other */     /* 0 off ... 16px */
+
+  /* The feathered paper wash the hero copy sits on. Extent is how far it reaches across the plate;
+     too little and ink fails contrast over the artwork, too much and the plate is veiled. */
+  --tweak-wash-extent: 80%; /* @kind other */       /* 20% ... 100% of the band */
+  --tweak-wash-opacity: 0.84; /* @kind other */     /* 0 off ... 1 opaque paper */
+  --tweak-grid-scale: 1; /* @kind other */          /* 0.25 fine ... 3 coarse — scales both pitches
+                                                       together, so the 5:1 minor-to-major
+                                                       relationship holds at any density */
+
+  /* Baked baselines — do not edit; they describe what is already in the PNGs. */
+  --plate-baked-accent: 1.1; /* @kind other */
+  --plate-baked-contrast: 1.05; /* @kind other */
+  --plate-baked-density: 1.06; /* @kind other */
+  --plate-baked-temp: -8; /* @kind other */
+
+  /* Derived: identity at the defaults above */
+  --plate-filter:
+    saturate(calc(var(--tweak-accent-amount) / var(--plate-baked-accent)))
+    contrast(calc(var(--tweak-ink-contrast) / var(--plate-baked-contrast)))
+    brightness(calc(var(--tweak-ink-density) / var(--plate-baked-density)));
+
+  /* Veils apply only the DELTA from the baked paper temperature */
+  --plate-cool-veil: calc(max(0, (-1 * var(--tweak-paper-temp)) + var(--plate-baked-temp)) / 52 * 0.5);
+  --plate-warm-veil: calc(max(0, var(--tweak-paper-temp) - var(--plate-baked-temp)) / 68 * 0.5);
+  --plate-veil-cool-colour: #C9DCF2;
+  --plate-veil-warm-colour: #F6E3C4;
+
+  /* Tuned sheet — the page ground recomputed from the two paper levers */
+  --paper-cool-mix: calc(max(0, -1 * var(--tweak-paper-temp)) / 60);
+  --paper-warm-mix: calc(max(0, var(--tweak-paper-temp)) / 60);
+  --paper-tuned: hsl(
+    calc(213 - var(--paper-warm-mix) * 175)
+    calc((var(--paper-cool-mix) + var(--paper-warm-mix)) * 22%)
+    var(--tweak-page-lightness)
+  );
+}

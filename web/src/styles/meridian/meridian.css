@@ -1,0 +1,16 @@
+/* The Meridian Design System, vendored.
+ *
+ * Imported from the client's design project (Meridian Design System v2). Every file
+ * under tokens/ is byte-for-byte the system's own, with the single documented exception
+ * noted at the top of tokens/fonts.css. Do not edit them to suit this application —
+ * override in styles.css instead, so a later drop-in of a newer system version is a
+ * straight file replacement rather than a merge.
+ *
+ * This mirrors the system's own styles.css, which is an @import list and nothing else.
+ */
+@import url('tokens/fonts.css');
+@import url('tokens/colors.css');
+@import url('tokens/typography.css');
+@import url('tokens/spacing.css');
+@import url('tokens/effects.css');
+@import url('tokens/tweaks.css');
