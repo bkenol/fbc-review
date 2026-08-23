@@ -1,13 +1,22 @@
-<section class="card centred">
+<!-- Signed out. Left-aligned like every other state — this tool is read at a
+     desk with the set open beside it, not presented. -->
+<section class="step">
   @if (!auth.configured) {
-    <h2>Not configured</h2>
+    <div class="step-head">
+      <span class="mark"><span class="xtick" aria-hidden="true"></span></span>
+      <h2>Not configured</h2>
+    </div>
     <div class="note bad">
       This deployment has no Firebase project configured yet. Fill in
       <code>web/src/app/core/firebase-config.ts</code> from the Firebase console and rebuild.
     </div>
   } @else {
-    <h2>Sign in</h2>
-    <p class="sub" style="margin-bottom: 22px">
+    <div class="step-head">
+      <span class="mark">00</span>
+      <h2>Sign in</h2>
+    </div>
+
+    <p class="hint" style="margin-bottom: 24px">
       Access is granted per address. Sign in with the Google account the administrator
       allowlisted.
     </p>
@@ -16,8 +25,10 @@
       <div class="note bad" role="alert">{{ message }}</div>
     }
 
-    <button type="button" (click)="auth.signIn()" [disabled]="auth.signingIn()">
-      {{ auth.signingIn() ? 'Opening Google…' : 'Continue with Google' }}
-    </button>
+    <div class="row" style="margin-top: 0">
+      <button type="button" (click)="auth.signIn()" [disabled]="auth.signingIn()">
+        {{ auth.signingIn() ? 'Opening Google' : 'Continue with Google' }}
+      </button>
+    </div>
   }
 </section>

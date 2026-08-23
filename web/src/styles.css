@@ -1,49 +1,102 @@
-/* FBC Code Review — global styles.
+/* FBC Code Reviewer — the Meridian design system, applied.
  *
- * Ported from webapp/static/index.html, which is a finished design rather than
- * a placeholder. Kept deliberately: `color-scheme: light dark` plus
- * `accent-color` so form controls follow the OS theme with no theme toggle to
- * build, get wrong, or persist.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PROVENANCE, AND THE ONE THING TO KNOW BEFORE EDITING THIS FILE
  *
- * No CSS framework. This is one page.
+ * The structure, rules and notation below come from docs/DESIGN-BRIEF-Claude-Design.md
+ * — the brief written against the Meridian Design System itself. Everything that
+ * brief states is transcribed here, not invented: radius 0, 1px hairlines in
+ * --paper-edge, no shadow and no elevation, colour-swap hover with no fade, a
+ * square 1px --blue-1 focus ring at 2px offset, the ink/paper/red/blue ramps at a
+ * 62/33/3/2 distribution, mono uppercase for every label and every figure, the
+ * three-way type split, and the severity resolution by notation rather than hue.
+ *
+ * What is NOT transcribed is the literal value of each token — the exact ramp
+ * hexes and the three type families live in the design project's tokens/*.css,
+ * which this environment could not reach (see the note in the pull request). The
+ * values in the two :root blocks below are derived to satisfy the brief's ramp
+ * structure and contrast requirements, not read off the system.
+ *
+ * They are deliberately isolated: every rule in this file consumes tokens and
+ * nothing hard-codes a colour or a family. Swapping in the real Meridian values
+ * is an edit to the two :root blocks and nothing else.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * No CSS framework, no component library. This is one page.
+ */
+
+/* ── ramps ─────────────────────────────────────────────────────────────────
+ * Four ramps, and the brief's distribution is the budget: paper ~62%, ink ~33%,
+ * red 3%, blue 2%. Red is the dimension-and-scope colour and carries the two
+ * severities that stop a permit. Blue is the annotation colour and carries
+ * readings taken off the drawing, plus focus. There is no third accent and no
+ * gradient anywhere in this file.
  */
 :root {
   color-scheme: light dark;
-  --ink: #0b1220;
-  --bg: #f4f6f9;
-  --card: #ffffff;
-  --line: #d7dce4;
-  --muted: #5b6572;
-  --text: #151a22;
-  --brand: #1a56b0;
-  --brand-ink: #ffffff;
-  --crit: #cc0f0f;
-  --high: #d97400;
-  --med: #a58000;
-  --low: #1a56b0;
-  --ok: #0a6b32;
-  --meas: #c7008c;
-  --shadow: 0 1px 2px rgba(11, 18, 32, 0.06), 0 8px 24px rgba(11, 18, 32, 0.06);
-  --r: 10px;
+
+  /* paper */
+  --paper-0: #fcfbf8; /* the sheet */
+  --paper-1: #f1efe9; /* ground behind the sheet */
+  --paper-2: #e7e4db; /* inset — drop zone, table head */
+  --paper-edge: #ccc7ba; /* every hairline in the interface */
+
+  /* ink */
+  --ink-0: #15171b; /* body, figures */
+  --ink-1: #3c424b; /* secondary body */
+  --ink-2: #6b727d; /* labels */
+  --ink-3: #9aa1ac; /* faintest — disabled controls only */
+
+  /* red — dimension and scope */
+  --red-1: #b0201a;
+  --red-2: #8a1712;
+
+  /* blue — annotation and survey */
+  --blue-1: #1a44bd; /* primary action, focus */
+  --blue-2: #2b6ba4; /* annotation, measured readings */
+
+  /* type — three-way split: display, text, mono.
+   * System stacks stand in for the Meridian faces; see the header note. Display
+   * is separated from text by weight and tracking rather than by family, so a
+   * later swap to the real display face changes one line and nothing else. */
+  --font-display: ui-sans-serif, system-ui, -apple-system, 'Segoe UI Variable Display',
+    'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-text: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial,
+    sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, 'JetBrains Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* spacing */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --s8: 72px;
+
+  /* the masthead is an absolute overlay, so the sheet clears it by hand */
+  --masthead-clearance: 96px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ink: #e8ecf3;
-    --bg: #0d1117;
-    --card: #151b24;
-    --line: #2a3240;
-    --muted: #98a3b3;
-    --text: #e8ecf3;
-    --brand: #5c9bff;
-    --brand-ink: #08101f;
-    --crit: #ff6b6b;
-    --high: #ffa04d;
-    --med: #e5c04a;
-    --low: #7fb0ff;
-    --ok: #4ecb85;
-    --meas: #ff7ad4;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --paper-0: #16191e; /* the sheet */
+    --paper-1: #0d1014; /* ground behind the sheet */
+    --paper-2: #1d2128; /* inset */
+    --paper-edge: #303640; /* every hairline */
+
+    --ink-0: #e9ebef;
+    --ink-1: #bdc3cc;
+    --ink-2: #8c939e;
+    --ink-3: #5e6672;
+
+    --red-1: #ff6152;
+    --red-2: #ff8a7c;
+
+    --blue-1: #7099ff;
+    --blue-2: #77b3e7;
   }
 }
 
@@ -51,143 +104,245 @@
   box-sizing: border-box;
 }
 
+html {
+  background: var(--paper-1);
+}
+
 body {
+  position: relative; /* the masthead overlays this */
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  accent-color: var(--brand);
-  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial,
-    sans-serif;
+  background: var(--paper-1);
+  color: var(--ink-0);
+  accent-color: var(--blue-1);
+  font: 400 15px/1.6 var(--font-text);
+  -webkit-font-smoothing: antialiased;
 }
 
-.wrap {
-  max-width: 1060px;
-  margin: 0 auto;
-  padding: 32px 20px 80px;
+/* Radius 0 everywhere, without repeating it on thirty selectors. */
+input,
+select,
+textarea,
+button,
+progress,
+.btn,
+.drop,
+.note {
+  border-radius: 0;
 }
 
-header {
+/* ── masthead ──────────────────────────────────────────────────────────────
+ * The absolute overlay the system specifies: it sits over the top of the sheet
+ * rather than occupying a band of it, and it scrolls away. No fill, one hairline.
+ */
+.masthead {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--s2) var(--s5);
   align-items: baseline;
   justify-content: space-between;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 26px;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--s5) var(--s5) var(--s4);
+  border-bottom: 1px solid var(--paper-edge);
+}
+
+.wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  text-decoration: none;
+  color: inherit;
+}
+.wordmark .house {
+  font: 500 0.625rem/1 var(--font-mono);
+  letter-spacing: 0.22em;
+  color: var(--ink-2);
+  text-transform: uppercase;
+}
+.wordmark .tool {
+  font: 500 0.75rem/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  color: var(--ink-0);
+  text-transform: uppercase;
+}
+
+.session {
+  display: flex;
+  flex-wrap: wrap; /* a long address must not push the sheet under the rule */
+  align-items: baseline;
+  gap: var(--s2) var(--s3);
+  margin: 0;
+  font: 400 0.6875rem/1.4 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+}
+
+/* ── the sheet ─────────────────────────────────────────────────────────────
+ * One column, left-aligned throughout. This screen is dense with figures and
+ * centred body text would make every one of them harder to compare.
+ */
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--masthead-clearance) var(--s5) var(--s8);
+}
+
+@media (max-width: 720px) {
+  :root {
+    --masthead-clearance: 132px;
+  }
+}
+
+/* ── opening claim ─────────────────────────────────────────────────────────*/
+.eyebrow {
+  margin: 0 0 var(--s4);
+  font: 500 0.6875rem/1 var(--font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
 }
 
 h1 {
-  font-size: 1.5rem;
   margin: 0;
-  letter-spacing: -0.01em;
-}
-h1 span {
-  color: var(--muted);
-  font-weight: 400;
+  max-width: 20ch;
+  font: 500 clamp(1.75rem, 1.2rem + 2.2vw, 2.75rem) / 1.12 var(--font-display);
+  letter-spacing: -0.022em;
+  color: var(--ink-0);
 }
 
-.sub {
-  color: var(--muted);
-  font-size: 0.875rem;
-  margin: 4px 0 0;
+.claim {
+  margin: var(--s4) 0 0;
+  font: 400 0.8125rem/1.5 var(--font-mono);
+  letter-spacing: 0.02em;
+  color: var(--blue-2);
+}
+
+.lede {
+  margin: var(--s5) 0 0;
+  max-width: 62ch;
+  font-size: 0.9375rem;
+  color: var(--ink-1);
+}
+
+/* ── stepped page ──────────────────────────────────────────────────────────
+ * Each state is a step on one scrolling sheet. The heavy top rule reads as a
+ * section cut; the mono marker in the head is the step number.
+ */
+.step {
+  border-top: 1px solid var(--ink-0);
+  margin-top: var(--s7);
+  padding-top: var(--s5);
+}
+
+.step-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s4);
+  margin-bottom: var(--s5);
+}
+
+.mark {
+  flex: none;
+  font: 500 0.6875rem/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
 }
 
 h2 {
-  font-size: 1.05rem;
-  margin: 0 0 14px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--muted);
+  margin: 0;
+  font: 500 1.0625rem/1.3 var(--font-display);
+  letter-spacing: -0.012em;
+  color: var(--ink-0);
 }
 
-.card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  padding: 22px;
-  box-shadow: var(--shadow);
-  margin-bottom: 22px;
-}
-
-/* ── drop zone ─────────────────────────────────────────── */
+/* ── drop zone ─────────────────────────────────────────────────────────────*/
 .drop {
   position: relative;
   display: block;
-  border: 2px dashed var(--line);
-  border-radius: var(--r);
-  padding: 38px 24px;
-  text-align: center;
+  border: 1px dashed var(--paper-edge);
+  background: var(--paper-2);
+  padding: var(--s7) var(--s5);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-  background: color-mix(in srgb, var(--card) 92%, var(--bg));
 }
+/* Hover is a colour swap, not a fade — no transition anywhere in this file. */
 .drop:hover,
-.drop:focus-within {
-  border-color: var(--brand);
+.drop:focus-within,
+.drop.over {
+  border-color: var(--blue-1);
+  border-style: solid;
 }
 .drop.over {
-  border-color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 10%, var(--card));
+  background: var(--paper-0);
 }
 /* A real file input, full-bleed and transparent, so the keyboard and screen
    reader path is the native one rather than a div pretending to be a button. */
 .drop input[type='file'] {
   position: absolute;
   inset: 0;
-  opacity: 0;
-  cursor: pointer;
   width: 100%;
   height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 .drop .big {
   display: block;
-  font-size: 1.05rem;
-  font-weight: 600;
+  font: 500 1rem/1.35 var(--font-display);
+  letter-spacing: -0.01em;
+  color: var(--ink-0);
 }
 .drop .small {
   display: block;
-  color: var(--muted);
-  font-size: 0.875rem;
-  margin-top: 6px;
+  margin-top: var(--s2);
+  max-width: 56ch;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
 }
 .filechip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: center;
-  margin-top: 14px;
-  font-size: 0.9rem;
-  color: var(--ok);
-  font-weight: 600;
+  display: block;
+  margin-top: var(--s4);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--paper-edge);
+  font: 400 0.8125rem/1.4 var(--font-mono);
+  color: var(--ink-0);
 }
 
-/* ── form ──────────────────────────────────────────────── */
+/* ── form ──────────────────────────────────────────────────────────────────*/
 fieldset {
   border: 0;
-  padding: 0;
-  margin: 0 0 20px;
+  border-top: 1px solid var(--paper-edge);
+  padding: var(--s5) 0 0;
+  margin: 0 0 var(--s5);
+}
+fieldset:first-of-type {
+  border-top: 0;
+  padding-top: 0;
 }
 legend {
-  font-size: 0.75rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 700;
   padding: 0;
-  margin-bottom: 12px;
+  margin-bottom: var(--s4);
+  font: 500 0.6875rem/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
 }
 .grid {
   display: grid;
-  gap: 16px;
+  gap: var(--s4) var(--s5);
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
 }
 label.f {
   display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: var(--s2);
+  font: 500 0.6875rem/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
 }
 input[type='text'],
 input[type='email'],
@@ -195,264 +350,510 @@ select,
 textarea {
   width: 100%;
   padding: 9px 11px;
-  font: inherit;
-  font-size: 0.925rem;
-  color: var(--text);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 7px;
+  font: 400 0.875rem/1.4 var(--font-text);
+  color: var(--ink-0);
+  background: var(--paper-0);
+  border: 1px solid var(--paper-edge);
 }
+input[type='text']:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--ink-2);
+}
+select:disabled,
+option:disabled,
+input:disabled {
+  color: var(--ink-3);
+}
+
+/* Square, 1px, --blue-1, 2px offset. */
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 button:focus-visible,
 a:focus-visible,
 .drop:focus-within {
-  outline: 2px solid var(--brand);
+  outline: 1px solid var(--blue-1);
   outline-offset: 2px;
 }
+
 .check {
   display: flex;
-  gap: 10px;
+  gap: var(--s3);
   align-items: flex-start;
-  font-size: 0.9rem;
-  padding: 8px 0;
+  padding: var(--s3) 0;
+  border-top: 1px solid var(--paper-edge);
+}
+.check:first-of-type {
+  margin-top: var(--s2);
 }
 .check input {
-  margin-top: 3px;
   flex: none;
-  width: 17px;
-  height: 17px;
+  margin-top: 3px;
+  width: 15px;
+  height: 15px;
 }
 .check .h {
-  font-weight: 600;
   display: block;
+  font: 500 0.6875rem/1.4 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-0);
 }
+/* Each switch carries one line saying what it actually changes. Not decorative. */
 .check .d {
-  color: var(--muted);
-  font-size: 0.8rem;
+  display: block;
+  margin-top: var(--s1);
+  max-width: 70ch;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
 }
 .hint {
-  color: var(--muted);
-  font-size: 0.78rem;
-  margin-top: 5px;
+  margin: var(--s2) 0 0;
+  max-width: 70ch;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
 }
 .row {
   display: flex;
-  gap: 14px;
-  align-items: center;
   flex-wrap: wrap;
-  margin-top: 8px;
+  gap: var(--s3) var(--s4);
+  align-items: center;
+  margin-top: var(--s4);
 }
 
+/* ── buttons ───────────────────────────────────────────────────────────────
+ * Verbs, in mono caps. Colour swap on hover; nothing scales, shrinks or bounces.
+ */
 button,
 .btn {
-  font: inherit;
-  font-weight: 650;
-  padding: 11px 22px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: var(--brand);
-  color: var(--brand-ink);
-  cursor: pointer;
-  text-decoration: none;
   display: inline-block;
+  padding: 11px 20px;
+  border: 1px solid var(--blue-1);
+  background: var(--blue-1);
+  color: var(--paper-0);
+  font: 500 0.6875rem/1 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+}
+button:hover:not(:disabled),
+.btn:hover {
+  background: var(--paper-0);
+  color: var(--blue-1);
 }
 button:disabled,
 .btn[aria-disabled='true'] {
-  opacity: 0.5;
+  border-color: var(--paper-edge);
+  background: var(--paper-2);
+  color: var(--ink-3);
   cursor: not-allowed;
 }
 button.ghost,
 .btn.ghost {
   background: transparent;
-  color: var(--text);
-  border-color: var(--line);
+  border-color: var(--paper-edge);
+  color: var(--ink-1);
+}
+button.ghost:hover:not(:disabled),
+.btn.ghost:hover {
+  background: var(--ink-0);
+  border-color: var(--ink-0);
+  color: var(--paper-0);
+}
+/* Sits inline in the masthead, so it reads as a link rather than a control. */
+button.inline {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--paper-edge);
+  letter-spacing: 0.06em;
+  font-size: 0.6875rem;
+}
+button.inline:hover:not(:disabled) {
+  background: none;
+  color: var(--ink-0);
+  border-bottom-color: var(--ink-0);
 }
 
-/* ── progress + results ────────────────────────────────── */
+/* ── progress ──────────────────────────────────────────────────────────────
+ * A real 24-sheet set takes about fifteen seconds. This state is brief and must
+ * not be theatrical: a hairline bar and a list of named stages.
+ */
 progress {
+  display: block;
   width: 100%;
-  height: 8px;
-  border-radius: 99px;
-  overflow: hidden;
+  height: 3px;
+  border: 0;
+  background: var(--paper-2);
+  appearance: none;
 }
+progress::-webkit-progress-bar {
+  background: var(--paper-2);
+}
+progress::-webkit-progress-value {
+  background: var(--blue-1);
+}
+progress::-moz-progress-bar {
+  background: var(--blue-1);
+}
+
 .stages {
   list-style: none;
-  margin: 16px 0 0;
+  margin: var(--s5) 0 0;
   padding: 0;
-  font-size: 0.875rem;
 }
 .stages li {
   display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 4px 0;
-  color: var(--muted);
+  gap: var(--s3);
+  align-items: baseline;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--paper-edge);
+  font: 400 0.75rem/1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
 }
+.stages li:first-child {
+  border-top: 0;
+}
+/* A stage marker, not an icon: a hairline tick that fills as it is reached. */
 .stages li .dot {
+  flex: none;
   width: 9px;
   height: 9px;
-  border-radius: 99px;
-  background: var(--line);
-  flex: none;
+  border: 1px solid var(--paper-edge);
+  align-self: center;
 }
 .stages li.on {
-  color: var(--text);
-  font-weight: 600;
+  color: var(--ink-0);
 }
 .stages li.on .dot {
-  background: var(--brand);
+  border-color: var(--blue-1);
+  background: var(--blue-1);
 }
 .stages li.ok .dot {
-  background: var(--ok);
+  border-color: var(--ink-2);
+  background: var(--ink-2);
 }
 
-.tally {
+/* Elapsed seconds, and every other figure on this screen, in mono. */
+.figures {
+  margin: var(--s4) 0 0;
+  font: 400 0.75rem/1.6 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── DimensionRule — the severity tally ────────────────────────────────────
+ * A dimension run, not a row of stat cards: figures in mono above a rule with
+ * tick terminators, labels below.
+ */
+.dimrun {
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
-  margin-bottom: 20px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0 var(--s4);
+  margin: var(--s5) 0 var(--s6);
 }
-.t {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 11px 12px;
-  background: var(--card);
+@media (max-width: 700px) {
+  .dimrun {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: var(--s5);
+  }
 }
-.t b {
+.dim {
+  display: grid;
+  gap: var(--s2);
+  color: var(--ink-0);
+}
+.dim .fig {
+  font: 400 1.75rem/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: inherit;
+}
+.dim .rule {
+  position: relative;
   display: block;
-  font-size: 1.5rem;
-  line-height: 1.15;
+  height: 1px;
+  background: currentColor;
 }
-.t span {
-  font-size: 0.68rem;
-  letter-spacing: 0.09em;
+/* The terminators. Drafting notation, not an icon set. */
+.dim .rule::before,
+.dim .rule::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  width: 1px;
+  height: 9px;
+  background: currentColor;
+}
+.dim .rule::before {
+  left: 0;
+}
+.dim .rule::after {
+  right: 0;
+}
+.dim .lab {
+  font: 500 0.625rem/1 var(--font-mono);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--muted);
-}
-.t.CRITICAL b {
-  color: var(--crit);
-}
-.t.HIGH b {
-  color: var(--high);
-}
-.t.MEDIUM b {
-  color: var(--med);
-}
-.t.LOW b {
-  color: var(--low);
-}
-.t.VERIFIED b {
-  color: var(--ok);
-}
-.t.MEASURED b {
-  color: var(--meas);
+  color: var(--ink-2);
 }
 
+/* Red for the two that stop a permit; survey blue for readings taken off the
+   drawing; the ink ramp for the rest. No third accent. */
+.dim.CRITICAL,
+.dim.HIGH {
+  color: var(--red-1);
+}
+.dim.MEASURED {
+  color: var(--blue-2);
+}
+.dim.MEDIUM,
+.dim.LOW,
+.dim.VERIFIED {
+  color: var(--ink-1);
+}
+/* A count of zero is not a finding and must not read as one. Quiet, but not
+   below the contrast a figure needs to be read at all. */
+.dim.zero {
+  color: var(--ink-2);
+}
+
+/* ── findings table ────────────────────────────────────────────────────────*/
 .tablewrap {
   overflow-x: auto;
 }
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.86rem;
+  font-size: 0.8125rem;
 }
 th {
+  padding: var(--s2) var(--s3);
   text-align: left;
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--ink-0);
+  font: 500 0.625rem/1 var(--font-mono);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--muted);
-  border-bottom: 1px solid var(--line);
-  padding: 7px 9px;
+  color: var(--ink-2);
+  white-space: nowrap;
 }
 td {
-  border-bottom: 1px solid var(--line);
-  padding: 9px;
+  padding: var(--s3);
+  border-bottom: 1px solid var(--paper-edge);
   vertical-align: top;
+  color: var(--ink-1);
 }
 td:first-child,
 td:nth-child(2) {
   white-space: nowrap;
 }
 th:first-child {
-  width: 64px;
+  width: 72px;
 }
 th:nth-child(2) {
-  width: 62px;
+  width: 66px;
 }
 th:nth-child(3) {
-  width: 92px;
+  width: 104px;
 }
 th:last-child {
-  width: 170px;
+  width: 180px;
 }
+td .title {
+  display: block;
+  font-weight: 600;
+  color: var(--ink-0);
+}
+td .body {
+  display: block;
+  margin-top: 2px;
+  max-width: 68ch;
+}
+td.ref {
+  font: 400 0.75rem/1.5 var(--font-mono);
+  color: var(--ink-2);
+}
+
+/* Severity labels are mono uppercase throughout. Differentiation below the two
+   accents is by rule weight and tick presence, never by a third hue. */
 td.sev {
-  font-weight: 700;
+  font: 500 0.625rem/1.6 var(--font-mono);
+  letter-spacing: 0.12em;
   white-space: nowrap;
-  font-size: 0.74rem;
-  letter-spacing: 0.04em;
+  color: var(--ink-1);
+}
+td.sev.CRITICAL,
+td.sev.HIGH {
+  color: var(--red-1);
 }
 td.sev.CRITICAL {
-  color: var(--crit);
-}
-td.sev.HIGH {
-  color: var(--high);
-}
-td.sev.MEDIUM {
-  color: var(--med);
-}
-td.sev.LOW {
-  color: var(--low);
-}
-td.sev.VERIFIED {
-  color: var(--ok);
+  font-weight: 700;
 }
 td.sev.MEASURED {
-  color: var(--meas);
+  color: var(--blue-2);
+}
+td.sev.MEDIUM {
+  color: var(--ink-0);
+  font-weight: 600;
+}
+td.sev.LOW {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+td.sev.VERIFIED {
+  color: var(--ink-1);
+}
+
+/* The row rule carries the same distinction as the label, at the same budget. */
+tbody tr td:first-child {
+  border-left: 2px solid transparent;
+  padding-left: 10px;
+}
+tbody tr.CRITICAL td:first-child,
+tbody tr.HIGH td:first-child {
+  border-left-color: var(--red-1);
+}
+tbody tr.MEASURED td:first-child {
+  border-left-color: var(--blue-2);
+}
+tbody tr.VERIFIED td:first-child,
+tbody tr.MEDIUM td:first-child {
+  border-left-color: var(--paper-edge);
+}
+
+/* ── drafting notation ─────────────────────────────────────────────────────
+ * No icon set. A tick for what was checked and passed; a cross tick for what
+ * was not checked at all. Both drawn, both 1px, both currentColor.
+ */
+.tick {
+  display: inline-block;
+  width: 9px;
+  height: 5px;
+  margin-right: 6px;
+  border-left: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(-45deg);
+  vertical-align: 3px;
+}
+.xtick {
+  position: relative;
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: var(--s2);
+  color: var(--red-1);
+  vertical-align: -1px;
+}
+.xtick::before,
+.xtick::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  width: 9px;
+  height: 1px;
+  background: currentColor;
+}
+.xtick::before {
+  transform: rotate(45deg);
+}
+.xtick::after {
+  transform: rotate(-45deg);
+}
+
+/* ── Annotation — the abstention register ──────────────────────────────────
+ * The single most important visual decision on the screen. A rule that declined
+ * to run is a callout on the drawing, not an error message: underlined mono in
+ * survey blue with a red cross tick. It must be unmistakable at a glance that
+ * these items were NOT CHECKED, and distinct from the ones that passed.
+ */
+.annotations {
+  list-style: none;
+  margin: var(--s3) 0 0;
+  padding: 0;
+}
+.annotations li {
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--paper-edge);
+  font-size: 0.8125rem;
+  color: var(--ink-1);
+}
+.annotations li:first-child {
+  border-top: 0;
+}
+.annot-name {
+  font: 400 0.8125rem/1.5 var(--font-mono);
+  letter-spacing: 0.02em;
+  color: var(--blue-2);
+  border-bottom: 1px solid var(--blue-2);
+  padding-bottom: 1px;
+}
+
+/* ── notes ─────────────────────────────────────────────────────────────────
+ * A rule on the left edge, in the accent that already means what it means. No
+ * fill wash beyond the faintest paper step, because a coloured panel behind a
+ * paragraph is elevation by another name.
+ */
+.note {
+  border: 1px solid var(--paper-edge);
+  border-left: 2px solid var(--ink-0);
+  background: var(--paper-0);
+  padding: var(--s3) var(--s4);
+  margin-bottom: var(--s4);
+  font-size: 0.8125rem;
+  color: var(--ink-1);
+  max-width: 82ch;
+}
+.note b {
+  color: var(--ink-0);
+}
+.note.bad {
+  border-left-color: var(--red-1);
+}
+.note.bad b {
+  color: var(--red-1);
+}
+.note.warn {
+  border-left-color: var(--blue-2);
+}
+.note.warn b {
+  color: var(--blue-2);
+}
+.note ul {
+  margin: var(--s2) 0 0;
+  padding-left: var(--s5);
+}
+.note .row {
+  margin-top: var(--s3);
 }
 
 code {
-  font: 0.82em ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: color-mix(in srgb, var(--muted) 14%, transparent);
-  padding: 1px 5px;
-  border-radius: 4px;
+  font: 0.875em/1.4 var(--font-mono);
+  letter-spacing: 0.01em;
+  color: var(--ink-0);
 }
 
-.note {
-  border-left: 4px solid var(--brand);
-  background: color-mix(in srgb, var(--brand) 8%, transparent);
-  padding: 12px 15px;
-  border-radius: 0 7px 7px 0;
-  font-size: 0.86rem;
-  margin-bottom: 18px;
-}
-.note.warn {
-  border-color: var(--high);
-  background: color-mix(in srgb, var(--high) 10%, transparent);
-}
-.note.bad {
-  border-color: var(--crit);
-  background: color-mix(in srgb, var(--crit) 10%, transparent);
-}
-.note ul {
-  margin: 8px 0 0;
-  padding-left: 20px;
-}
-
+/* ── footer ────────────────────────────────────────────────────────────────
+ * The disclaimer is required on every state and is not negotiable prose.
+ */
 footer {
-  color: var(--muted);
-  font-size: 0.78rem;
-  text-align: center;
-  margin-top: 34px;
+  margin-top: var(--s8);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--paper-edge);
+  max-width: 82ch;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--ink-2);
 }
 
-.centred {
-  text-align: center;
-  padding: 40px 20px;
-}
-
+/* Nothing in this file animates, so there is nothing to reduce — kept as a
+   backstop against a future rule that forgets. */
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

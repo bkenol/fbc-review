@@ -2,10 +2,14 @@
 @let currentJob = job();
 @let problem = failure();
 
-<!-- ── not on the allowlist ─────────────────────────────────────────────── -->
+<!-- ── signed in, but not on the allowlist ──────────────────────────────────
+     Its own state with its own message, not a generic error. -->
 @if (auth.state() === 'not-allowed') {
-  <section class="card">
-    <h2>Not authorised</h2>
+  <section class="step">
+    <div class="step-head">
+      <span class="mark"><span class="xtick" aria-hidden="true"></span></span>
+      <h2>Not authorised</h2>
+    </div>
     <div class="note bad">{{ auth.denied() }}</div>
     <p class="hint">
       You are signed in as {{ auth.email() }}. Access is granted per address by the
@@ -16,10 +20,15 @@
     </div>
   </section>
 } @else {
-  <!-- ── upload + parameters ────────────────────────────────────────────── -->
+  <!-- ── 01 · the set ───────────────────────────────────────────────────── -->
   @if (!currentJob) {
     <form (ngSubmit)="submit()" [formGroup]="form" novalidate>
-      <div class="card">
+      <section class="step">
+        <div class="step-head">
+          <span class="mark">01</span>
+          <h2>The permit set</h2>
+        </div>
+
         <label
           class="drop"
           [class.over]="dragging()"
@@ -41,18 +50,22 @@
             PDF plotted from CAD as vector — not a scan. Up to
             {{ cfg?.max_upload_mb ?? 120 }}&nbsp;MB, {{ cfg?.max_pages ?? 300 }} sheets.
           </span>
-          @if (file(); as chosen) {
+          @if (file()) {
             <span class="filechip" aria-live="polite">{{ fileLabel() }}</span>
           }
         </label>
 
         @if (clientError(); as message) {
-          <div class="note bad" role="alert" style="margin-top: 14px">{{ message }}</div>
+          <div class="note bad" role="alert" style="margin-top: 16px">{{ message }}</div>
         }
-      </div>
+      </section>
 
-      <div class="card">
-        <h2>Review parameters</h2>
+      <!-- ── 02 · parameters ──────────────────────────────────────────────── -->
+      <section class="step">
+        <div class="step-head">
+          <span class="mark">02</span>
+          <h2>Review parameters</h2>
+        </div>
 
         <fieldset>
           <legend>What is being reviewed</legend>
@@ -71,6 +84,7 @@
               <label class="f" for="edition">Code edition</label>
               <select id="edition" formControlName="edition">
                 @for (edition of cfg?.editions ?? []; track edition.id) {
+                  <!-- An unavailable edition is listed and disabled, never hidden. -->
                   <option [value]="edition.id" [disabled]="!edition.available">
                     {{ edition.label }}
                   </option>
@@ -152,9 +166,9 @@
 
         <div class="row">
           <button type="submit" [disabled]="!file() || submitting()">
-            {{ submitting() ? 'Uploading…' : 'Run the review' }}
+            {{ submitting() ? 'Uploading' : 'Run the review' }}
           </button>
-          <span class="hint">
+          <span class="hint" style="margin: 0">
             @if (!file()) {
               Choose a PDF to begin.
             } @else {
@@ -162,38 +176,48 @@
             }
           </span>
         </div>
-      </div>
+      </section>
     </form>
   }
 
-  <!-- ── progress ───────────────────────────────────────────────────────── -->
+  <!-- ── 03 · running ─────────────────────────────────────────────────────
+       A real 24-sheet set takes about fifteen seconds, so this state is brief
+       and must not be theatrical. -->
   @if (currentJob && running()) {
-    <section class="card">
-      <h2>Reviewing</h2>
+    <section class="step">
+      <div class="step-head">
+        <span class="mark">03</span>
+        <h2>Reviewing</h2>
+      </div>
+
       <progress
         [max]="stages().length"
         [value]="stageIndex() + 1"
         [attr.aria-label]="'Review progress: ' + currentJob.stage_label"
       ></progress>
+
       <ul class="stages" aria-live="polite">
         @for (stage of stages(); track stage; let i = $index) {
           <li [class.on]="i === stageIndex()" [class.ok]="i < stageIndex()">
-            <span class="dot"></span>{{ stage }}
+            <span class="dot" aria-hidden="true"></span>{{ stage }}
           </li>
         }
       </ul>
-      <p class="hint">{{ currentJob.filename }} · {{ currentJob.elapsed_seconds }}s elapsed</p>
+
+      <p class="figures">
+        {{ currentJob.filename }} · {{ currentJob.elapsed_seconds }} s elapsed
+      </p>
 
       @if (lostContact()) {
         <!-- The review runs on the server whether or not we can see it, so this
              says "lost sight of", not "failed". A frozen progress bar with no
              explanation is the worst of both. -->
-        <div class="note warn" role="status" style="margin-top: 16px">
+        <div class="note warn" role="status">
           <b>Lost contact with the server.</b>
-          The review itself is almost certainly still running — this is the
-          progress display failing, not the job. Retrying automatically.
+          The review itself is almost certainly still running — this is the progress display
+          failing, not the job. Retrying automatically.
           <div class="row">
-            <button type="button" class="ghost" (click)="reconnect()">Reconnect now</button>
+            <button type="button" class="ghost" (click)="reconnect()">Reconnect</button>
           </div>
         </div>
       }
@@ -202,17 +226,28 @@
 
   <!-- ── failed ─────────────────────────────────────────────────────────── -->
   @if (currentJob && currentJob.state === 'error') {
-    <section class="card">
-      <h2>Failed</h2>
+    <section class="step">
+      <div class="step-head">
+        <span class="mark"><span class="xtick" aria-hidden="true"></span></span>
+        <h2>Failed</h2>
+      </div>
       <div class="note bad" role="alert">{{ currentJob.error }}</div>
-      <button type="button" class="ghost" (click)="startOver()">Start over</button>
+      <div class="row">
+        <button type="button" class="ghost" (click)="startOver()">Review another set</button>
+      </div>
     </section>
   }
 
-  <!-- ── request-level failure ──────────────────────────────────────────── -->
+  <!-- ── refused, or a request-level failure ─────────────────────────────
+       A set that is entirely scanned images is turned away before it is
+       reviewed: reviewing it would produce zero findings, and zero findings
+       reads as a clean set. -->
   @if (problem && !currentJob) {
-    <section class="card">
-      <h2>Could not start the review</h2>
+    <section class="step">
+      <div class="step-head">
+        <span class="mark"><span class="xtick" aria-hidden="true"></span></span>
+        <h2>Could not start the review</h2>
+      </div>
       <div class="note bad" role="alert">{{ problem.message }}</div>
       <div class="row">
         @if (showConversionOffer()) {
@@ -220,143 +255,168 @@
             Rebuild the scanned sheets and review anyway
           </button>
         }
-        <button type="button" class="ghost" (click)="startOver()">Start over</button>
+        <button type="button" class="ghost" (click)="startOver()">Review another set</button>
       </div>
     </section>
   }
 
-  <!-- ── results ────────────────────────────────────────────────────────── -->
+  <!-- ── 03 · result ─────────────────────────────────────────────────────── -->
   @if (currentJob && currentJob.state === 'done' && currentJob.summary; as summary) {
-    <section>
-      <div class="card">
+    <section class="step">
+      <div class="step-head">
+        <span class="mark">03</span>
         <h2>Result</h2>
-
-        @if (critical(); as worst) {
-          <div class="note bad">
-            <b>{{ worst.title }}</b><br />{{ worst.result }}
-          </div>
-        } @else {
-          <div class="note">
-            <b>No critical findings.</b>
-            {{ summary.open }} open item{{ summary.open === 1 ? '' : 's' }}.
-          </div>
-        }
-
-        @if (currentJob.conversion; as conversion) {
-          <div class="note warn">
-            <b>Scanned sheets were rebuilt before this review.</b>
-            {{ conversion.recovered_chars | number }} characters recovered by OCR and
-            {{ conversion.traced_segments | number }} line segments traced across
-            {{ conversion.converted_pages.length }} sheet{{
-              conversion.converted_pages.length === 1 ? '' : 's'
-            }}, in {{ conversion.seconds }}s. Traced linework is written to
-            <code>{{ conversion.traced_layer }}</code> and carries no CAD layer meaning, so the
-            geometric rules stand down rather than measure something they cannot identify.
-          </div>
-        }
-
-        <div class="tally">
-          @for (severity of tallyOrder; track severity) {
-            <div class="t {{ severity }}">
-              <b>{{ count(severity) }}</b><span>{{ severity }}</span>
-            </div>
-          }
-        </div>
-
-        <div class="row">
-          <button type="button" (click)="download('markup_pdf')">Download marked-up PDF</button>
-          <button type="button" class="ghost" (click)="download('findings_json')">
-            Findings JSON
-          </button>
-          <button type="button" class="ghost" (click)="startOver()">Review another set</button>
-        </div>
-
-        <p class="hint">
-          {{ summary.sheets }} sheets · {{ summary.pages }} pages out ·
-          {{ summary.cad_layers }} CAD layers preserved · {{ summary.annotations }} live
-          annotations · {{ summary.marked }} markers placed · {{ summary.rules_run }} rules ·
-          scale resolved on {{ summary.scale_pages }}/{{ summary.sheets }} pages ·
-          {{ megabytes(summary.pdf_bytes) | number: '1.1-1' }} MB ·
-          {{ currentJob.elapsed_seconds }}s
-        </p>
       </div>
 
-      <div class="card">
+      @if (critical(); as worst) {
+        <div class="note bad">
+          <b>{{ worst.title }}</b><br />{{ worst.result }}
+        </div>
+      } @else {
+        <div class="note">
+          <b>No critical findings.</b>
+          {{ summary.open }} open item{{ summary.open === 1 ? '' : 's' }}.
+        </div>
+      }
+
+      @if (currentJob.conversion; as conversion) {
+        <div class="note warn">
+          <b>Scanned sheets were rebuilt before this review.</b>
+          {{ conversion.recovered_chars | number }} characters recovered by OCR and
+          {{ conversion.traced_segments | number }} line segments traced across
+          {{ conversion.converted_pages.length }} sheet{{
+            conversion.converted_pages.length === 1 ? '' : 's'
+          }}, in {{ conversion.seconds }} s. Traced linework is written to
+          <code>{{ conversion.traced_layer }}</code> and carries no CAD layer meaning, so the
+          geometric rules stand down rather than measure something they cannot identify.
+        </div>
+      }
+
+      <!-- The tally reads as a dimension run, not as a row of stat cards. -->
+      <div class="dimrun">
+        @for (severity of tallyOrder; track severity) {
+          <div class="dim {{ severity }}" [class.zero]="count(severity) === 0">
+            <b class="fig">{{ count(severity) }}</b>
+            <span class="rule" aria-hidden="true"></span>
+            <span class="lab">{{ severity }}</span>
+          </div>
+        }
+      </div>
+
+      <div class="row" style="margin-top: 0">
+        <button type="button" (click)="download('markup_pdf')">Download marked-up set</button>
+        <button type="button" class="ghost" (click)="download('findings_json')">
+          Findings JSON
+        </button>
+        <button type="button" class="ghost" (click)="startOver()">Review another set</button>
+      </div>
+
+      <!-- The provenance line, in mono. It is the credibility of the screen. -->
+      <p class="figures">
+        {{ summary.sheets }} sheets · {{ summary.pages }} pages out ·
+        {{ summary.cad_layers }} CAD layers preserved · {{ summary.annotations }} live
+        annotations · {{ summary.marked }} markers placed · {{ summary.rules_run }} rules ·
+        scale resolved on {{ summary.scale_pages }}/{{ summary.sheets }} pages ·
+        {{ megabytes(summary.pdf_bytes) | number: '1.1-1' }} MB ·
+        {{ currentJob.elapsed_seconds }} s
+      </p>
+    </section>
+
+    <!-- ── 04 · findings register ─────────────────────────────────────────── -->
+    <section class="step">
+      <div class="step-head">
+        <span class="mark">04</span>
         <h2>Findings</h2>
-        @if (findings(); as rows) {
-          <div class="tablewrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Sheet</th>
-                  <th>Severity</th>
-                  <th>Finding</th>
-                  <th>Code</th>
-                </tr>
-              </thead>
-              <tbody>
-                @for (finding of rows; track finding.fid) {
-                  <tr>
-                    <td><code>{{ finding.fid }}</code></td>
-                    <td>{{ finding.sheet }}</td>
-                    <td class="sev {{ finding.severity }}">{{ finding.severity }}</td>
-                    <td><b>{{ finding.title }}</b><br />{{ finding.result }}</td>
-                    <td>{{ finding.code }}</td>
-                  </tr>
-                } @empty {
-                  <tr>
-                    <td colspan="5">Nothing was reported at this severity floor.</td>
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-        } @else {
-          <p class="hint" aria-live="polite">Loading the findings register…</p>
-        }
-
-        @if (abstentions().length) {
-          <div class="note warn" style="margin-top: 16px">
-            <b>
-              Not checked — {{ abstentions().length }}
-              rule{{ abstentions().length === 1 ? '' : 's' }} declined to run.
-            </b>
-            "Not checked" must never look like "checked and passed".
-            <ul>
-              @for (abstention of abstentions(); track abstention.rule) {
-                <li><code>{{ abstention.rule }}</code> — {{ abstention.reason }}</li>
-              }
-            </ul>
-          </div>
-        }
-
-        @if (unreadableSheets().length) {
-          <div class="note warn">
-            <b>{{ unreadableSheets().length }} sheet(s) could not be read into.</b>
-            Pages {{ unreadableSheets().join(', ') }} are raster images. Nothing on them was
-            checked.
-          </div>
-        }
-
-        @if (pastedTablesUnread()) {
-          <div class="note warn">
-            <b>
-              {{ pastedTableSheets().length }} sheet(s) paste part of the drawing in as an
-              image.
-            </b>
-            Pages {{ pastedTableSheets().join(', ') }}. The sheets themselves are proper
-            vector, so they look fine — but a code-analysis table pasted in as a picture is
-            pixels, and nothing read it. If rules stood down for want of a value that is
-            printed on one of those sheets, that is why.
-            <div class="row">
-              <button type="button" class="ghost" (click)="retryWithConversion()">
-                Read those sheets and review again
-              </button>
-            </div>
-          </div>
-        }
       </div>
+
+      @if (findings(); as rows) {
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Sheet</th>
+                <th>Severity</th>
+                <th>Finding</th>
+                <th>Code</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (finding of rows; track finding.fid) {
+                <tr class="{{ finding.severity }}">
+                  <td class="ref">{{ finding.fid }}</td>
+                  <td class="ref">{{ finding.sheet }}</td>
+                  <td class="sev {{ finding.severity }}">
+                    <!-- Tick presence, not a third colour, is what separates
+                         checked-and-passed from the rest of the ink ramp. -->
+                    @if (finding.severity === 'VERIFIED') {
+                      <span class="tick" aria-hidden="true"></span>
+                    }{{ finding.severity }}
+                  </td>
+                  <td>
+                    <b class="title">{{ finding.title }}</b>
+                    <span class="body">{{ finding.result }}</span>
+                  </td>
+                  <td class="ref">{{ finding.code }}</td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="5">Nothing was reported at this severity floor.</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      } @else {
+        <p class="hint" aria-live="polite">Loading the findings register…</p>
+      }
+
+      <!-- ── the abstention register ────────────────────────────────────────
+           A rule that declined to run is a callout on the drawing, not an error
+           message. "Not checked" must never look like "checked and passed". -->
+      @if (abstentions().length) {
+        <div class="note warn" style="margin-top: 24px">
+          <b>
+            Not checked — {{ abstentions().length }}
+            rule{{ abstentions().length === 1 ? '' : 's' }} declined to run.
+          </b>
+          These were not evaluated. That is not the same as passing.
+          <ul class="annotations">
+            @for (abstention of abstentions(); track abstention.rule) {
+              <li>
+                <span class="xtick" aria-hidden="true"></span>
+                <span class="annot-name">{{ abstention.rule }}</span>
+                — {{ abstention.reason }}
+              </li>
+            }
+          </ul>
+        </div>
+      }
+
+      @if (unreadableSheets().length) {
+        <div class="note warn">
+          <b>{{ unreadableSheets().length }} sheet(s) could not be read into.</b>
+          Pages {{ unreadableSheets().join(', ') }} are raster images. Nothing on them was
+          checked.
+        </div>
+      }
+
+      @if (pastedTablesUnread()) {
+        <div class="note warn">
+          <b>
+            {{ pastedTableSheets().length }} sheet(s) paste part of the drawing in as an image.
+          </b>
+          Pages {{ pastedTableSheets().join(', ') }}. The sheets themselves are proper vector, so
+          they look fine — but a code-analysis table pasted in as a picture is pixels, and
+          nothing read it. If rules stood down for want of a value that is printed on one of
+          those sheets, that is why.
+          <div class="row">
+            <button type="button" class="ghost" (click)="retryWithConversion()">
+              Read those sheets and review again
+            </button>
+          </div>
+        </div>
+      }
     </section>
   }
 }
