@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Run the whole app as one container, ready to put behind a tunnel.
 

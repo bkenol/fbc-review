@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Start the FBC Reviewer locally — API plus the Angular client.
 
