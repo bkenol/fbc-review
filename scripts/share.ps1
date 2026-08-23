@@ -27,7 +27,10 @@
 [CmdletBinding()]
 param(
     [int]$Port = 8060,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    # For a machine that stays powered on: restart the container with Docker,
+    # and therefore across reboots, instead of vanishing on exit.
+    [switch]$Persistent
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,7 +59,8 @@ try {
     # MSYS_NO_PATHCONV is irrelevant here (PowerShell, not Git Bash) but the
     # same command run from Git Bash needs it, or /app/client is rewritten to a
     # Windows path and the client silently 404s.
-    & docker run --rm -d --name fbc-test `
+    $lifecycle = if ($Persistent) { '--restart=unless-stopped' } else { '--rm' }
+    & docker run $lifecycle -d --name fbc-test `
         -p "${Port}:8080" `
         -e FBC_DEV_UNSAFE_AUTH=1 `
         -e FBC_BUCKET=fbc-dev-local `
@@ -85,6 +89,12 @@ try {
     Write-Host '  Stop everything with:' -ForegroundColor Cyan
     Write-Host '      tailscale funnel reset; docker rm -f fbc-test'
     Write-Host ''
+    if ($Persistent) {
+        Write-Host '  Persistent: the container restarts with Docker, so it survives a' -ForegroundColor DarkGray
+        Write-Host '  reboot provided Docker Desktop is set to start with Windows.' -ForegroundColor DarkGray
+        Write-Host '  The Funnel configuration persists on its own.' -ForegroundColor DarkGray
+        Write-Host ''
+    }
 } finally {
     Pop-Location
 }
