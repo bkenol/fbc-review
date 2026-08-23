@@ -9,11 +9,25 @@
  */
 import { ReviewOptions } from './review-options';
 import { OccupancyGroup } from './occupancy-group';
+import { DeclarationField } from './declaration-field';
 import { MailStatus } from './mail-status';
+import { DeclarationGroup } from './declaration-group';
 import { Edition } from './edition';
 
 
 export interface ConfigResponse { 
+    /**
+     * The whole questionnaire, as data. Adding a field or an enum value in `fbcreview/declaration_schema.py` reaches the client through here with no frontend change.
+     */
+    declaration_fields: Array<DeclarationField>;
+    /**
+     * Question groups, in the order the form should show them.
+     */
+    declaration_groups: Array<DeclarationGroup>;
+    /**
+     * Every rule any declaration field unlocks, deduplicated.
+     */
+    declaration_unlockable: Array<string>;
     defaults: ReviewOptions;
     editions: Array<Edition>;
     mail: MailStatus;

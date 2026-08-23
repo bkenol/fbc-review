@@ -271,13 +271,16 @@ class Renderer:
                 pg.draw_rect(swatch, color=VIO, width=1.8, dashes="[4 3] 0")
             else:
                 pg.draw_rect(swatch, color=INK, fill=(1, 1, 1), width=1.4)
-            # insert_htmlbox reports a negative height when the content does not
-            # fit and draws nothing; stop adding rows rather than lose one
-            # silently halfway down the legend.
-            if pg.insert_htmlbox(pymupdf.Rect(X0 + 36, y - 2, X1, y + 28),
-                    f"<div style='font-family:Helvetica;font-size:10.5pt;color:#333;"
-                    f"line-height:1.24;'><b style='color:{VIO_HEX if style == 'dashed' else '#0b1220'}'>"
-                    f"{name}</b> &nbsp;&mdash;&nbsp; {desc}</div>")[1] < 0:
+            # insert_htmlbox force-fits by scaling the text down and returns
+            # the scale it used. Anything under about four fifths is too small
+            # to read on a plotted sheet, so stop adding rows rather than leave
+            # a key nobody can make out.
+            _spare, scale = pg.insert_htmlbox(
+                pymupdf.Rect(X0 + 36, y - 2, X1, y + 28),
+                f"<div style='font-family:Helvetica;font-size:10.5pt;color:#333;"
+                f"line-height:1.24;'><b style='color:{VIO_HEX if style == 'dashed' else '#0b1220'}'>"
+                f"{name}</b> &nbsp;&mdash;&nbsp; {desc}</div>")
+            if scale < 0.8:
                 break
             y += 28
         y += gap
@@ -322,22 +325,60 @@ class Renderer:
             "<div style='font-family:Helvetica;font-size:10.5pt;color:#5b6572;line-height:1.32;'>"
             "The findings register and the method note are at the <b>back of this document</b>.</div>")
 
+    #: The legend needs this much of the rail to be worth drawing at all: the
+    #: severity rows and the footer. Below it there is no legend, and a sheet
+    #: with no legend cannot be read on its own.
+    MIN_LEGEND = 300
+    #: What the two marker rows add. Reserved up front rather than competing
+    #: with the cards for leftovers: the dashed box and the hollow tag are ON
+    #: the sheet, and a mark with no key is worse than one card fewer.
+    MARKER_LEGEND_H = 60
+
+    def _card_height(self, card) -> float:
+        """How tall a card has to be to hold its own text.
+
+        `insert_htmlbox` clips silently when the box is too small, so the height
+        is estimated from what will actually go in it rather than from the title
+        alone — a card whose finding text is cut off mid-sentence reads as a bug
+        in the review, not as a layout compromise.
+        """
+        h = 110 if len(card.title) > 74 else 92
+        h += max(0, (len(clip(card.result, 175)) - 120) // 42) * 13
+        if card.basis == "declaration":
+            h += 16
+        if card.status == "CONFLICT" or card.scenario != "both":
+            h += 14
+        return h
+
     def _rails(self, by_page, tally, nsheets):
         for pno in range(nsheets):
             pg = self.doc[pno]
-            cards = by_page.get(pno, [])
-            hs = [(110 if len(c.title) > 74 else 92)
-                  + (16 if c.basis == "declaration" else 0)
-                  + (14 if (c.status == "CONFLICT" or c.scenario != "both") else 0)
-                  for c in cards]
-            head = 122 + sum(h + 9 for h in hs)
+            all_cards = by_page.get(pno, [])
             R = pymupdf.Rect(self.rail[0], 40, self.rail[1], self.H - 40)
+
+            # Fit as many cards as the rail can hold with the legend still on
+            # it, most severe first — they are already in that order. What does
+            # not fit is COUNTED and said, never silently dropped: a rail that
+            # quietly stops at seven findings reads as a sheet with seven
+            # findings.
+            reserved = self.MIN_LEGEND + (self.MARKER_LEGEND_H if self.declared else 0)
+            room = R.height - 122 - reserved - 16
+            cards, hs, used = [], [], 0.0
+            for card in all_cards:
+                h = self._card_height(card)
+                if used + h + 9 > room and cards:
+                    break
+                cards.append(card)
+                hs.append(h)
+                used += h + 9
+            hidden = len(all_cards) - len(cards)
+            head = 122 + used + (22 if hidden else 0)
             pg.draw_rect(R, color=(0.80, 0.82, 0.86), fill=(1, 1, 1), fill_opacity=0.94, width=1.4)
             hdr = pymupdf.Rect(R.x0, R.y0, R.x1, R.y0 + 112)
             pg.draw_rect(hdr, color=None, fill=INK)
-            present = [c.severity for c in cards]
+            present = [c.severity for c in all_cards]
             worst = next((s for s in ORDER if s in present), None)
-            nopen = sum(1 for c in cards if c.status in ACTIONABLE)
+            nopen = sum(1 for c in all_cards if c.status in ACTIONABLE)
             badge = (f"<span style='color:#fff;background:{HEX[worst]};padding:2pt 8pt;"
                      f"font-size:12pt;font-weight:bold;'>{worst}</span>") if worst else \
                     "<span style='color:#9fb0c8;font-size:11pt;'>NOT REVIEWED IN THIS PASS</span>"
@@ -349,7 +390,7 @@ class Renderer:
                 f"REVIEW &nbsp;·&nbsp; SHEET {pno+1} OF {nsheets}</div>"
                 f"<div style='font-size:19pt;font-weight:bold;margin-top:3pt;'>{esc(label)}</div>"
                 f"<div style='margin-top:5pt;'>{badge}<span style='color:#8fa3bd;font-size:11pt;'>"
-                f" &nbsp; {nopen} open &nbsp;·&nbsp; {len(cards)-nopen} verified on this sheet"
+                f" &nbsp; {nopen} open &nbsp;·&nbsp; {len(all_cards)-nopen} verified on this sheet"
                 f"</span></div></div>")
             y = R.y0 + 122
             for c, h in zip(cards, hs):
@@ -374,6 +415,13 @@ class Renderer:
                     f"<div class='s'>{esc(clip(c.result, 175))}</div>{note}",
                     css=self.CSS)
                 y += h + 9
+            if hidden:
+                pg.insert_htmlbox(
+                    pymupdf.Rect(R.x0 + 10, y, R.x1 - 10, y + 20),
+                    f"<div style='font-family:Helvetica;font-size:10.5pt;color:#5b6572;'>"
+                    f"&hellip; and <b>{hidden}</b> more on this sheet &mdash; all of them are "
+                    f"in the register at the back.</div>")
+                y += 22
             self._legend(pg, pymupdf.Rect(R.x0 + 10, R.y0 + head + 6, R.x1 - 10, R.y1 - 10), tally)
 
     # ── back matter ───────────────────────────────────────────────────────

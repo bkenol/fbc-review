@@ -936,3 +936,139 @@ footer {
     animation: none !important;
   }
 }
+
+/* ── project declaration ───────────────────────────────────────────────────
+ * The questionnaire is a form of the same kind as the review parameters, so it
+ * borrows the same field, label and hint rules. What it adds is a wording
+ * toggle, a collapsible group and one live line saying what answering buys.
+ * Nothing here introduces a new colour: the system has two accents and the
+ * declaration is not a third thing.
+ */
+.vocab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.vocab-label {
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-right: var(--space-1);
+}
+/* A pair of pressed states, not a switch: both wordings are equally valid and
+   neither is the "off" position. */
+.vocab-btn {
+  padding: 4px 12px;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border-input);
+  transition: var(--transition-colour);
+}
+.vocab-btn:hover {
+  color: var(--text-strong);
+  border-color: var(--text-strong);
+  background: transparent;
+}
+.vocab-btn.on {
+  color: var(--text-reverse);
+  background: var(--surface-inverse);
+  border-color: var(--surface-inverse);
+}
+
+/* The line that makes abstention visible. Deliberately plain text on a rule
+   rather than a badge: it is a statement about coverage, not a score. */
+.tally {
+  margin: var(--space-4) 0 var(--space-5);
+  padding: var(--space-3) 0;
+  border-top: var(--hairline);
+  border-bottom: var(--hairline);
+  max-width: var(--measure);
+  font: var(--type-small);
+  color: var(--text-body);
+}
+.tally b {
+  font: var(--type-dimension);
+  color: var(--text-strong);
+}
+
+.qgroup {
+  border-top: var(--hairline);
+  padding: var(--space-4) 0 var(--space-5);
+}
+.qgroup:first-of-type {
+  border-top: 0;
+}
+.qgroup > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  cursor: pointer;
+  list-style: none;
+}
+.qgroup > summary::-webkit-details-marker {
+  display: none;
+}
+.qgroup-name {
+  font: var(--type-eyebrow);
+  letter-spacing: var(--ls-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* The count leads with a rule, the way a dimension does elsewhere. */
+.qgroup-count {
+  flex: none;
+  font: var(--type-dimension);
+  color: var(--text-faint);
+}
+.qgroup[open] .qgroup-name,
+.qgroup > summary:hover .qgroup-name {
+  color: var(--text-strong);
+}
+.qgroup > summary:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: var(--focus-offset);
+}
+label.f .unit {
+  color: var(--text-faint);
+  text-transform: none;
+}
+input[type='number'] {
+  width: 100%;
+  padding: 10px 12px;
+  font: var(--type-small);
+  color: var(--text-strong);
+  background: var(--surface-card);
+  border: 1px solid var(--border-input);
+  transition: var(--transition-colour);
+}
+input[type='number']:hover {
+  border-color: var(--text-strong);
+}
+
+/* ── declared basis, on a finding row ──────────────────────────────────────
+ * A finding resting on an answer says so wherever it appears. The markup must
+ * never attribute to the drawings something the drawings do not state, and the
+ * screen keeps the same promise.
+ */
+td .basis {
+  display: block;
+  margin-top: var(--space-1);
+  max-width: var(--measure);
+  font: var(--type-small);
+  font-style: italic;
+  color: var(--text-muted);
+}
+.conflict-tag {
+  display: block;
+  margin-top: 2px;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  color: var(--annotation);
+}

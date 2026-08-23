@@ -21,6 +21,8 @@ import { ErrorResponse } from '../model/error-response';
 // @ts-ignore
 import { Job } from '../model/job';
 // @ts-ignore
+import { ProjectDeclaration } from '../model/project-declaration';
+// @ts-ignore
 import { ReviewAccepted } from '../model/review-accepted';
 
 // @ts-ignore
@@ -43,15 +45,16 @@ export class ReviewsApi extends BaseService {
      * Accept a permit set and start a review.
      * @endpoint post /api/review
      * @param file The permit set, as a PDF.
+     * @param declaration A JSON-encoded ProjectDeclaration: what the applicant says the building is. Optional in whole and in part — every field may be omitted, and omitting the part entirely reproduces the review exactly as it ran before declarations existed. Values are validated against the schema &#x60;/api/config&#x60; publishes.
      * @param reviewOptions A JSON-encoded ReviewOptions object.
      * @param observe set whether or not to return the data Observable as the body, response or events. defaults to returning the body.
      * @param reportProgress flag to report request and response progress.
      * @param options additional options
      */
-    public createReview(file: Blob, reviewOptions?: string, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<ReviewAccepted>;
-    public createReview(file: Blob, reviewOptions?: string, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<ReviewAccepted>>;
-    public createReview(file: Blob, reviewOptions?: string, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<ReviewAccepted>>;
-    public createReview(file: Blob, reviewOptions?: string, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+    public createReview(file: Blob, declaration?: string, reviewOptions?: string, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<ReviewAccepted>;
+    public createReview(file: Blob, declaration?: string, reviewOptions?: string, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<ReviewAccepted>>;
+    public createReview(file: Blob, declaration?: string, reviewOptions?: string, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<ReviewAccepted>>;
+    public createReview(file: Blob, declaration?: string, reviewOptions?: string, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
         if (file === null || file === undefined) {
             throw new Error('Required parameter file was null or undefined when calling createReview.');
         }
@@ -88,6 +91,9 @@ export class ReviewsApi extends BaseService {
             localVarFormParams = new HttpParams({encoder: this.encoder});
         }
 
+        if (declaration !== undefined) {
+            localVarFormParams = localVarFormParams.append('declaration', <any>declaration) as any || localVarFormParams;
+        }
         if (file !== undefined) {
             localVarFormParams = localVarFormParams.append('file', <any>file) as any || localVarFormParams;
         }
@@ -166,6 +172,62 @@ export class ReviewsApi extends BaseService {
         let localVarPath = `/api/jobs/${this.configuration.encodeParam({name: "jobId", value: jobId, in: "path", style: "simple", explode: false, dataType: "string", dataFormat: undefined})}`;
         const { basePath, withCredentials } = this.configuration;
         return this.httpClient.request<Job>('get', `${basePath}${localVarPath}`,
+            {
+                context: localVarHttpContext,
+                responseType: <any>responseType_,
+                ...(withCredentials ? { withCredentials } : {}),
+                headers: localVarHeaders,
+                observe: observe,
+                ...(localVarTransferCache !== undefined ? { transferCache: localVarTransferCache } : {}),
+                reportProgress: reportProgress
+            }
+        );
+    }
+
+    /**
+     * What was declared with a review. For support and for the audit trail.
+     * @endpoint get /api/jobs/{job_id}/declaration
+     * @param jobId 
+     * @param observe set whether or not to return the data Observable as the body, response or events. defaults to returning the body.
+     * @param reportProgress flag to report request and response progress.
+     * @param options additional options
+     */
+    public getJobDeclaration(jobId: string, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<ProjectDeclaration>;
+    public getJobDeclaration(jobId: string, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<ProjectDeclaration>>;
+    public getJobDeclaration(jobId: string, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<ProjectDeclaration>>;
+    public getJobDeclaration(jobId: string, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+        if (jobId === null || jobId === undefined) {
+            throw new Error('Required parameter jobId was null or undefined when calling getJobDeclaration.');
+        }
+
+        let localVarHeaders = this.defaultHeaders;
+
+        const localVarHttpHeaderAcceptSelected: string | undefined = options?.httpHeaderAccept ?? this.configuration.selectHeaderAccept([
+            'application/json'
+        ]);
+        if (localVarHttpHeaderAcceptSelected !== undefined) {
+            localVarHeaders = localVarHeaders.set('Accept', localVarHttpHeaderAcceptSelected);
+        }
+
+        const localVarHttpContext: HttpContext = options?.context ?? new HttpContext();
+
+        const localVarTransferCache: boolean = options?.transferCache ?? true;
+
+
+        let responseType_: 'text' | 'json' | 'blob' = 'json';
+        if (localVarHttpHeaderAcceptSelected) {
+            if (localVarHttpHeaderAcceptSelected.startsWith('text')) {
+                responseType_ = 'text';
+            } else if (this.configuration.isJsonMime(localVarHttpHeaderAcceptSelected)) {
+                responseType_ = 'json';
+            } else {
+                responseType_ = 'blob';
+            }
+        }
+
+        let localVarPath = `/api/jobs/${this.configuration.encodeParam({name: "jobId", value: jobId, in: "path", style: "simple", explode: false, dataType: "string", dataFormat: undefined})}/declaration`;
+        const { basePath, withCredentials } = this.configuration;
+        return this.httpClient.request<ProjectDeclaration>('get', `${basePath}${localVarPath}`,
             {
                 context: localVarHttpContext,
                 responseType: <any>responseType_,

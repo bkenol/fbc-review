@@ -26,8 +26,14 @@ export interface ReviewOptions {
     include_verified?: boolean;
     min_severity?: ReviewOptionsMinSeverityEnum;
     notes?: string;
+    /**
+     * Deprecated. Occupancy group is a fact about the building, not a review setting, and belongs in the project declaration. Sent explicitly, it seeds `declaration.occupancy_group` when the declaration does not state one; left at its default it is ignored and nothing is assumed.
+     */
     occupancy_group?: string;
     project_name?: string;
+    /**
+     * Deprecated, as `occupancy_group`. Sent explicitly it seeds `declaration.sprinkler_system` as an NFPA 13 system or none.
+     */
     sprinklered?: boolean;
 }
 export enum ReviewOptionsMinSeverityEnum {
