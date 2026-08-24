@@ -18,6 +18,35 @@ import { ReviewService } from './review-service';
 const TALLY = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'MEASURED', 'VERIFIED'] as const;
 
 /**
+ * What each severity actually means for the permit.
+ *
+ * The register labels them in six mono words and assumes the reader knows the ladder.
+ * Most do not on first use, and the difference between "we did not check this" and "we
+ * checked it and it passed" is the whole point of the screen — so it is written down
+ * rather than left to the colour to imply. Surfaced on hover and on focus, and read out
+ * by aria-describedby whether or not it is visible.
+ *
+ * Static copy, so this stays where it is rather than coming off the wire: the engine
+ * reports a severity, not a definition of one.
+ */
+const SEVERITY_MEANING: Record<string, string> = {
+  CRITICAL:
+    'Stops the permit. A stated value contradicts the section it cites and the set ' +
+    'cannot be approved until it is resolved.',
+  HIGH:
+    'Wrong against the section it cites. Not fatal on its own, but expect a correction ' +
+    'request before approval.',
+  MEDIUM:
+    'An inconsistency between sheets, or a figure the drawings do not support. The ' +
+    'reviewer will raise it.',
+  LOW: 'Worth tidying before submittal. No code section is violated.',
+  MEASURED:
+    'Read off the drawing at the scale recorded in the file, not stated on it. A ' +
+    'reading, not a fault.',
+  VERIFIED: 'Checked against the section it cites, and sufficient. This one held.',
+};
+
+/**
  * Review settings only. Occupancy group and sprinkler status used to live here
  * and were always in the wrong place — they are facts about the building, and
  * they are now questions 1 and 9 of the project declaration, where they are
@@ -74,6 +103,11 @@ export class Review implements OnDestroy {
   );
 
   /** Severities absent from the map are genuinely zero, not missing. */
+  /** What a severity means, for the hover and focus panel. */
+  protected meaning(severity: string): string {
+    return SEVERITY_MEANING[severity] ?? '';
+  }
+
   protected count(severity: string): number {
     return this.counts()[severity] ?? 0;
   }

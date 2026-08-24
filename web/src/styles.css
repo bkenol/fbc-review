@@ -55,6 +55,37 @@
 
   --verified: var(--green-1);
 
+  /* THE SEVERITY RAMP — a sequential scale, warm to cool, and its own thing.
+   *
+   * Meridian has two accents and no ordered scale, because nothing else in the system
+   * needs one. Severity does: six ordered steps where the reader has to tell at a glance
+   * which end of the ladder a row sits on. Treating that as a sequential scale rather
+   * than as six more brand colours is what keeps this from being a free-for-all — the
+   * ramp exists in the severity slot only, and everywhere else on the page still has
+   * exactly the system's red, blue and ink.
+   *
+   * Three rules hold it together:
+   *
+   * 1. CRITICAL is --red-1, the reddest colour the system owns. Nothing is redder, and
+   *    it is the only step that also reverses into a filled stamp.
+   * 2. Hue cools monotonically down the ladder: red -> orange -> ochre -> slate ->
+   *    drafting blue -> survey green. Three of the six steps are system tokens already
+   *    (--red-1, --ink-3/--ink-4, --blue-2/--blue-3); the orange and the ochre are the
+   *    only genuinely new hues, because a red-to-cool ramp cannot be built without them.
+   * 3. The ramp is ISOLUMINANT. Every step lands within a whisker of the same contrast
+   *    against its ground — 5.71-6.77:1 on --paper-1, 5.01-6.28:1 on --ink-1 — so hue
+   *    alone carries the order and no step shouts louder than its rank. Weight is spent
+   *    on the CRITICAL stamp instead, where it means something.
+   *
+   * Every step also clears 4.5:1 against its own chip tint, in both schemes.
+   */
+  --sev-critical: var(--red-1); /* #B3251E  5.79:1 on paper */
+  --sev-high: #a03e1a; /*          5.79:1 */
+  --sev-medium: #825315; /*        5.80:1 */
+  --sev-low: var(--ink-3); /*      6.07:1 */
+  --sev-measured: var(--blue-2); /* 6.77:1 */
+  --sev-verified: var(--verified); /* 5.71:1 */
+
   /* How much of a severity's own colour tints its chip. */
   --sev-tint: 12%;
 }
@@ -97,6 +128,18 @@
        it, which the severity chips now do. Lifted toward the paper step until it clears:
        5.21:1 plain, 4.67:1 on a card, 4.77:1 on its own chip. Still a ramp mix, still no
        new hex. */
+    /* The ramp again, on ink. --red-2 is the system's reverse red but only reaches
+       4.02:1 here, so CRITICAL takes a saturated step past it rather than a washed-out
+       mix — the reddest thing on the sheet has to stay red, not go salmon. Orange and
+       ochre lift with it; slate, blue and green are system steps as in the light scheme.
+       5.01:1 to 6.28:1, and every step clears 4.5:1 on its own chip tint. */
+    --sev-critical: #e55c4c; /*      5.01:1 on ink */
+    --sev-high: #dd7440; /*          5.59:1 */
+    --sev-medium: #c88a2f; /*        5.99:1 */
+    --sev-low: var(--ink-4); /*      5.60:1 */
+    --sev-measured: var(--blue-3); /* 6.18:1 */
+    --sev-verified: var(--verified); /* 6.28:1 */
+
     --accent-dimension: color-mix(in srgb, var(--red-2) 80%, var(--paper-1));
     --annotation: var(--blue-3);
     --verified: var(--green-2);
@@ -625,41 +668,41 @@ progress::-moz-progress-bar {
  * tally figure and its rule, the chip, the finding id, the row's left rule — reads --sev
  * from here and nothing re-states a hue.
  *
- * The mapping is read off the design project's register artboard, and it is the reverse
- * of the one docs/DESIGN-BRIEF-Claude-Design.md asks for. That is not an oversight: the
- * brief §4 assigns red to CRITICAL/HIGH and blue to MEASURED, and the artboard drawn
- * against that brief assigns them the other way round. The drawing is the later artefact
- * and the one the client pointed at, so it wins; the brief is left as the record of what
- * was asked rather than edited to match. It reads better too — colors.css gives red to
- * "dimensions, ticks, scope numbers", which is literally what a MEASURED finding is.
+ * The order is the ladder, warm to cool, and the ramp it draws from is defined and
+ * justified in :root. Read it top to bottom and the temperature falls with the stakes:
  *
- *   CRITICAL, HIGH   drafting blue     the two that stop a permit
- *   MEDIUM, LOW      the ink ramp      separated by weight, not hue. --text-body, not
- *                                      --text-strong: on ink the strong step is nearly
- *                                      white and its dimension rule out-shouted CRITICAL
- *   MEASURED         engineer red      colors.css gives red to "dimensions, ticks,
- *                                      scope numbers", and a value read off the drawing
- *                                      rather than stated on it is exactly a dimension
- *   VERIFIED         survey green      the client's addition; see :root
+ *   CRITICAL   engineer red      stops the permit — the reddest colour on the page
+ *   HIGH       orange            wrong against the section it cites
+ *   MEDIUM     ochre             an inconsistency the reviewer will raise
+ *   LOW        slate             worth tidying; no section is violated
+ *   MEASURED   drafting blue     a reading taken off the drawing, not a fault
+ *   VERIFIED   survey green      checked and sufficient
  *
- * MEDIUM and LOW stay on the ink ramp deliberately. Six hues would leave nothing for the
- * accented four to stand out from, and the artboard keeps them neutral too.
+ * This supersedes both earlier mappings: the brief's (§4 of
+ * docs/DESIGN-BRIEF-Claude-Design.md, red for CRITICAL/HIGH and blue for MEASURED) and
+ * the register artboard's, which had them the other way round. Neither read as an order
+ * on the built page — a reviewer scanning the register could not tell rank from colour,
+ * only category. A conventional warm-to-cool status ramp can be read at a glance, and
+ * that is what the register is for. The two source documents are left as the record of
+ * what each asked for rather than edited to match.
  */
-.CRITICAL,
+.CRITICAL {
+  --sev: var(--sev-critical);
+}
 .HIGH {
-  --sev: var(--annotation);
+  --sev: var(--sev-high);
 }
 .MEDIUM {
-  --sev: var(--text-body);
+  --sev: var(--sev-medium);
 }
 .LOW {
-  --sev: var(--text-muted);
+  --sev: var(--sev-low);
 }
 .MEASURED {
-  --sev: var(--accent-dimension);
+  --sev: var(--sev-measured);
 }
 .VERIFIED {
-  --sev: var(--verified);
+  --sev: var(--sev-verified);
 }
 
 /* ── DimensionRule — the severity tally ────────────────────────────────────
@@ -845,15 +888,6 @@ td.sev {
   color: var(--sev, var(--text-body));
   transition: var(--transition-colour);
 }
-/* Ink at 12 % reads far heavier than a hue at 12 %: left alone, MEDIUM and LOW came out
-   as the loudest boxes on the sheet and inverted the whole hierarchy. The neutral
-   severities keep the chip shape but give up the wash. */
-.MEDIUM .chip,
-.LOW .chip {
-  --sev-tint: 4%;
-  border-color: var(--border-hairline);
-}
-
 /* CRITICAL is the only severity that reverses. One row on a sheet reads as a stamp;
    more than one and the register would go to plaid. */
 td.sev.CRITICAL .chip {
@@ -868,6 +902,123 @@ td.sev.CRITICAL .chip {
 .LOW .chip {
   font-weight: var(--weight-regular);
 }
+/* ── what a severity means ─────────────────────────────────────────────────
+ * Six mono words that a reviewer is expected to already know. Hovering or focusing one
+ * says what it actually means for the permit.
+ *
+ * Drawn as a callout on the drawing, not as a UI tooltip: a flat card, 1px hairline in
+ * the severity's own colour, radius 0, no shadow. The system separates content with
+ * hairlines and never with elevation, so the border and an opaque ground do the work a
+ * drop shadow would do elsewhere.
+ *
+ * The reveal is 160 ms of opacity and 4 px of travel, inside the system's 200 ms budget
+ * for anything larger than a colour swap. It is an interaction affordance rather than an
+ * entrance animation — nothing animates on load — and the global prefers-reduced-motion
+ * rule stands it down along with everything else.
+ *
+ * It stays in the accessibility tree at all times rather than being display:none'd, so
+ * aria-describedby on the chip reads it out whether or not it is visible. Hover is
+ * gated on a device that has hover; focus works everywhere.
+ */
+[data-sev-anchor] {
+  position: relative;
+}
+.sev-tip {
+  position: absolute;
+  z-index: 6;
+  width: max-content;
+  max-width: 34ch;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--sev, var(--border-strong));
+  background: var(--surface-card);
+  color: var(--text-body);
+  font: var(--type-small);
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 160ms var(--ease),
+    transform 160ms var(--ease);
+}
+.sev-tip b {
+  color: var(--sev, var(--text-strong));
+  font-weight: var(--weight-semibold);
+}
+
+/* In the register the panel opens into the FINDING column, centred on the chip — the
+   one direction with room in a five-column table. */
+td.sev .sev-tip {
+  left: calc(100% - var(--space-3));
+  top: 50%;
+  transform: translate(-4px, -50%);
+}
+td.sev:hover,
+td.sev:focus-within {
+  z-index: 6;
+}
+@media (hover: hover) {
+  td.sev .chip:hover ~ .sev-tip {
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+}
+td.sev .chip:focus-visible ~ .sev-tip {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+/* The register scrolls sideways on a narrow sheet, and overflow-x clips the block axis
+   too. Six pixels of internal room, cancelled outside, keeps the first and last rows'
+   panels from being shaved. */
+.tablewrap {
+  padding-block: var(--space-2);
+  margin-block: calc(-1 * var(--space-2));
+}
+
+/* In the tally it opens downward, and flips to the right edge for the columns that
+   would otherwise run off the sheet. */
+.dim .sev-tip {
+  left: 0;
+  top: calc(100% + var(--space-3));
+  transform: translateY(-4px);
+}
+.dim:nth-last-child(-n + 2) .sev-tip {
+  left: auto;
+  right: 0;
+}
+@media (max-width: 760px) {
+  .dim:nth-last-child(-n + 2) .sev-tip {
+    left: 0;
+    right: auto;
+  }
+  .dim:nth-child(3n) .sev-tip {
+    left: auto;
+    right: 0;
+  }
+}
+.dim:hover,
+.dim:focus-within {
+  z-index: 6;
+}
+@media (hover: hover) {
+  .dim:hover .sev-tip {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.dim .lab:focus-visible ~ .sev-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
+/* The two hover targets are focusable, so they take the system's focus ring like every
+   other focusable thing on the sheet. */
+.dim .lab:focus-visible,
+td.sev .chip:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: var(--focus-offset);
+}
+
 /* The tick sits inside the VERIFIED chip and takes the chip's colour. */
 .chip .tick {
   margin-right: 0;

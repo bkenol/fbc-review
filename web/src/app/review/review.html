@@ -306,10 +306,16 @@
       <!-- The tally reads as a dimension run, not as a row of stat cards. -->
       <div class="dimrun">
         @for (severity of tallyOrder; track severity) {
-          <div class="dim {{ severity }}" [class.zero]="count(severity) === 0">
+          <div class="dim {{ severity }}" [class.zero]="count(severity) === 0" data-sev-anchor>
             <b class="fig">{{ count(severity) }}</b>
             <span class="rule" aria-hidden="true"><span class="slash"></span></span>
-            <span class="lab">{{ severity }}</span>
+            <!-- Hover or focus the label to be told what the severity means. -->
+            <span class="lab" tabindex="0" [attr.aria-describedby]="'tally-' + severity">{{
+              severity
+            }}</span>
+            <span class="sev-tip" role="tooltip" [id]="'tally-' + severity">
+              <b>{{ severity }}</b> — {{ meaning(severity) }}
+            </span>
           </div>
         }
       </div>
@@ -420,14 +426,17 @@
                 <tr class="{{ finding.severity }}">
                   <td class="ref">{{ finding.fid }}</td>
                   <td class="ref">{{ finding.sheet }}</td>
-                  <td class="sev {{ finding.severity }}">
+                  <td class="sev {{ finding.severity }}" data-sev-anchor>
                     <!-- The chip carries the severity's colour. The tick still marks
                          checked-and-passed, now inside it. -->
-                    <span class="chip">
+                    <span class="chip" tabindex="0" [attr.aria-describedby]="'sev-' + finding.fid">
                       @if (finding.severity === 'VERIFIED') {
                         <span class="tick" aria-hidden="true"></span>
                       }
                       {{ finding.severity }}
+                    </span>
+                    <span class="sev-tip" role="tooltip" [id]="'sev-' + finding.fid">
+                      <b>{{ finding.severity }}</b> — {{ meaning(finding.severity) }}
                     </span>
                     <!-- A conflict is a status, not a severity: the row keeps its own
                          colour and this says where the finding came from. -->
