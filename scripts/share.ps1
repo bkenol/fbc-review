@@ -22,12 +22,19 @@
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\share.ps1
     # then, in another shell:
-    tailscale funnel 8060
+    powershell -ExecutionPolicy Bypass -File scripts\tunnel.ps1
 #>
 [CmdletBinding()]
 param(
     [int]$Port = 8060,
     [switch]$SkipBuild,
+    # Below Cloudflare's 100 MB request-body ceiling, which applies to every
+    # proxied request including tunnel traffic. Over it, the edge returns its
+    # own opaque 413 and the upload never reaches the app - so the app's limit
+    # is set under the edge's, and a too-large set gets the typed error and the
+    # real message instead. Raising this past 95 only makes sense off the
+    # Cloudflare path.
+    [int]$MaxUploadMb = 95,
     # For a machine that stays powered on: restart the container with Docker,
     # and therefore across reboots, instead of vanishing on exit.
     [switch]$Persistent
@@ -66,6 +73,7 @@ try {
         -e FBC_BUCKET=fbc-dev-local `
         -e FBC_PROJECT_ID=fbc-dev-local `
         -e FBC_STATIC_DIR=/app/client `
+        -e FBC_MAX_UPLOAD_MB=$MaxUploadMb `
         -e FBC_WORKERS=2 `
         -v "${bundle}:/app/client:ro" `
         -v "$(Join-Path $repo '.devdata'):/app/.devdata" `
@@ -83,16 +91,24 @@ try {
     Write-Host "  Running on http://127.0.0.1:$Port/" -ForegroundColor Green
     Write-Host "  Sign-in required: $($health.auth_required)" -ForegroundColor Yellow
     Write-Host ''
-    Write-Host '  Share it publicly with:' -ForegroundColor Cyan
+    Write-Host "  Upload limit: $MaxUploadMb MB" -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  Publish it at fbc.omniflexfitness.com with:' -ForegroundColor Cyan
+    Write-Host '      powershell -ExecutionPolicy Bypass -File scripts\tunnel.ps1'
+    Write-Host ''
+    Write-Host '  Or, for a throwaway unlisted URL:' -ForegroundColor Cyan
     Write-Host "      tailscale funnel $Port"
     Write-Host ''
     Write-Host '  Stop everything with:' -ForegroundColor Cyan
-    Write-Host '      tailscale funnel reset; docker rm -f fbc-test'
+    Write-Host '      docker rm -f fbc-test      # plus Ctrl-C in the tunnel window,'
+    Write-Host '                                 # or: tailscale funnel reset'
     Write-Host ''
     if ($Persistent) {
         Write-Host '  Persistent: the container restarts with Docker, so it survives a' -ForegroundColor DarkGray
         Write-Host '  reboot provided Docker Desktop is set to start with Windows.' -ForegroundColor DarkGray
-        Write-Host '  The Funnel configuration persists on its own.' -ForegroundColor DarkGray
+        Write-Host '  The tunnel does not: scripts\tunnel.ps1 runs in the foreground and' -ForegroundColor DarkGray
+        Write-Host '  stops with the window. See Persistence in docs/DEPLOYMENT.md to' -ForegroundColor DarkGray
+        Write-Host '  install cloudflared as a Windows service. Funnel persists on its own.' -ForegroundColor DarkGray
         Write-Host ''
     }
 } finally {

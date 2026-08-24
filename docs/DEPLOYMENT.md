@@ -3,17 +3,25 @@
 Every command needed to stand this service up, and every decision taken while
 building it.
 
-> **Status.** Phases 0–3B are built, tested and pushed. Provisioning is
-> automated and has been run as far as it can go: the GCP project
-> **`fbc-reviewer`** (number 983366817143) exists under the
-> `omniflexfitness.com` organisation, and `.firebaserc` points at it.
+> **Status.** There are two routes to `fbc.omniflexfitness.com` and the domain
+> is served by the second one.
 >
-> It stops at billing. Both billing accounts on the account —
-> `OmniFlex Billing` and `OmniFlex Fitness Billing` — are **closed**, and a
-> closed account can be attached to a project while paying for nothing:
-> enabling Cloud Run returns *"Billing account for project '983366817143' is not
-> open."* Nothing past that point has run. Open a billing account and re-run
-> the script; everything already done is skipped.
+> **The Google Cloud route (sections 3–5) is blocked at billing.** Phases 0–3B
+> are built, tested and pushed, and provisioning has been run as far as it can
+> go: the GCP project **`fbc-reviewer`** (number 983366817143) exists under the
+> `omniflexfitness.com` organisation, and `.firebaserc` points at it. Both
+> billing accounts — `OmniFlex Billing` and `OmniFlex Fitness Billing` — are
+> **closed**, and a closed account can be attached to a project while paying
+> for nothing: enabling Cloud Run returns *"Billing account for project
+> '983366817143' is not open."* Nothing past that point has run. Open a billing
+> account and re-run the script; everything already done is skipped.
+>
+> **The Cloudflare Tunnel route (section 0c) needs no billing account and is
+> what serves the domain today.** `omniflexfitness.com` is on Cloudflare, so
+> the hostname is a CNAME into a tunnel that terminates at the container
+> running on the workstation. Same domain, same client, same engine — the
+> difference is that the machine has to be on, and that **authentication is
+> off**, which was a deliberate choice recorded under Exposure below.
 
 ---
 
@@ -26,16 +34,18 @@ building it.
 | Client (`web/`) | Angular 22, built, tested, exercised in a browser |
 | Container | Built and verified locally, incl. OCR inside the image |
 | GitHub repo | `bkenol/fbc-review` (private), `main` pushed |
-| GCP project | **Does not exist yet** |
-| Cloud Run service | Not deployed |
-| Custom domain | Not configured |
+| GCP project | `fbc-reviewer` (983366817143) exists; no open billing account |
+| Cloud Run service | Not deployed — blocked on billing |
+| Cloudflare Tunnel | `scripts/tunnel.sh`, serving `fbc.omniflexfitness.com` from the workstation |
+| Custom domain | Live via the tunnel; **not** on Firebase Hosting |
 
 Test status on the current commit:
 
 ```
-pytest tests/ -v          62 passed, 1 skipped   (locally, no Tesseract)
+pytest tests/ -q          170 passed, 3 skipped  (Python 3.12, no Tesseract)
+                          skips: 2 x Tesseract absent, 1 x FBC_TEST_PDF unset
 test_regression.py        OK  (FBC_TEST_PDF = the real Sculpted permit set)
-pytest inside the image   63 passed              (Python 3.12, with Tesseract)
+pytest inside the image   with Tesseract present, the two OCR skips run
 ng build                  clean, 0 template type errors
 ng test --watch=false     8 passed (Vitest)
 ```
@@ -111,10 +121,11 @@ Nothing else is machine-specific. There is no state on the laptop worth moving:
 no deployed service, no cloud credentials in the repo, and job records live in
 `.devdata`, which is throwaway.
 
-### Sharing it over a public URL
+### Sharing it over a throwaway URL
 
 `scripts/share.ps1` runs the whole app as one container on one port, with the
-API serving the client so there is a single origin and no CORS. Then:
+API serving the client so there is a single origin and no CORS. For an unlisted
+URL that needs no DNS at all:
 
 ```bash
 tailscale funnel 8060
@@ -124,15 +135,191 @@ Funnel is enabled once per tailnet; the CLI prints the approval link if it is
 not. Each machine gets its own hostname, so the desktop's URL differs from the
 laptop's, and only one machine serves a given hostname.
 
-**That mode has authentication switched off.** Anyone with the URL can upload a
-set and spend your CPU. What limits the damage is that the per-user rate limits
-collapse to a global cap when every request shares one identity — 3 concurrent
-and 10 reviews an hour — plus the 120 MB and 300-page upload caps. Fine for a
-short unlisted test; not something to leave running.
-
 ```bash
 tailscale funnel reset; docker rm -f fbc-test
 ```
+
+For the real hostname rather than a throwaway one, see **0c** below. Both modes
+run the same container and both have authentication off — see **Exposure**.
+
+## 0c. Publishing it at `fbc.omniflexfitness.com` — Cloudflare Tunnel
+
+This is the route that serves the domain today. It needs no Google Cloud
+billing account, no Cloud Run service and no Firebase Hosting site: the
+hostname points into a tunnel that ends at the container on the workstation.
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\share.ps1     # the app
+powershell -ExecutionPolicy Bypass -File scripts\tunnel.ps1    # the hostname
+```
+
+or, from any POSIX shell with the app already running:
+
+```bash
+bash scripts/tunnel.sh
+```
+
+`tunnel.sh` is idempotent in the same way `provision.sh` is — every step checks
+for what it creates and skips it — so a failure halfway through is fixed by
+running it again. Overridable settings: `FBC_DOMAIN`
+(default `fbc.omniflexfitness.com`), `FBC_TUNNEL` (`fbc-review`), `FBC_PORT`
+(`8060`).
+
+It never deletes or overwrites a DNS record. `cloudflared` has an
+`--overwrite-dns` flag, but it is not in the documentation this was written
+against and it destroys a record in a live zone, so the script does not use it.
+If Cloudflare reports the hostname is already taken, the script says so and
+carries on — the usual cause is a previous run of this same script — and the
+record is checked or corrected by hand in **DNS > Records**.
+
+### What it sets up
+
+| Step | What happens |
+| --- | --- |
+| Preflight | Refuses to continue unless `cloudflared` is installed **and** the app answers on `127.0.0.1:8060/healthz`. Publishing a hostname that fronts nothing is the slow way to find out the app is down. |
+| `cloudflared tunnel login` | Browser, once per machine. Writes `~/.cloudflared/cert.pem`. Pick the `omniflexfitness.com` zone. |
+| `cloudflared tunnel create fbc-review` | Registers a named tunnel and writes its credentials JSON to `~/.cloudflared/<UUID>.json`. |
+| Config | Written to `~/.cloudflared/fbc-review.yml` — **not** `config.yml`. `cloudflared` reads `config.yml` by default and clobbering it would silently break any other tunnel on the machine. |
+| `cloudflared tunnel route dns` | Creates the DNS record below, in the Cloudflare zone, over the API, authorised by `cert.pem`. No record is typed by hand and no API token is stored in the repo. |
+| `cloudflared tunnel run` | Foreground. The hostname is live while it runs. |
+
+### The DNS record
+
+| Type | Name | Value | Proxy | TTL |
+| --- | --- | --- | --- | --- |
+| CNAME | `fbc` | `<TUNNEL-UUID>.cfargotunnel.com` | **Proxied (orange)** | Auto |
+
+The UUID is printed by the script and by `cloudflared tunnel list`.
+
+**The proxy must stay on.** `cfargotunnel.com` does not resolve for anyone but
+Cloudflare's own edge, so switching the record to DNS-only leaves a hostname
+that resolves to nothing. This is the opposite of the usual advice for an
+origin behind Cloudflare, and it is the mistake to expect here.
+
+TLS is Cloudflare's universal certificate, which already covers a single-label
+subdomain of `omniflexfitness.com`. Nothing is issued, installed or renewed on
+the workstation, and no port is opened on the router — the tunnel is an
+outbound connection, so the machine's IP address is never published.
+
+### The 100 MB ceiling — why the upload limit moved
+
+Cloudflare rejects any proxied request body over **100 MB** on the Free and Pro
+plans, with its own 413, at the edge, before the request reaches the tunnel.
+The app's own limit defaulted to 120 MB, so a set between 100 and 120 MB would
+have been refused by Cloudflare with an opaque error while the app's typed,
+explanatory error never ran.
+
+So `share.ps1` now passes `FBC_MAX_UPLOAD_MB=95`. The app refuses the file
+first, with its real message, and the client shows the right number because
+`/api/config` feeds the browser-side check. Raising it past 95 only makes sense
+off the Cloudflare path.
+
+Two related limits that do **not** bind, worth recording so nobody re-derives
+them:
+
+- **Cloudflare's 100-second origin timeout (error 524)** never triggers, because
+  the async job model means no request ever waits for a review. `POST
+  /api/review` returns `202` immediately and the client polls. This is the
+  second time that design has paid for itself — Firebase Hosting's rewrite
+  timeout was the first.
+- **Response size** is not capped by Cloudflare, so the 16–19 MB marked-up PDF
+  streams back through the tunnel without special handling. In this mode it is
+  served by the app from `.devdata` over the dev-only `/_dev/blob/...` route,
+  not from Cloud Storage — there are no signed URLs in play, and no CORS
+  configuration to get wrong, because everything is one origin.
+
+### Exposure
+
+**Authentication is off in this mode, deliberately.** `share.ps1` sets
+`FBC_DEV_UNSAFE_AUTH=1`, and the tunnel makes the result reachable by anyone who
+finds `fbc.omniflexfitness.com`. That was chosen knowingly on 2026-08-24 over
+putting Cloudflare Access in front of it; recorded here so it reads as a
+decision rather than an oversight.
+
+What limits the damage:
+
+- the 95 MB and 300-page upload caps, enforced while streaming
+- the rate limits, which with one shared identity become a **global** 3
+  concurrent and 10 reviews an hour rather than per-person
+- no Cloud Storage bucket and no Firestore in this mode — artefacts are
+  files under `.devdata` on the workstation
+- the engine makes zero LLM calls, so an abusive upload costs CPU, not tokens
+
+`tunnel.sh` prints a warning naming this every run, read from `/healthz`'s
+`auth_required`, so it cannot be forgotten quietly.
+
+If it should be closed later, the cheapest fix is a Cloudflare Access policy on
+the hostname — Zero Trust, allowlist by email, free to 50 users, enforced at the
+edge with no change to the app. The alternative is decoupling
+`FBC_DEV_UNSAFE_AUTH` so real Firebase sign-in can run against the filesystem
+backend; Firebase Authentication itself is free-tier and needs no open billing
+account. Neither is done.
+
+### Persistence
+
+`tunnel.sh` runs in the foreground and the hostname stops resolving to anything
+useful when it exits — Cloudflare then returns error 1033. `share.ps1
+-Persistent` already keeps the container across reboots; to match that for the
+tunnel, install `cloudflared` as a Windows service:
+
+```bat
+mkdir C:\Cloudflared\bin
+:: copy cloudflared.exe there, then, as administrator:
+cd C:\Cloudflared\bin
+cloudflared.exe service install
+mkdir C:\Windows\System32\config\systemprofile\.cloudflared
+copy %USERPROFILE%\.cloudflared\cert.pem C:\Windows\System32\config\systemprofile\.cloudflared\
+copy %USERPROFILE%\.cloudflared\<TUNNEL-UUID>.json C:\Windows\System32\config\systemprofile\.cloudflared\
+copy %USERPROFILE%\.cloudflared\fbc-review.yml C:\Windows\System32\config\systemprofile\.cloudflared\config.yml
+```
+
+The service reads `config.yml` from the system profile, which is why the file is
+copied under that name rather than the per-tunnel one. Then point the service at
+it — in `regedit`, under
+`HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Cloudflared`, set
+`ImagePath` to:
+
+```
+C:\Cloudflared\bin\cloudflared.exe --config=C:\Windows\System32\config\systemprofile\.cloudflared\config.yml tunnel run
+```
+
+Then `sc start cloudflared`. Only one `cloudflared` service may run per machine.
+Verify against the current
+[Windows service page](https://developers.cloudflare.com/tunnel/advanced/local-management/as-a-service/windows/)
+before running it — these steps were taken from that page and it has changed
+before.
+
+Note that the credentials JSON and `cert.pem` are account credentials. They live
+in `~/.cloudflared` and must never be copied into the repository; `.gitignore`
+carries a `.cloudflared/` entry as a backstop.
+
+### Teardown
+
+```bash
+docker rm -f fbc-test              # the app
+# Ctrl-C the tunnel window, then, to give up the hostname entirely:
+# delete the CNAME for fbc.omniflexfitness.com in the Cloudflare dashboard
+cloudflared tunnel delete fbc-review
+```
+
+Deleting the tunnel without deleting the CNAME leaves the record pointing at a
+UUID that no longer exists, which is error 1033 forever rather than a clean
+NXDOMAIN. Delete the record first.
+
+### When billing opens
+
+This route and the Google Cloud route are not exclusive, but they cannot both
+hold the hostname. To move to Cloud Run and Firebase Hosting later: run
+`scripts/provision.sh`, confirm the `*.web.app` URL end to end, then delete the
+tunnel's CNAME and add the custom domain in the Firebase console, which prints
+its own records (section 4). Cloudflare stays the DNS provider either way — the
+records it holds are what changes. The Firebase records must be **DNS-only
+(grey cloud)**: Firebase issues and serves its own certificate, and proxying the
+record puts Cloudflare's certificate in front of a host that is not expecting
+it. That is the mirror image of the tunnel's requirement above, and mixing the
+two up is the single easiest way to break either.
+
+---
 
 ## 1. Prerequisites
 
@@ -144,6 +331,7 @@ tailscale funnel reset; docker rm -f fbc-test
 | gcloud | 580.0.0 | |
 | firebase-tools | 15.3.1 | **Credentials were expired.** Run `firebase login --reauth` before Phase 5. |
 | Docker | 29.6.2 | `buildx` for `linux/amd64` |
+| cloudflared | any current | Only for section 0c. `winget install --id Cloudflare.cloudflared`, or `brew install cloudflared`. |
 
 **Before anything else**, switch gcloud off the service account it was left on:
 
@@ -386,15 +574,38 @@ and the reason here if you take it.
 
 ### Custom domain
 
-Add `fbc.omniflexfitness.com` in the Firebase Hosting console. It will print
-the exact records. **They go into the registrar by hand — this runbook does not
-touch DNS and no registrar credentials should be shared.**
+**The hostname is currently held by the Cloudflare Tunnel (§0c).** Its CNAME
+must be deleted before Firebase can take the name — two records cannot hold it,
+and Firebase's verification fails against a record pointing at
+`cfargotunnel.com`.
+
+`omniflexfitness.com` is on **Cloudflare**, so the records go into the
+Cloudflare dashboard rather than a registrar. Add `fbc.omniflexfitness.com` in
+the Firebase Hosting console; it prints the exact records to enter.
+
+**They must be DNS-only — grey cloud, proxy off.** Firebase issues and serves
+its own certificate for the hostname, and a proxied record puts Cloudflare's
+certificate in front of an origin that is not expecting it; it also breaks the
+ACME challenge Firebase uses to issue in the first place. This is the exact
+opposite of the tunnel's requirement in §0c, where the record *must* stay
+proxied. Getting these the wrong way round breaks whichever route you are on,
+and the symptom — a hostname that will not serve — looks the same either way.
+
+Two more Cloudflare-specific things to check in the zone before waiting on
+propagation:
+
+- **CAA records.** If the zone has any, they must permit Google's CA
+  (`pki.goog`) or Firebase's certificate will never issue. No CAA records at all
+  is fine; a restrictive set is the failure that looks like slow propagation.
+- **Universal SSL** covers `*.omniflexfitness.com` for Cloudflare-proxied
+  traffic only, and is irrelevant to a grey-clouded Firebase record. Do not
+  read a valid certificate on another subdomain as evidence this one will work.
 
 Record what was actually entered:
 
-| Type | Host | Value | TTL |
-| --- | --- | --- | --- |
-| _(fill in from the console)_ | | | |
+| Type | Host | Value | Proxy | TTL |
+| --- | --- | --- | --- | --- |
+| _(fill in from the console)_ | | | DNS only | |
 
 Then:
 
@@ -489,7 +700,7 @@ All are read once at startup by `webapp/config.py`.
 | `FBC_PROJECT_ID` | `GOOGLE_CLOUD_PROJECT` | GCP project |
 | `FBC_ALLOWED_EMAILS` | empty | Comma-separated allowlist. **Empty means nobody gets in.** |
 | `FBC_SIGNER_SA` | ambient | Service account used for V4 signing |
-| `FBC_MAX_UPLOAD_MB` | 120 | Hard limit, enforced while streaming |
+| `FBC_MAX_UPLOAD_MB` | 120 | Hard limit, enforced while streaming. `share.ps1` passes **95** behind the tunnel — Cloudflare rejects a body over 100 MB at the edge (§0c). |
 | `FBC_MAX_PAGES` | 300 | Page cap |
 | `FBC_RETAIN_DAYS` | 30 | Reported to the client; enforced by bucket lifecycle |
 | `FBC_SIGNED_URL_TTL` | 3600 | Signed URL lifetime, seconds |
