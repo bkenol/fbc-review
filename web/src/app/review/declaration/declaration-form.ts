@@ -11,10 +11,10 @@
  * written out as a static interface. Everything is converted to its declared
  * type once, on the way out, in `value()`.
  */
-import { Component, computed, input, signal } from '@angular/core';
+import { Component, computed, effect, input, signal } from '@angular/core';
 import { FormControl, FormRecord, ReactiveFormsModule } from '@angular/forms';
 
-import { DeclarationField, DeclarationGroup, ProjectDeclaration } from '../../api';
+import { DeclarationField, DeclarationGroup, PrefilledField, ProjectDeclaration } from '../../api';
 
 export type Vocabulary = 'pro' | 'simple';
 
@@ -49,7 +49,48 @@ export class DeclarationForm {
   /** Every rule any field can unlock. Served, so the count is never invented. */
   readonly unlockable = input<string[]>([]);
 
+  /**
+   * What the drawings state, from `POST /api/prefill`. Offered, never imposed:
+   * a suggested answer is filled in but stays marked until the applicant looks
+   * at it, because the declaration is an assertion by a person and the
+   * reconciliation is only worth running if the two sources are independent.
+   * A silently auto-accepted value would make every field agree with itself.
+   */
+  readonly suggestions = input<PrefilledField[]>([]);
+
   protected readonly mode = signal<Vocabulary>(rememberedMode());
+
+  /** Field keys that hold a suggestion the applicant has not yet confirmed. */
+  private readonly unconfirmed = signal<ReadonlySet<string>>(new Set());
+
+  /** Where each suggestion was read, for the note under the field. */
+  private readonly sources = signal<ReadonlyMap<string, PrefilledField>>(new Map());
+
+  constructor() {
+    // Applying a suggestion writes into controls, so it belongs in an effect
+    // rather than a computed. It runs when a new set is read, and only fills
+    // blanks: an answer already typed is the applicant's and is never
+    // overwritten by the drawings.
+    effect(() => {
+      const found = this.suggestions();
+      const record = this.form();
+      if (!found.length) return;
+
+      const pending = new Set<string>();
+      const where = new Map<string, PrefilledField>();
+      for (const suggestion of found) {
+        const control = record.controls[suggestion.key];
+        if (!control) continue;
+        where.set(suggestion.key, suggestion);
+        if ((control.value ?? '').trim()) continue;
+        control.setValue(suggestion.value);
+        pending.add(suggestion.key);
+      }
+      this.sources.set(where);
+      this.unconfirmed.set(pending);
+      this.onEdit();
+    });
+  }
 
   /**
    * One string control per served field, built the first time the schema
@@ -79,6 +120,39 @@ export class DeclarationForm {
   protected onEdit(): void {
     this.edits.update((n) => n + 1);
   }
+
+  /** Typing over a suggestion is the strongest possible confirmation. */
+  protected onFieldEdit(key: string): void {
+    this.confirm(key);
+    this.onEdit();
+  }
+
+  protected suggestionFor(key: string): PrefilledField | undefined {
+    return this.sources().get(key);
+  }
+
+  protected isUnconfirmed(key: string): boolean {
+    return this.unconfirmed().has(key);
+  }
+
+  protected confirm(key: string): void {
+    if (!this.unconfirmed().has(key)) return;
+    const next = new Set(this.unconfirmed());
+    next.delete(key);
+    this.unconfirmed.set(next);
+  }
+
+  protected confirmAll(): void {
+    this.unconfirmed.set(new Set());
+  }
+
+  /** How many read-off answers the applicant has not looked at yet. */
+  readonly pendingCount = computed(() => this.unconfirmed().size);
+
+  /** How many answers came off the drawings at all, confirmed or not. */
+  protected readonly suggestedCount = computed(
+    () => this.suggestions().filter((s) => this.form().controls[s.key]).length,
+  );
 
   protected readonly answered = computed(
     () => this.fields().filter((f) => this.isAnswered(f.key)).length,
@@ -131,6 +205,7 @@ export class DeclarationForm {
 
   protected clear(): void {
     this.form().reset();
+    this.unconfirmed.set(new Set());
     this.onEdit();
   }
 

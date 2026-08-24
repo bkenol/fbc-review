@@ -28,7 +28,9 @@ import {
   ConfigResponse,
   Finding,
   FindingsDocument,
+  HistoryEntry,
   Job,
+  PrefillResponse,
   ProjectDeclaration,
   ReviewOptions,
   ReviewsApi,
@@ -90,6 +92,9 @@ export class ReviewService {
   private readonly _failure = signal<ApiFailure | null>(null);
   private readonly _submitting = signal(false);
   private readonly _lostContact = signal(false);
+  private readonly _prefill = signal<PrefillResponse | null>(null);
+  private readonly _reading = signal(false);
+  private readonly _history = signal<HistoryEntry[] | null>(null);
 
   readonly config = this._config.asReadonly();
   readonly job = this._job.asReadonly();
@@ -98,6 +103,12 @@ export class ReviewService {
   readonly submitting = this._submitting.asReadonly();
   /** True when polling is failing. The job itself is probably fine. */
   readonly lostContact = this._lostContact.asReadonly();
+  /** What the chosen set states about itself, for the declaration to offer. */
+  readonly prefill = this._prefill.asReadonly();
+  /** True while the set is being read for those answers. */
+  readonly reading = this._reading.asReadonly();
+  /** Past reviews, newest first. Null until asked for. */
+  readonly history = this._history.asReadonly();
 
   readonly running = computed(() => {
     const state = this._job()?.state;
@@ -130,11 +141,90 @@ export class ReviewService {
       });
   }
 
+  // ── read the set before asking about it ─────────────────────────────────
+  /**
+   * Parse the chosen set and pull out what it already states, so the
+   * questionnaire opens with those answers filled in rather than blank.
+   *
+   * Failure here is deliberately quiet. Prefill is a convenience: if the set
+   * cannot be read, or the request fails, the questionnaire simply opens empty,
+   * which is exactly how it worked before. Surfacing an error for a step nobody
+   * asked for would be noise — the review's own upload will report anything
+   * that genuinely matters about the file.
+   */
+  readSet(file: File): void {
+    this._prefill.set(null);
+    this._reading.set(true);
+    this.reviews
+      .prefillDeclaration(file)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (found) => {
+          this._prefill.set(found);
+          this._reading.set(false);
+        },
+        error: () => {
+          this._prefill.set(null);
+          this._reading.set(false);
+        },
+      });
+  }
+
+  /**
+   * Re-open a past review by id.
+   *
+   * Nothing is re-run and nothing is re-uploaded: the job record is still in
+   * Firestore and its findings.json is still in Cloud Storage, so this is the
+   * same fetch the live review does when it finishes. A review that never
+   * finished is shown in whatever state it ended in, error and all.
+   */
+  open(id: string): void {
+    this.stop();
+    this._failure.set(null);
+    this._findings.set(null);
+    this._lostContact.set(false);
+    this._prefill.set(null);
+    this.reviews.getJob(id).subscribe({
+      next: (job) => {
+        this._job.set(job);
+        if (job.state === 'done') this.loadFindings(job);
+        else if (job.state !== 'error') this.follow(id);
+      },
+      error: (error) => this.handle(error),
+    });
+  }
+
+  forgetPrefill(): void {
+    this._prefill.set(null);
+    this._reading.set(false);
+  }
+
+  // ── history ─────────────────────────────────────────────────────────────
+  /**
+   * Past reviews. The findings register is the deliverable, and re-running a
+   * 24-sheet set to look at one again is thirty seconds and a second copy of
+   * the same PDF. Nothing new is stored for this — the marked-up set and
+   * findings.json are already in Cloud Storage.
+   */
+  loadHistory(): void {
+    this.reviews
+      .listJobs()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (page) => this._history.set(page.entries),
+        // An unreachable history must never take the upload form down with it.
+        error: () => this._history.set([]),
+      });
+  }
+
   // ── submit ──────────────────────────────────────────────────────────────
   /**
-   * One continuous submit: the questionnaire and the file go up together. The
-   * declaration is deliberately not a second phase — an extract-then-confirm
-   * job model would make the user wait to be asked what they already knew.
+   * One continuous submit: the questionnaire and the file go up together.
+   *
+   * The set is read first, by `readSet`, purely to fill the questionnaire in —
+   * that is a separate, discardable request and not a phase of the job. The
+   * review itself is still one call, and what the applicant submits is what
+   * gets declared.
    */
   submit(file: File, options: ReviewOptions, declaration: ProjectDeclaration = {}): void {
     this._failure.set(null);

@@ -19,33 +19,92 @@
     </div>
   </section>
 } @else {
+  <!-- ── review history ───────────────────────────────────────────────────
+       The register is the deliverable, and re-running a 24-sheet set to look at
+       one again is thirty seconds and a second copy of the same PDF. Nothing new
+       is stored for this: the findings and the marked-up set are already in
+       Cloud Storage, and this lists what is there. -->
+  @if (history(); as past) {
+    @if (past.length) {
+      <section class="step history">
+        <div class="step-head">
+          <span class="mark"><span class="tick" aria-hidden="true"></span></span>
+          <h2>Previous reviews</h2>
+          <button
+            type="button"
+            class="inline"
+            [attr.aria-expanded]="showHistory()"
+            (click)="toggleHistory()"
+          >
+            {{ showHistory() ? 'Hide' : 'Show all ' + past.length }}
+          </button>
+        </div>
+
+        @if (showHistory()) {
+          <ul class="pastlist">
+            @for (entry of past; track entry.id) {
+              <li class="{{ worstOf(entry) }}">
+                <button
+                  type="button"
+                  class="pastrow"
+                  (click)="openPast(entry.id)"
+                  [disabled]="entry.state !== 'done'"
+                >
+                  <span class="when">{{ entry.created_at | date: 'd MMM y · HH:mm' }}</span>
+                  <span class="what">
+                    <b class="name">{{ entry.project_name || entry.filename }}</b>
+                    <span class="sub">
+                      {{ entry.filename }} · {{ entry.pages }} sheet{{
+                        entry.pages === 1 ? '' : 's'
+                      }}
+                      @if (entry.declared_fields) {
+                        · {{ entry.declared_fields }} declared
+                      }
+                    </span>
+                  </span>
+
+                  @if (entry.state === 'done') {
+                    <span class="counts" aria-hidden="true">
+                      @for (severity of tallyOrder; track severity) {
+                        @if (countOf(entry, severity) > 0) {
+                          <span class="c {{ severity }}">
+                            <b>{{ countOf(entry, severity) }}</b>{{ severity.charAt(0) }}
+                          </span>
+                        }
+                      }
+                    </span>
+                    <span class="open">{{ entry.open_findings }} open</span>
+                  } @else if (entry.state === 'error') {
+                    <span class="counts state-note MEASURED">did not finish</span>
+                    <span class="open"></span>
+                  } @else {
+                    <span class="counts state-note">still running</span>
+                    <span class="open"></span>
+                  }
+                </button>
+              </li>
+            }
+          </ul>
+          <p class="hint">
+            Opening one fetches its findings back out of storage. Nothing is re-run, and the
+            marked-up set is still downloadable from inside it.
+          </p>
+        }
+      </section>
+    }
+  }
+
   <!-- ── 01 · the set ───────────────────────────────────────────────────── -->
   @if (!currentJob) {
     <form (ngSubmit)="submit()" [formGroup]="form" novalidate>
-      <!-- ── 01 · the project declaration ───────────────────────────────────
-           Before the file, not after it. The questionnaire is a second source
-           of truth alongside the drawings, so it is asked once, up front, and
-           submitted with the set in one go. -->
+      <!-- ── 01 · the permit set ────────────────────────────────────────────
+           The file comes first so the questionnaire can be opened with the
+           answers already in it. Reading the set is a separate, discardable
+           request — nothing is queued, nothing is stored, and the review
+           itself is still one call. -->
       <section class="step">
         <div class="step-head">
           <span class="mark">01</span>
-          <h2>Project declaration</h2>
-        </div>
-
-        @if (cfg; as loaded) {
-          <app-declaration-form
-            [fields]="loaded.declaration_fields"
-            [groups]="loaded.declaration_groups"
-            [unlockable]="loaded.declaration_unlockable"
-          />
-        } @else {
-          <p class="hint" aria-live="polite">Loading the questions…</p>
-        }
-      </section>
-
-      <section class="step">
-        <div class="step-head">
-          <span class="mark">02</span>
           <h2>The permit set</h2>
         </div>
 
@@ -77,6 +136,35 @@
 
         @if (clientError(); as message) {
           <div class="note bad" role="alert" style="margin-top: 16px">{{ message }}</div>
+        }
+
+        @if (readingSet()) {
+          <p class="hint reading" aria-live="polite">
+            <span class="scan" aria-hidden="true"></span>
+            Reading the set for what it already states…
+          </p>
+        }
+      </section>
+
+      <!-- ── 02 · the project declaration ───────────────────────────────────
+           A second source of truth alongside the drawings, asked once and
+           submitted with the set in one go. What the set states is filled in
+           and marked; what the applicant submits is what gets declared. -->
+      <section class="step">
+        <div class="step-head">
+          <span class="mark">02</span>
+          <h2>Project declaration</h2>
+        </div>
+
+        @if (cfg; as loaded) {
+          <app-declaration-form
+            [fields]="loaded.declaration_fields"
+            [groups]="loaded.declaration_groups"
+            [unlockable]="loaded.declaration_unlockable"
+            [suggestions]="suggestions()"
+          />
+        } @else {
+          <p class="hint" aria-live="polite">Loading the questions…</p>
         }
       </section>
 
@@ -193,30 +281,75 @@
   }
 
   <!-- ── 04 · running ─────────────────────────────────────────────────────
-       A real 24-sheet set takes about fifteen seconds, so this state is brief
-       and must not be theatrical. -->
+       Fifteen to forty seconds. Long enough to wonder whether anything is
+       happening, so the wait is drawn as a surveyor's traverse: a chain of
+       stations with the instrument standing at the one being worked, and each
+       station saying what is being done there. Live, not theatrical — every
+       number on this screen is real. -->
   @if (currentJob && running()) {
     <section class="step">
       <div class="step-head">
         <span class="mark">04</span>
         <h2>Reviewing</h2>
+        <span class="pct" aria-hidden="true">{{ progressPercent() }}%</span>
       </div>
 
-      <progress
-        [max]="stages().length"
-        [value]="stageIndex() + 1"
-        [attr.aria-label]="'Review progress: ' + currentJob.stage_label"
-      ></progress>
+      <!-- The traverse: one leg per stage, drawn on the same tick-and-slash
+           geometry as the severity tally. Walked, in hand, or not yet reached —
+           no partial fill inside a leg, because the server reports stations and
+           not fractions. -->
+      <div
+        class="traverse"
+        role="progressbar"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        [attr.aria-valuenow]="progressPercent()"
+        [attr.aria-valuetext]="currentJob.stage_label"
+      >
+        @for (stage of stages(); track stage; let i = $index) {
+          <span
+            class="leg"
+            aria-hidden="true"
+            [class.on]="i === stageIndex()"
+            [class.ok]="i < stageIndex()"
+          >
+            <span class="slash"></span>
+            @if (i === stageIndex()) {
+              <span class="sweep"></span>
+            }
+          </span>
+        }
+      </div>
 
-      <ul class="stages" aria-live="polite">
+      <ol class="stages" aria-live="polite">
         @for (stage of stages(); track stage; let i = $index) {
           <li [class.on]="i === stageIndex()" [class.ok]="i < stageIndex()">
-            <span class="dot" aria-hidden="true"></span>{{ stage }}
+            <span class="no" aria-hidden="true">{{ i + 1 < 10 ? '0' : '' }}{{ i + 1 }}</span>
+            <span class="dot" aria-hidden="true"></span>
+            <span class="what">
+              <b class="name">{{ stage }}</b>
+              @if (stageDetail(stage); as detail) {
+                <span class="detail">{{ detail }}</span>
+              }
+            </span>
+            <span class="state" aria-hidden="true">
+              @if (i < stageIndex()) {
+                done
+              } @else if (i === stageIndex()) {
+                <span class="working">working</span>
+              } @else {
+                queued
+              }
+            </span>
           </li>
         }
-      </ul>
+      </ol>
 
-      <p class="figures">{{ currentJob.filename }} · {{ currentJob.elapsed_seconds }} s elapsed</p>
+      <p class="figures">
+        {{ currentJob.filename }} · {{ currentJob.pages }} sheets ·
+        {{ currentJob.elapsed_seconds }} s elapsed · station {{ stageIndex() + 1 }} of
+        {{ stages().length }} · zero model calls
+      </p>
 
       @if (lostContact()) {
         <!-- The review runs on the server whether or not we can see it, so this

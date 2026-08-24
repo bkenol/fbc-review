@@ -5,17 +5,40 @@
  * GET /api/config rather than hard-coded, so adding an occupancy group to
  * fbcreview/options.py needs no change here.
  */
-import { DecimalPipe } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, OnDestroy, computed, inject, signal, viewChild } from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 
-import { Finding, ReviewOptions, ReviewOptionsMinSeverityEnum } from '../api';
+import { Finding, HistoryEntry, ReviewOptions, ReviewOptionsMinSeverityEnum } from '../api';
 import { AuthService } from '../core/auth';
 import { DeclarationForm } from './declaration/declaration-form';
 import { ReviewService } from './review-service';
 
 /** Tally order. VERIFIED and MEASURED last: they are coverage, not problems. */
 const TALLY = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'MEASURED', 'VERIFIED'] as const;
+
+/**
+ * What each stage is actually doing, keyed by the stage name the server sends.
+ *
+ * The progress list used to be five words and a dot. Fifteen to forty seconds
+ * is long enough to wonder whether anything is happening, and this tool's whole
+ * claim is that it reads the drawing rather than guessing at it — so the wait
+ * is the one moment where saying what it is doing is worth the space.
+ *
+ * Keyed by name rather than by index because the stage list is per job: a set
+ * with scanned sheets has a sixth stage the others do not.
+ */
+const STAGE_DETAIL: Record<string, string> = {
+  'Reading the PDF': 'Opening every sheet, indexing sheet numbers and reading the CAD layers.',
+  'Rebuilding scanned sheets':
+    'OCR over the raster pages, and tracing their linework back into vectors.',
+  'Extracting schedules and code data':
+    'Pulling the door, RTU and panel schedules and the code-analysis blocks off the sheets.',
+  'Running rules':
+    'Checking every stated value against the section it cites, and redoing the arithmetic.',
+  'Rendering the markup': 'Placing a marker at each finding, on the sheet it belongs to.',
+  Delivering: 'Writing the marked-up set and findings.json, and signing the download links.',
+};
 
 /**
  * What each severity actually means for the permit.
@@ -63,7 +86,7 @@ interface OptionsForm {
 
 @Component({
   selector: 'app-review',
-  imports: [ReactiveFormsModule, DecimalPipe, DeclarationForm],
+  imports: [ReactiveFormsModule, DatePipe, DecimalPipe, DeclarationForm],
   templateUrl: './review.html',
 })
 export class Review implements OnDestroy {
@@ -81,6 +104,12 @@ export class Review implements OnDestroy {
   protected readonly declarationForm = viewChild(DeclarationForm);
 
   protected readonly file = signal<File | null>(null);
+
+  /** What the chosen set states about itself, for the questionnaire to offer. */
+  protected readonly suggestions = computed(() => this.reviews.prefill()?.fields ?? []);
+  protected readonly readingSet = this.reviews.reading;
+  protected readonly history = this.reviews.history;
+  protected readonly showHistory = signal(false);
   protected readonly dragging = signal(false);
   protected readonly clientError = signal<string | null>(null);
   protected readonly tallyOrder = TALLY;
@@ -97,6 +126,17 @@ export class Review implements OnDestroy {
   /** Shown while the job is queued or running, and after it finishes. */
   protected readonly stageIndex = computed(() => this.job()?.stage ?? 0);
   protected readonly stages = computed(() => this.job()?.stages ?? []);
+
+  /** How far along the traverse is, 0-100. Stations, not guessed seconds. */
+  protected readonly progressPercent = computed(() => {
+    const total = this.stages().length;
+    if (total <= 1) return 0;
+    return Math.round((this.stageIndex() / (total - 1)) * 100);
+  });
+
+  protected stageDetail(stage: string): string {
+    return STAGE_DETAIL[stage] ?? '';
+  }
 
   private readonly counts = computed<Record<string, number>>(
     () => this.job()?.summary?.counts ?? {},
@@ -175,6 +215,34 @@ export class Review implements OnDestroy {
     // A reload must not strand a review that is still running, or one that has
     // already finished, on the server.
     this.reviews.resumeLastJob();
+    // The history is a list of ids and counts, not the reviews themselves. It
+    // is cheap enough to fetch up front so the button can say how many there
+    // are rather than opening onto a spinner.
+    this.reviews.loadHistory();
+  }
+
+  // ── history ─────────────────────────────────────────────────────────────
+  protected toggleHistory(): void {
+    this.showHistory.update((open) => !open);
+  }
+
+  /** Re-open a finished review. Its findings are still in Cloud Storage. */
+  protected openPast(id: string): void {
+    this.showHistory.set(false);
+    this.file.set(null);
+    this.clientError.set(null);
+    this.reviews.open(id);
+  }
+
+  protected countOf(entry: HistoryEntry, severity: string): number {
+    return entry.counts?.[severity] ?? 0;
+  }
+
+  protected worstOf(entry: HistoryEntry): string {
+    for (const severity of TALLY) {
+      if (this.countOf(entry, severity) > 0) return severity;
+    }
+    return 'VERIFIED';
   }
 
   private applyDefaults(defaults: ReviewOptions): void {
@@ -239,6 +307,10 @@ export class Review implements OnDestroy {
     if (!this.form.controls.project_name.value) {
       this.form.controls.project_name.setValue(file.name.replace(/\.pdf$/i, ''));
     }
+    // The set comes first now precisely so this can happen: read what it
+    // already states, and open the questionnaire with those answers in it
+    // rather than asking the designer to transcribe their own drawing.
+    this.reviews.readSet(file);
   }
 
   protected fileLabel(): string {
@@ -268,8 +340,11 @@ export class Review implements OnDestroy {
 
   protected startOver(): void {
     this.reviews.reset();
+    this.reviews.forgetPrefill();
     this.file.set(null);
     this.clientError.set(null);
+    // A finished review is history the moment it is left behind.
+    this.reviews.loadHistory();
   }
 
   protected reconnect(): void {
