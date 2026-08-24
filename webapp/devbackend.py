@@ -110,6 +110,11 @@ class LocalJobStore:
                 continue
         return out
 
+    def list_for(self, uid: str, limit: int = 50) -> List[Dict[str, Any]]:
+        mine = [r for r in self._all() if r.get("uid") == uid]
+        mine.sort(key=lambda r: r.get("created_at") or dt.datetime.min, reverse=True)
+        return mine[:limit]
+
     def active_count(self, uid: str) -> int:
         return sum(1 for r in self._all() if r.get("uid") == uid and r.get("state") in ACTIVE)
 

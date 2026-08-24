@@ -52,6 +52,21 @@
         "title": "Body_createReview",
         "type": "object"
       },
+      "Body_prefillDeclaration": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "The permit set, as a PDF.",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_prefillDeclaration",
+        "type": "object"
+      },
       "ConfigResponse": {
         "properties": {
           "declaration_fields": {
@@ -683,6 +698,116 @@
         "title": "Health",
         "type": "object"
       },
+      "HistoryEntry": {
+        "description": "One past review, as the history list shows it.\n\nDeliberately not the whole `Job`. A list of thirty rows does not need thirty\nsets of signed download URLs, and minting them costs a round trip each \u2014\nthe client asks for `GET /api/jobs/{id}` when a row is actually opened.",
+        "properties": {
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Findings by severity, from the stored summary. Empty until done.",
+            "title": "Counts",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "declared_fields": {
+            "default": 0,
+            "description": "How many declaration questions were answered.",
+            "title": "Declared Fields",
+            "type": "integer"
+          },
+          "edition": {
+            "default": "",
+            "title": "Edition",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "open_findings": {
+            "default": 0,
+            "title": "Open Findings",
+            "type": "integer"
+          },
+          "pages": {
+            "default": 0,
+            "title": "Pages",
+            "type": "integer"
+          },
+          "project_name": {
+            "default": "",
+            "title": "Project Name",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "error"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "state",
+          "created_at"
+        ],
+        "title": "HistoryEntry",
+        "type": "object"
+      },
+      "HistoryResponse": {
+        "description": "The caller's own reviews, newest first. Never anyone else's.",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "HistoryResponse",
+        "type": "object"
+      },
       "Job": {
         "properties": {
           "bytes": {
@@ -899,6 +1024,91 @@
           "label"
         ],
         "title": "OccupancyGroup",
+        "type": "object"
+      },
+      "PrefillResponse": {
+        "description": "What a set states about itself, read without starting a review.",
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "fields": {
+            "description": "Only fields the drawings actually state. A set whose code data block is a pasted picture yields very few, which is the honest answer for that set and exactly the case the declaration exists to cover.",
+            "items": {
+              "$ref": "#/components/schemas/PrefilledField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceProfile"
+          }
+        },
+        "required": [
+          "filename",
+          "pages",
+          "bytes",
+          "source",
+          "fields"
+        ],
+        "title": "PrefillResponse",
+        "type": "object"
+      },
+      "PrefilledField": {
+        "description": "One declaration answer the drawings already state.\n\nA suggestion, never a decision. The applicant confirms or overrides it, and\nwhat they submit is what gets declared \u2014 the reconciliation is only worth\nrunning if the two sides stay independent, and a silently auto-accepted\nvalue would make every field agree with itself.",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "string"
+          },
+          "key": {
+            "description": "A declaration field key, as `/api/config` publishes it.",
+            "title": "Key",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "source": {
+            "description": "Where on the set it was read, e.g. \"G-0 project data\".",
+            "title": "Source",
+            "type": "string"
+          },
+          "value": {
+            "description": "Rendered as the field's control holds it, never typed.",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value",
+          "source",
+          "confidence"
+        ],
+        "title": "PrefilledField",
         "type": "object"
       },
       "ProjectDeclaration": {
@@ -1605,6 +1815,130 @@
         ]
       }
     },
+    "/api/jobs": {
+      "get": {
+        "description": "A review is worth keeping: the findings register is the deliverable, and re-running a 24-sheet set to look at it again is thirty seconds and a second copy of the same PDF. The marked-up set and findings.json already live in Cloud Storage, so this lists what is there rather than storing anything new. Rows carry no signed URLs \u2014 those are minted per row on `GET /api/jobs/{job_id}`, when a row is actually opened.",
+        "operationId": "listJobs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "The caller's own past reviews, newest first.",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
     "/api/jobs/{job_id}": {
       "get": {
         "operationId": "getJob",
@@ -1844,6 +2178,128 @@
           }
         },
         "summary": "What was declared with a review. For support and for the audit trail.",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/api/prefill": {
+      "post": {
+        "description": "Parses a set and returns the declaration answers the drawings themselves state, so the applicant confirms or corrects them rather than transcribing their own drawing. Starts nothing, stores nothing, and makes no model calls \u2014 it is the same pure-Python parse the review runs, stopped after the facts are built. The suggestions are advisory: what the applicant submits to `POST /api/review` is what gets declared.",
+        "operationId": "prefillDeclaration",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_prefillDeclaration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrefillResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Read what a permit set already states about itself.",
         "tags": [
           "reviews"
         ]

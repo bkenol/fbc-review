@@ -28,6 +28,23 @@
   answer is checked <b>against</b> the drawings, not instead of them.
 </p>
 
+@if (suggestedCount() > 0) {
+  <div class="note warn readoff" role="status">
+    <b>{{ suggestedCount() }} answer{{ suggestedCount() === 1 ? '' : 's' }} read off the set.</b>
+    Each one is marked below with where it came from. Check them — submitting this form asserts
+    them as yours, and the reconciliation is only worth anything if you have actually looked.
+    @if (pendingCount() > 0) {
+      <div class="row">
+        <button type="button" class="inline" (click)="confirmAll()">
+          Confirm all {{ pendingCount() }}
+        </button>
+      </div>
+    } @else {
+      <span class="confirmed"><span class="tick" aria-hidden="true"></span>All confirmed.</span>
+    }
+  </div>
+}
+
 <!-- The one line that makes abstention visible. It is the honest way to ask for
      completion: the tool is saying what it will refuse to guess at. -->
 <p class="tally" aria-live="polite">
@@ -52,7 +69,7 @@
 
         <div class="grid">
           @for (field of inGroup; track field.key) {
-            <div>
+            <div class="q" [class.readoff]="isUnconfirmed(field.key)">
               <label class="f" [attr.for]="'decl-' + field.key">
                 {{ label(field) }}
                 @if (field.unit) {
@@ -66,7 +83,7 @@
                     [id]="'decl-' + field.key"
                     [formControlName]="field.key"
                     [attr.aria-describedby]="'help-' + field.key"
-                    (input)="onEdit()"
+                    (input)="onFieldEdit(field.key)"
                   >
                     <option value="">Not answered</option>
                     @for (choice of field.choices ?? []; track choice) {
@@ -81,7 +98,7 @@
                     [id]="'decl-' + field.key"
                     [formControlName]="field.key"
                     [attr.aria-describedby]="'help-' + field.key"
-                    (input)="onEdit()"
+                    (input)="onFieldEdit(field.key)"
                   >
                     <option value="">Not answered</option>
                     <option value="true">Yes</option>
@@ -97,11 +114,30 @@
                     [attr.step]="field.kind === 'integer' ? '1' : 'any'"
                     [attr.min]="field.kind === 'text' ? null : '0'"
                     [attr.aria-describedby]="'help-' + field.key"
-                    (input)="onEdit()"
+                    (input)="onFieldEdit(field.key)"
                     autocomplete="off"
                     placeholder="From the drawings"
                   />
                 }
+              }
+
+              @if (suggestionFor(field.key); as read) {
+                <!-- An annotation, in the system's sense: where the value was read,
+                     underlined in survey blue. Editing the field confirms it; so
+                     does the button, for a value that is already right. -->
+                <p class="readoff-note">
+                  <span class="xtick" aria-hidden="true"></span>
+                  Read from <span class="annot-name">{{ read.source }}</span>
+                  @if (isUnconfirmed(field.key)) {
+                    <button type="button" class="inline" (click)="confirm(field.key)">
+                      Confirm
+                    </button>
+                  } @else {
+                    <span class="confirmed"
+                      ><span class="tick" aria-hidden="true"></span>confirmed</span
+                    >
+                  }
+                </p>
               }
 
               <p class="hint" [id]="'help-' + field.key">{{ help(field) }}</p>

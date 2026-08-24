@@ -55,6 +55,37 @@
 
   --verified: var(--green-1);
 
+  /* THE SEVERITY RAMP — a sequential scale, warm to cool, and its own thing.
+   *
+   * Meridian has two accents and no ordered scale, because nothing else in the system
+   * needs one. Severity does: six ordered steps where the reader has to tell at a glance
+   * which end of the ladder a row sits on. Treating that as a sequential scale rather
+   * than as six more brand colours is what keeps this from being a free-for-all — the
+   * ramp exists in the severity slot only, and everywhere else on the page still has
+   * exactly the system's red, blue and ink.
+   *
+   * Three rules hold it together:
+   *
+   * 1. CRITICAL is --red-1, the reddest colour the system owns. Nothing is redder, and
+   *    it is the only step that also reverses into a filled stamp.
+   * 2. Hue cools monotonically down the ladder: red -> orange -> ochre -> slate ->
+   *    drafting blue -> survey green. Three of the six steps are system tokens already
+   *    (--red-1, --ink-3/--ink-4, --blue-2/--blue-3); the orange and the ochre are the
+   *    only genuinely new hues, because a red-to-cool ramp cannot be built without them.
+   * 3. The ramp is ISOLUMINANT. Every step lands within a whisker of the same contrast
+   *    against its ground — 5.71-6.77:1 on --paper-1, 5.01-6.28:1 on --ink-1 — so hue
+   *    alone carries the order and no step shouts louder than its rank. Weight is spent
+   *    on the CRITICAL stamp instead, where it means something.
+   *
+   * Every step also clears 4.5:1 against its own chip tint, in both schemes.
+   */
+  --sev-critical: var(--red-1); /* #B3251E  5.79:1 on paper */
+  --sev-high: #a03e1a; /*          5.79:1 */
+  --sev-medium: #825315; /*        5.80:1 */
+  --sev-low: var(--ink-3); /*      6.07:1 */
+  --sev-measured: var(--blue-2); /* 6.77:1 */
+  --sev-verified: var(--verified); /* 5.71:1 */
+
   /* How much of a severity's own colour tints its chip. */
   --sev-tint: 12%;
 }
@@ -97,6 +128,18 @@
        it, which the severity chips now do. Lifted toward the paper step until it clears:
        5.21:1 plain, 4.67:1 on a card, 4.77:1 on its own chip. Still a ramp mix, still no
        new hex. */
+    /* The ramp again, on ink. --red-2 is the system's reverse red but only reaches
+       4.02:1 here, so CRITICAL takes a saturated step past it rather than a washed-out
+       mix — the reddest thing on the sheet has to stay red, not go salmon. Orange and
+       ochre lift with it; slate, blue and green are system steps as in the light scheme.
+       5.01:1 to 6.28:1, and every step clears 4.5:1 on its own chip tint. */
+    --sev-critical: #e55c4c; /*      5.01:1 on ink */
+    --sev-high: #dd7440; /*          5.59:1 */
+    --sev-medium: #c88a2f; /*        5.99:1 */
+    --sev-low: var(--ink-4); /*      5.60:1 */
+    --sev-measured: var(--blue-3); /* 6.18:1 */
+    --sev-verified: var(--verified); /* 6.28:1 */
+
     --accent-dimension: color-mix(in srgb, var(--red-2) 80%, var(--paper-1));
     --annotation: var(--blue-3);
     --verified: var(--green-2);
@@ -440,6 +483,37 @@ a:focus-visible,
   outline-offset: var(--focus-offset);
 }
 
+/* ── the field being typed in ──────────────────────────────────────────────
+ * The focus ring says which control has the keyboard. It does not say much about the
+ * field being worked, and on a form of eighteen questions in a six-column grid that is
+ * the thing worth seeing from across the sheet.
+ *
+ * So the active field takes the primary properly: a drafting-blue border, a wash of the
+ * same at 6 %, and its mono label lifting out of the muted ink. :focus rather than
+ * :focus-visible — this fires for a pointer too, because it is about the field being
+ * worked and not about the keyboard. The ring above is unchanged and still does its own
+ * job; this is colour underneath it, not a replacement for it.
+ *
+ * Colour only, on the system's 120 ms swap. Nothing moves, nothing resizes, and the
+ * layout is identical focused or not — a form that shifts under the cursor is worse than
+ * one that never highlights at all.
+ */
+input[type='text']:focus,
+input[type='email']:focus,
+input[type='number']:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 6%, var(--surface-card));
+  color: var(--text-strong);
+}
+/* The label belongs to the field, so it lights with it. :focus-within on the wrapper,
+   because the label is a sibling of the control rather than an ancestor. */
+.q:focus-within > label.f,
+.grid > div:focus-within > label.f {
+  color: var(--primary);
+}
+
 .check {
   display: flex;
   gap: var(--space-3);
@@ -546,46 +620,187 @@ button.inline:hover:not(:disabled) {
   border-bottom-color: var(--link-hover);
 }
 
-/* ── progress ──────────────────────────────────────────────────────────────
- * A real 24-sheet set takes about fifteen seconds. This state is brief and must not be
- * theatrical: a hairline bar and a list of named stages.
+/* ── progress — the traverse ───────────────────────────────────────────────
+ * Fifteen to forty seconds. Brief, but long enough to wonder whether anything is
+ * happening, and this tool's whole claim is that it reads the drawing rather than
+ * guessing at it. So the wait is drawn as a surveyor's traverse: a hairline chain, a
+ * station tick per stage, the walked span drawn over it, and the instrument standing at
+ * the station in hand.
+ *
+ * Everything moving here is reporting something real. The chain advances only when the
+ * server says the stage changed; the only free-running motion is the sweep, which says
+ * "still working" during the long stages and nothing else. No spinner, no indeterminate
+ * bar pretending to be determinate, no skeleton. The system forbids entrance animations
+ * and this obeys it — nothing animates on arrival, only while work is in progress.
  */
-progress {
-  display: block;
-  width: 100%;
-  height: 3px;
-  border: 0;
-  background: var(--surface-sunk);
-  appearance: none;
-}
-progress::-webkit-progress-bar {
-  background: var(--surface-sunk);
-}
-progress::-webkit-progress-value {
-  background: var(--primary);
-}
-progress::-moz-progress-bar {
-  background: var(--primary);
+.pct {
+  margin-left: auto;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
 }
 
+/* The traverse itself: one leg per stage, drawn as a dimension run with the system's
+   tick-and-slash terminator at each station. Deliberately the same geometry as the
+   severity tally — the two places this app draws a measured quantity should look like
+   they were drawn by the same hand.
+
+   A leg is walked (green), in hand (primary, with the regen sweep running along it) or
+   not yet reached (hairline). There is no partial fill inside a leg, because the server
+   reports stations and not fractions, and a bar that eases smoothly between them would
+   be inventing progress it does not have. */
+.traverse {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  margin-top: var(--space-5);
+  padding: 11px 0;
+}
+.traverse .leg {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  background: var(--border-hairline);
+  color: var(--border-input);
+  transition: var(--transition-colour);
+}
+.traverse .leg::before,
+.traverse .leg::after {
+  content: '';
+  position: absolute;
+  top: -5px;
+  width: 1px;
+  height: 13px;
+  background: currentColor;
+}
+.traverse .leg::before {
+  left: 0;
+}
+.traverse .leg::after {
+  right: 0;
+}
+.traverse .leg .slash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.traverse .leg .slash::before,
+.traverse .leg .slash::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  width: 1px;
+  height: 11px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+.traverse .leg .slash::before {
+  left: 0;
+}
+.traverse .leg .slash::after {
+  right: 0;
+}
+
+/* Walked. The same green the finished stations and a verified finding use. */
+.traverse .leg.ok {
+  background: var(--verified);
+  color: var(--verified);
+}
+/* In hand. The bed goes to a wash of the primary and the sweep crosses it — the only
+   free-running motion on the screen, and it says one thing: the server has not gone
+   quiet. Nothing else here animates, and prefers-reduced-motion stands it down. */
+.traverse .leg.on {
+  background: color-mix(in srgb, var(--primary) 42%, var(--surface-sunk));
+  color: var(--primary);
+}
+.traverse .leg.on .slash::after,
+.traverse .leg.on .slash::before {
+  background: var(--primary);
+}
+.traverse .leg.on .slash {
+  overflow: visible;
+}
+.traverse .leg.on::after,
+.traverse .leg.on::before {
+  height: 17px;
+  top: -7px;
+  width: 2px;
+}
+.traverse .leg.on .sweep {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.traverse .leg.on .sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 34%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--primary) 35%,
+    var(--text-reverse) 50%,
+    var(--primary) 65%,
+    transparent
+  );
+  animation: traverse-sweep 1500ms var(--ease) infinite;
+}
+@keyframes traverse-sweep {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+/* At phone width six legs are six slivers. One column each, stacked, is still a
+   traverse — it is just walked down the page instead of across it. */
+@media (max-width: 560px) {
+  .traverse {
+    gap: var(--space-2);
+  }
+  .traverse .leg::before,
+  .traverse .leg::after {
+    height: 9px;
+    top: -3px;
+  }
+  .traverse .leg .slash {
+    display: none;
+  }
+}
+
+/* ── the station list ──────────────────────────────────────────────────────
+ * Five words and a dot was not enough. Each station now says what is being done there,
+ * because the one moment a reviewer wonders what this thing actually does is while it is
+ * doing it.
+ */
 .stages {
   list-style: none;
   margin: var(--space-6) 0 0;
   padding: 0;
 }
 .stages li {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 9px minmax(0, 1fr) auto;
   gap: var(--space-3);
   align-items: baseline;
-  padding: var(--space-2) 0;
+  padding: var(--space-3) 0;
   border-top: var(--hairline);
   font: var(--type-label);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
+  transition: var(--transition-colour);
 }
 .stages li:first-child {
   border-top: 0;
+}
+.stages li .no {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
 }
 /* A station marker, not an icon: a hairline square that fills as it is reached. */
 .stages li .dot {
@@ -595,18 +810,72 @@ progress::-moz-progress-bar {
   border: 1px solid var(--border-input);
   align-self: center;
 }
+.stages li .what {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.stages li .name {
+  font-weight: var(--weight-regular);
+}
+/* The detail is prose, so it drops the label's caps and tracking. */
+.stages li .detail {
+  font: var(--type-small);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-muted);
+  max-width: var(--measure);
+}
+.stages li .state {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.stages li.ok .state {
+  color: var(--verified);
+}
 .stages li.on {
   color: var(--text-strong);
+}
+.stages li.on .no,
+.stages li.on .state {
+  color: var(--primary);
+}
+.stages li.on .name {
+  font-weight: var(--weight-semibold);
 }
 .stages li.on .dot {
   border-color: var(--primary);
   background: var(--primary);
+}
+/* The working station's marker breathes. Colour only, on the system's own 120 ms swap
+   doubled — nothing moves, nothing resizes, and reduced-motion stands it down. */
+.stages li.on .working {
+  animation: station-breathe 1600ms var(--ease) infinite;
+}
+@keyframes station-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 /* A stage that has been through is the same green as a verified finding — the page uses
    one colour for "this is done and it held". */
 .stages li.ok .dot {
   border-color: var(--verified);
   background: var(--verified);
+}
+/* Under the measure the state column has nowhere to go; it moves under the name. */
+@media (max-width: 620px) {
+  .stages li {
+    grid-template-columns: auto 9px minmax(0, 1fr);
+  }
+  .stages li .state {
+    grid-column: 3;
+  }
 }
 
 /* Elapsed seconds, and every other figure on this screen, in mono. */
@@ -625,41 +894,41 @@ progress::-moz-progress-bar {
  * tally figure and its rule, the chip, the finding id, the row's left rule — reads --sev
  * from here and nothing re-states a hue.
  *
- * The mapping is read off the design project's register artboard, and it is the reverse
- * of the one docs/DESIGN-BRIEF-Claude-Design.md asks for. That is not an oversight: the
- * brief §4 assigns red to CRITICAL/HIGH and blue to MEASURED, and the artboard drawn
- * against that brief assigns them the other way round. The drawing is the later artefact
- * and the one the client pointed at, so it wins; the brief is left as the record of what
- * was asked rather than edited to match. It reads better too — colors.css gives red to
- * "dimensions, ticks, scope numbers", which is literally what a MEASURED finding is.
+ * The order is the ladder, warm to cool, and the ramp it draws from is defined and
+ * justified in :root. Read it top to bottom and the temperature falls with the stakes:
  *
- *   CRITICAL, HIGH   drafting blue     the two that stop a permit
- *   MEDIUM, LOW      the ink ramp      separated by weight, not hue. --text-body, not
- *                                      --text-strong: on ink the strong step is nearly
- *                                      white and its dimension rule out-shouted CRITICAL
- *   MEASURED         engineer red      colors.css gives red to "dimensions, ticks,
- *                                      scope numbers", and a value read off the drawing
- *                                      rather than stated on it is exactly a dimension
- *   VERIFIED         survey green      the client's addition; see :root
+ *   CRITICAL   engineer red      stops the permit — the reddest colour on the page
+ *   HIGH       orange            wrong against the section it cites
+ *   MEDIUM     ochre             an inconsistency the reviewer will raise
+ *   LOW        slate             worth tidying; no section is violated
+ *   MEASURED   drafting blue     a reading taken off the drawing, not a fault
+ *   VERIFIED   survey green      checked and sufficient
  *
- * MEDIUM and LOW stay on the ink ramp deliberately. Six hues would leave nothing for the
- * accented four to stand out from, and the artboard keeps them neutral too.
+ * This supersedes both earlier mappings: the brief's (§4 of
+ * docs/DESIGN-BRIEF-Claude-Design.md, red for CRITICAL/HIGH and blue for MEASURED) and
+ * the register artboard's, which had them the other way round. Neither read as an order
+ * on the built page — a reviewer scanning the register could not tell rank from colour,
+ * only category. A conventional warm-to-cool status ramp can be read at a glance, and
+ * that is what the register is for. The two source documents are left as the record of
+ * what each asked for rather than edited to match.
  */
-.CRITICAL,
+.CRITICAL {
+  --sev: var(--sev-critical);
+}
 .HIGH {
-  --sev: var(--annotation);
+  --sev: var(--sev-high);
 }
 .MEDIUM {
-  --sev: var(--text-body);
+  --sev: var(--sev-medium);
 }
 .LOW {
-  --sev: var(--text-muted);
+  --sev: var(--sev-low);
 }
 .MEASURED {
-  --sev: var(--accent-dimension);
+  --sev: var(--sev-measured);
 }
 .VERIFIED {
-  --sev: var(--verified);
+  --sev: var(--sev-verified);
 }
 
 /* ── DimensionRule — the severity tally ────────────────────────────────────
@@ -845,15 +1114,6 @@ td.sev {
   color: var(--sev, var(--text-body));
   transition: var(--transition-colour);
 }
-/* Ink at 12 % reads far heavier than a hue at 12 %: left alone, MEDIUM and LOW came out
-   as the loudest boxes on the sheet and inverted the whole hierarchy. The neutral
-   severities keep the chip shape but give up the wash. */
-.MEDIUM .chip,
-.LOW .chip {
-  --sev-tint: 4%;
-  border-color: var(--border-hairline);
-}
-
 /* CRITICAL is the only severity that reverses. One row on a sheet reads as a stamp;
    more than one and the register would go to plaid. */
 td.sev.CRITICAL .chip {
@@ -868,6 +1128,123 @@ td.sev.CRITICAL .chip {
 .LOW .chip {
   font-weight: var(--weight-regular);
 }
+/* ── what a severity means ─────────────────────────────────────────────────
+ * Six mono words that a reviewer is expected to already know. Hovering or focusing one
+ * says what it actually means for the permit.
+ *
+ * Drawn as a callout on the drawing, not as a UI tooltip: a flat card, 1px hairline in
+ * the severity's own colour, radius 0, no shadow. The system separates content with
+ * hairlines and never with elevation, so the border and an opaque ground do the work a
+ * drop shadow would do elsewhere.
+ *
+ * The reveal is 160 ms of opacity and 4 px of travel, inside the system's 200 ms budget
+ * for anything larger than a colour swap. It is an interaction affordance rather than an
+ * entrance animation — nothing animates on load — and the global prefers-reduced-motion
+ * rule stands it down along with everything else.
+ *
+ * It stays in the accessibility tree at all times rather than being display:none'd, so
+ * aria-describedby on the chip reads it out whether or not it is visible. Hover is
+ * gated on a device that has hover; focus works everywhere.
+ */
+[data-sev-anchor] {
+  position: relative;
+}
+.sev-tip {
+  position: absolute;
+  z-index: 6;
+  width: max-content;
+  max-width: 34ch;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--sev, var(--border-strong));
+  background: var(--surface-card);
+  color: var(--text-body);
+  font: var(--type-small);
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 160ms var(--ease),
+    transform 160ms var(--ease);
+}
+.sev-tip b {
+  color: var(--sev, var(--text-strong));
+  font-weight: var(--weight-semibold);
+}
+
+/* In the register the panel opens into the FINDING column, centred on the chip — the
+   one direction with room in a five-column table. */
+td.sev .sev-tip {
+  left: calc(100% - var(--space-3));
+  top: 50%;
+  transform: translate(-4px, -50%);
+}
+td.sev:hover,
+td.sev:focus-within {
+  z-index: 6;
+}
+@media (hover: hover) {
+  td.sev .chip:hover ~ .sev-tip {
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+}
+td.sev .chip:focus-visible ~ .sev-tip {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+/* The register scrolls sideways on a narrow sheet, and overflow-x clips the block axis
+   too. Six pixels of internal room, cancelled outside, keeps the first and last rows'
+   panels from being shaved. */
+.tablewrap {
+  padding-block: var(--space-2);
+  margin-block: calc(-1 * var(--space-2));
+}
+
+/* In the tally it opens downward, and flips to the right edge for the columns that
+   would otherwise run off the sheet. */
+.dim .sev-tip {
+  left: 0;
+  top: calc(100% + var(--space-3));
+  transform: translateY(-4px);
+}
+.dim:nth-last-child(-n + 2) .sev-tip {
+  left: auto;
+  right: 0;
+}
+@media (max-width: 760px) {
+  .dim:nth-last-child(-n + 2) .sev-tip {
+    left: 0;
+    right: auto;
+  }
+  .dim:nth-child(3n) .sev-tip {
+    left: auto;
+    right: 0;
+  }
+}
+.dim:hover,
+.dim:focus-within {
+  z-index: 6;
+}
+@media (hover: hover) {
+  .dim:hover .sev-tip {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.dim .lab:focus-visible ~ .sev-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
+/* The two hover targets are focusable, so they take the system's focus ring like every
+   other focusable thing on the sheet. */
+.dim .lab:focus-visible,
+td.sev .chip:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: var(--focus-offset);
+}
+
 /* The tick sits inside the VERIFIED chip and takes the chip's colour. */
 .chip .tick {
   margin-right: 0;
@@ -1164,6 +1541,189 @@ input[type='number'] {
 }
 input[type='number']:hover {
   border-color: var(--text-strong);
+}
+
+/* ── read off the set ──────────────────────────────────────────────────────
+ * The declaration now opens with the answers the drawings already state. Those are
+ * suggestions and have to look like it: a value the applicant has not looked at yet
+ * cannot be indistinguishable from one they typed, because the whole point of the
+ * reconciliation is that the two sources are independent.
+ *
+ * So an unconfirmed field carries the annotation colour on its left edge until it is
+ * confirmed or overwritten, and every read-off field says where it was read whether or
+ * not it is still pending. Survey blue, per the system: an annotation is a callout on
+ * the drawing, which is exactly what "G-0 says 4 180 sq ft" is.
+ */
+.q {
+  position: relative;
+}
+.q.readoff {
+  border-left: 2px solid var(--annotation);
+  margin-left: -10px;
+  padding-left: 8px;
+}
+.q.readoff input,
+.q.readoff select {
+  border-color: var(--annotation);
+}
+.readoff-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  color: var(--text-muted);
+}
+.readoff-note .annot-name {
+  font: var(--type-annotation);
+}
+.confirmed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--verified);
+}
+.confirmed .tick {
+  margin-right: 0;
+}
+/* The banner over the questionnaire. It is a warn note because it is asking for
+   attention, not reporting a fault. */
+.note.readoff .row {
+  margin-top: var(--space-3);
+}
+
+/* Reading the set for those answers. A hairline that sweeps, on the same figure as the
+   traverse — the same thing is happening, on a smaller scale. */
+.hint.reading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  color: var(--annotation);
+}
+.hint.reading .scan {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 56px;
+  height: 1px;
+  background: var(--border-hairline);
+  overflow: hidden;
+}
+.hint.reading .scan::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: var(--annotation);
+  animation: traverse-sweep 1400ms var(--ease) infinite;
+}
+
+/* ── review history ────────────────────────────────────────────────────────
+ * A past review is a row in a register, not a card in a grid: date on the left, what it
+ * was in the middle, what it found on the right, on the same hairline rhythm as the
+ * findings table. The counts reuse the severity ramp, so a glance down the right-hand
+ * edge sorts the list by how bad each set was without reading a number.
+ */
+.history .step-head .inline {
+  margin-left: auto;
+}
+.pastlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pastlist li {
+  border-top: var(--hairline);
+}
+.pastlist li:first-child {
+  border-top: 0;
+}
+/* The whole row is the control. A row that is a link with a button in it is two tab
+   stops for one action. */
+.pastrow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: var(--space-3) var(--space-5);
+  align-items: baseline;
+  width: 100%;
+  padding: var(--space-3) var(--space-2);
+  border: 0;
+  border-left: 2px solid var(--sev, var(--border-hairline));
+  background: none;
+  text-align: left;
+  font: var(--type-small);
+  color: var(--text-body);
+  cursor: pointer;
+  transition: var(--transition-colour);
+}
+.pastrow:hover:not(:disabled) {
+  background: var(--surface-sunk);
+}
+.pastrow:hover:not(:disabled) .name {
+  color: var(--accent-dimension);
+}
+.pastrow:disabled {
+  cursor: default;
+  color: var(--text-muted);
+}
+.pastrow .when {
+  font: var(--type-code);
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pastrow .what {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.pastrow .name {
+  color: var(--text-strong);
+  font-weight: var(--weight-semibold);
+  transition: var(--transition-colour);
+}
+.pastrow .sub {
+  font: var(--type-code);
+  color: var(--text-muted);
+}
+/* Counts in the severity ramp, mono, tabular. Only the severities actually present. */
+.pastrow .counts {
+  display: flex;
+  gap: var(--space-3);
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  white-space: nowrap;
+}
+.pastrow .counts .c {
+  color: var(--sev, var(--text-muted));
+  font-variant-numeric: tabular-nums;
+}
+.pastrow .counts .c b {
+  font-weight: var(--weight-semibold);
+}
+.pastrow .state-note {
+  color: var(--sev, var(--text-muted));
+}
+.pastrow .open {
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 760px) {
+  .pastrow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .pastrow .when {
+    grid-column: 1 / -1;
+  }
+  .pastrow .counts {
+    grid-column: 1 / -1;
+  }
 }
 
 /* ── declared basis, on a finding row ──────────────────────────────────────
