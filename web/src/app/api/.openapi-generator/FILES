@@ -21,10 +21,14 @@ model/error-response.ts
 model/finding.ts
 model/findings-document.ts
 model/health.ts
+model/history-entry.ts
+model/history-response.ts
 model/job.ts
 model/mail-status.ts
 model/models.ts
 model/occupancy-group.ts
+model/prefill-response.ts
+model/prefilled-field.ts
 model/project-declaration.ts
 model/raster-region.ts
 model/reconciled-field.ts

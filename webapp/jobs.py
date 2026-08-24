@@ -136,6 +136,20 @@ class JobStore:
         snap = self._col.document(job_id).get()
         return snap.to_dict() if snap.exists else None
 
+    def list_for(self, uid: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """This user's reviews, newest first.
+
+        Scoped to the caller's own uid at the query, not filtered afterwards:
+        a history that fetches everything and then hides the rest is one
+        refactor away from being a data leak.
+        """
+        q = (
+            self._col.where(filter=FieldFilter("uid", "==", uid))
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        return [snap.to_dict() for snap in q.stream()]
+
     # ── rate limiting ─────────────────────────────────────────────────────
     def _count(self, query) -> int:
         result = query.count().get()

@@ -98,6 +98,11 @@ class FakeJobStore:
         window_start = jobs_mod.utcnow() - dt.timedelta(hours=1)
         jobs_mod.check_limits(self.active_count(uid), self.recent_count(uid, window_start))
 
+    def list_for(self, uid, limit=50):
+        mine = [dict(d) for d in self.docs.values() if d["uid"] == uid]
+        mine.sort(key=lambda d: d["created_at"], reverse=True)
+        return mine[:limit]
+
     def fail_stale_running(self):
         return 0
 

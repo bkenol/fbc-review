@@ -387,6 +387,72 @@ class Downloads(BaseModel):
     expires_at: dt.datetime
 
 
+class PrefilledField(BaseModel):
+    """One declaration answer the drawings already state.
+
+    A suggestion, never a decision. The applicant confirms or overrides it, and
+    what they submit is what gets declared — the reconciliation is only worth
+    running if the two sides stay independent, and a silently auto-accepted
+    value would make every field agree with itself.
+    """
+
+    key: str = Field(description="A declaration field key, as `/api/config` publishes it.")
+    value: str = Field(description="Rendered as the field's control holds it, never typed.")
+    source: str = Field(description='Where on the set it was read, e.g. "G-0 project data".')
+    confidence: str
+    note: str = ""
+    page: Optional[int] = None
+
+
+class PrefillResponse(BaseModel):
+    """What a set states about itself, read without starting a review."""
+
+    filename: str
+    pages: int
+    bytes: int
+    source: SourceProfile
+    fields: List[PrefilledField] = Field(
+        description=(
+            "Only fields the drawings actually state. A set whose code data block is "
+            "a pasted picture yields very few, which is the honest answer for that "
+            "set and exactly the case the declaration exists to cover."
+        )
+    )
+
+
+class HistoryEntry(BaseModel):
+    """One past review, as the history list shows it.
+
+    Deliberately not the whole `Job`. A list of thirty rows does not need thirty
+    sets of signed download URLs, and minting them costs a round trip each —
+    the client asks for `GET /api/jobs/{id}` when a row is actually opened.
+    """
+
+    id: str
+    filename: str
+    state: JobState
+    created_at: dt.datetime
+    finished_at: Optional[dt.datetime] = None
+    pages: int = 0
+    project_name: str = ""
+    edition: str = ""
+    error: Optional[str] = None
+    counts: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Findings by severity, from the stored summary. Empty until done.",
+    )
+    open_findings: int = 0
+    declared_fields: int = Field(
+        default=0, description="How many declaration questions were answered."
+    )
+
+
+class HistoryResponse(BaseModel):
+    """The caller's own reviews, newest first. Never anyone else's."""
+
+    entries: List[HistoryEntry]
+
+
 class ReviewAccepted(BaseModel):
     id: str
 

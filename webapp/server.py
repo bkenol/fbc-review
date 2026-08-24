@@ -29,7 +29,7 @@ from fbcreview.declaration import ProjectDeclaration
 from fbcreview.options import (AVAILABLE_EDITIONS, EDITIONS, OCCUPANCY_GROUPS,
                                SEVERITY_ORDER, ReviewOptions)
 from fbcreview.rules import registered
-from webapp import errors, logging_config, mailer, models, storage, upload
+from webapp import errors, logging_config, mailer, models, prefill, storage, upload
 from webapp.auth import User, current_user
 from webapp.config import settings
 from webapp.errors import ApiError
@@ -239,6 +239,60 @@ def config(user: User = Depends(current_user)) -> models.ConfigResponse:
 
 # -- submit ----------------------------------------------------------------
 @app.post(
+    "/api/prefill",
+    response_model=models.PrefillResponse,
+    tags=["reviews"],
+    operation_id="prefillDeclaration",
+    summary="Read what a permit set already states about itself.",
+    description=(
+        "Parses a set and returns the declaration answers the drawings themselves "
+        "state, so the applicant confirms or corrects them rather than transcribing "
+        "their own drawing. Starts nothing, stores nothing, and makes no model calls "
+        "— it is the same pure-Python parse the review runs, stopped after the facts "
+        "are built. The suggestions are advisory: what the applicant submits to "
+        "`POST /api/review` is what gets declared."
+    ),
+)
+async def prefill_declaration(
+    file: UploadFile = File(..., description="The permit set, as a PDF."),
+    user: User = Depends(current_user),
+) -> models.PrefillResponse:
+    filename = upload.safe_basename(file.filename or "")
+    scratch = Path(tempfile.mkdtemp(prefix="fbc-pre-"))
+    local = scratch / "source.pdf"
+
+    try:
+        size = await upload.stream_to_disk(file, local)
+        # allow_raster: a scanned set is not an error here. It simply states
+        # very little, and saying so is more useful than refusing to look.
+        pages, source = upload.probe(local, allow_raster=True)
+        found = prefill.read(str(local))
+    finally:
+        with contextlib.suppress(Exception):
+            local.unlink(missing_ok=True)
+            scratch.rmdir()
+
+    log.info(
+        "prefill read",
+        extra={
+            "uid": user.uid,
+            "pages": pages,
+            "bytes": size,
+            "fields_found": len(found),
+            "source_kind": source.kind,
+        },
+    )
+
+    return models.PrefillResponse(
+        filename=filename,
+        pages=pages,
+        bytes=size,
+        source=models.SourceProfile.model_validate(source.to_dict()),
+        fields=[models.PrefilledField(**dataclasses.asdict(s)) for s in found],
+    )
+
+
+@app.post(
     "/api/review",
     response_model=models.ReviewAccepted,
     status_code=202,
@@ -423,6 +477,56 @@ def _parse_declaration(body: str, options: models.ReviewOptions,
     except Exception as exc:
         raise ApiError(400, errors.INVALID_REQUEST, f"Invalid declaration: {exc}")
     return ProjectDeclaration.from_dict(wire.model_dump())
+
+
+# -- history ---------------------------------------------------------------
+@app.get(
+    "/api/jobs",
+    response_model=models.HistoryResponse,
+    tags=["reviews"],
+    operation_id="listJobs",
+    summary="The caller's own past reviews, newest first.",
+    description=(
+        "A review is worth keeping: the findings register is the deliverable, and "
+        "re-running a 24-sheet set to look at it again is thirty seconds and a "
+        "second copy of the same PDF. The marked-up set and findings.json already "
+        "live in Cloud Storage, so this lists what is there rather than storing "
+        "anything new. Rows carry no signed URLs — those are minted per row on "
+        "`GET /api/jobs/{job_id}`, when a row is actually opened."
+    ),
+)
+def list_jobs(
+    limit: int = 50,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+) -> models.HistoryResponse:
+    limit = max(1, min(int(limit), 100))
+    entries: list[models.HistoryEntry] = []
+
+    for record in store.list_for(user.uid, limit):
+        summary = record.get("summary") or {}
+        options = record.get("options") or {}
+        declaration = record.get("declaration") or {}
+        entries.append(
+            models.HistoryEntry(
+                id=record.get("id", ""),
+                filename=record.get("filename", ""),
+                state=record.get("state", "queued"),
+                created_at=record.get("created_at"),
+                finished_at=record.get("finished_at"),
+                pages=int(record.get("pages") or 0),
+                project_name=options.get("project_name") or "",
+                edition=options.get("edition") or "",
+                error=record.get("error"),
+                counts={k: int(v) for k, v in (summary.get("counts") or {}).items()},
+                open_findings=int(summary.get("open") or 0),
+                # The stored declaration is a flat dict of what was asserted;
+                # a null is a question that was left alone.
+                declared_fields=sum(1 for v in declaration.values() if v is not None),
+            )
+        )
+
+    return models.HistoryResponse(entries=entries)
 
 
 # -- poll ------------------------------------------------------------------
