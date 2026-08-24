@@ -12,6 +12,8 @@ venv/
 *-service-account*.json
 *serviceAccountKey*.json
 .firebaserc.local
+.cloudflared/
+cert.pem
 
 # Node / Angular
 node_modules/
