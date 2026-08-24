@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -87,7 +88,24 @@ def _stub_cloudflared(bin_dir: Path, listing: str) -> None:
     stub.chmod(0o755)
 
 
-def _run(tmp_path: Path, port: int, listing: str = REAL_LISTING):
+def _stub_cygpath(bin_dir: Path) -> None:
+    r"""Git Bash's path translator, faithful enough to drive the Windows branch.
+
+    Mirrors what MSYS does: a /<drive>/ prefix becomes <DRIVE>:\, anything else
+    absolute is mapped under C:\, and separators flip to backslashes.
+    """
+    stub = bin_dir / "cygpath"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s' \"$2\" "
+        "| sed -E 's#^/([a-zA-Z])/#\\1:/#; t; s#^/#C:/#' "
+        "| tr '/' '\\\\'\n",
+        newline="\n",
+    )
+    stub.chmod(0o755)
+
+
+def _run(tmp_path: Path, port: int, listing: str = REAL_LISTING, cygpath: bool = False):
     home = tmp_path / "home"
     (home / ".cloudflared").mkdir(parents=True)
     (home / ".cloudflared" / "cert.pem").write_text("stub")
@@ -95,6 +113,8 @@ def _run(tmp_path: Path, port: int, listing: str = REAL_LISTING):
 
     bin_dir = tmp_path / "bin"
     _stub_cloudflared(bin_dir, listing)
+    if cygpath:
+        _stub_cygpath(bin_dir)
 
     env = dict(os.environ)
     env.update(
@@ -158,3 +178,39 @@ def test_it_refuses_to_publish_a_hostname_that_fronts_nothing(tmp_path):
     assert proc.returncode != 0
     assert "Nothing is answering" in proc.stderr
     assert not (home / ".cloudflared" / "fbc-review.yml").exists()
+
+
+def test_the_credentials_path_is_written_in_windows_form_under_git_bash(tmp_path, app_port):
+    """The second bug this script hit on a real machine.
+
+    MSYS rewrites POSIX-looking paths in arguments, so `--config /c/Users/...`
+    reaches cloudflared as a Windows path and works. It does not touch the
+    inside of a file, so an MSYS path written into the YAML arrived verbatim
+    and cloudflared reported:
+
+        Tunnel credentials file '/c/Users/.../<uuid>.json' doesn't exist
+
+    while bash's own `[ -f ]` on the same string succeeded, because bash
+    understands that form and the native binary does not.
+    """
+    _, home = _run(tmp_path, app_port, cygpath=True)
+    config = (home / ".cloudflared" / "fbc-review.yml").read_text()
+
+    line = next(l for l in config.splitlines() if l.startswith("credentials-file:"))
+
+    # Quoted, so YAML keeps the backslashes literal rather than reading escapes.
+    assert line.startswith("credentials-file: '") and line.endswith("'"), line
+
+    path = line[len("credentials-file: '") : -1]
+    assert re.match(r"^[A-Za-z]:\\", path), path      # a drive-letter root
+    assert "/" not in path, path                        # no MSYS form survives
+    assert path.endswith(f"{UUID}.json"), path
+
+
+def test_without_cygpath_the_path_is_left_alone(tmp_path, app_port):
+    """Linux and macOS have no cygpath and need no translation."""
+    _, home = _run(tmp_path, app_port, cygpath=False)
+    config = (home / ".cloudflared" / "fbc-review.yml").read_text()
+
+    line = next(l for l in config.splitlines() if l.startswith("credentials-file:"))
+    assert str(home / ".cloudflared" / f"{UUID}.json") in line, line

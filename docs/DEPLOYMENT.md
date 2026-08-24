@@ -42,7 +42,7 @@ building it.
 Test status on the current commit:
 
 ```
-pytest tests/ -q          173 passed, 3 skipped  (Python 3.12, no Tesseract)
+pytest tests/ -q          175 passed, 3 skipped  (Python 3.12, no Tesseract)
                           skips: 2 x Tesseract absent, 1 x FBC_TEST_PDF unset
 test_regression.py        OK  (FBC_TEST_PDF = the real Sculpted permit set)
 pytest inside the image   with Tesseract present, the two OCR skips run
@@ -201,6 +201,30 @@ imagination, which is precisely how the bug survived to a live run.
 
 Parsing the listing is also the only thing the script needed an interpreter
 for, so that dependency is gone: it is now plain `grep`.
+
+### Paths inside the config, under Git Bash
+
+The second thing that only showed up on a real machine. `cloudflared` is a
+native Windows binary, and MSYS rewrites POSIX-looking paths in *arguments*
+before a native binary sees them — which is why `--config /c/Users/...` works
+untouched. It never looks inside a file, so the `/c/Users/...` credentials path
+the script wrote into the YAML arrived verbatim:
+
+```
+Tunnel credentials file '/c/Users/.../<uuid>.json' doesn't exist or is not a file
+```
+
+...while the script's own `[ -f ]` on the same string passed, because bash
+understands that form and the native binary does not. Everything up to and
+including the DNS record succeeded; only the final `run` failed.
+
+The script now converts with `cygpath -w` before writing, and single-quotes the
+result so YAML keeps the backslashes literal rather than reading them as
+escapes. Where there is no `cygpath` — Linux, macOS — the path is used as is.
+
+The general rule, worth remembering for anything else that hands a path to a
+native Windows tool from Git Bash: **arguments are translated, file contents are
+not.**
 
 ### The DNS record
 
