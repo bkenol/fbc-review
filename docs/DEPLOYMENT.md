@@ -42,7 +42,7 @@ building it.
 Test status on the current commit:
 
 ```
-pytest tests/ -q          170 passed, 3 skipped  (Python 3.12, no Tesseract)
+pytest tests/ -q          173 passed, 3 skipped  (Python 3.12, no Tesseract)
                           skips: 2 x Tesseract absent, 1 x FBC_TEST_PDF unset
 test_regression.py        OK  (FBC_TEST_PDF = the real Sculpted permit set)
 pytest inside the image   with Tesseract present, the two OCR skips run
@@ -178,10 +178,29 @@ record is checked or corrected by hand in **DNS > Records**.
 | --- | --- |
 | Preflight | Refuses to continue unless `cloudflared` is installed **and** the app answers on `127.0.0.1:8060/healthz`. Publishing a hostname that fronts nothing is the slow way to find out the app is down. |
 | `cloudflared tunnel login` | Browser, once per machine. Writes `~/.cloudflared/cert.pem`. Pick the `omniflexfitness.com` zone. |
-| `cloudflared tunnel create fbc-review` | Registers a named tunnel and writes its credentials JSON to `~/.cloudflared/<UUID>.json`. |
+| `cloudflared tunnel create fbc-review` | Registers a named tunnel and writes its credentials JSON to `~/.cloudflared/<UUID>.json`. The UUID is read back by matching the UUID *shape* in `cloudflared tunnel list`, not by parsing a named JSON field — see below. |
 | Config | Written to `~/.cloudflared/fbc-review.yml` — **not** `config.yml`. `cloudflared` reads `config.yml` by default and clobbering it would silently break any other tunnel on the machine. |
 | `cloudflared tunnel route dns` | Creates the DNS record below, in the Cloudflare zone, over the API, authorised by `cert.pem`. No record is typed by hand and no API token is stored in the repo. |
 | `cloudflared tunnel run` | Foreground. The hostname is live while it runs. |
+
+### Reading the UUID back
+
+Worth recording, because it cost a live debugging round. The first version of
+`tunnel.sh` read `cloudflared tunnel list --output json` and skipped any row
+carrying a `deleted_at`. cloudflared is written in Go, and Go marshals a zero
+timestamp as `"0001-01-01T00:00:00Z"` rather than `null` — a non-empty string.
+Every live tunnel therefore looked deleted, and a freshly created one failed
+with *"Created the tunnel but could not read its UUID back"*.
+
+It now matches the UUID by its shape in the plain `cloudflared tunnel list`
+output, which carries no deleted rows to begin with (`-d` is what includes
+them). That is insensitive to column order, to JSON field renames, and to Go's
+zero values. `tests/test_tunnel_script.py` pins it against a listing captured
+verbatim from a real cloudflared 2026.8.2 — the previous stub was written from
+imagination, which is precisely how the bug survived to a live run.
+
+Parsing the listing is also the only thing the script needed an interpreter
+for, so that dependency is gone: it is now plain `grep`.
 
 ### The DNS record
 

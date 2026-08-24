@@ -47,17 +47,14 @@ die()   { printf '\n\033[31m✗ %s\033[0m\n\n' "$*" >&2; exit 1; }
 CF_DIR="${HOME}/.cloudflared"
 CONFIG="${CF_DIR}/${TUNNEL}.yml"
 
-# The repo is a Python project, so a usable interpreter is a fair assumption.
-# It is only ever used to read `cloudflared`'s JSON, never to touch the app.
-py() {
-  for candidate in "$ROOT/.venv/Scripts/python.exe" "$ROOT/.venv/bin/python" python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1 || [ -x "$candidate" ]; then
-      "$candidate" "$@"
-      return $?
-    fi
-  done
-  die "No Python interpreter found, and one is needed to read cloudflared's tunnel list."
-}
+# A tunnel UUID, by shape. Matching on the shape rather than on a column
+# position or a JSON field name is deliberate: `cloudflared`'s JSON field names
+# have changed across versions, and its zero values are Go's rather than JSON's
+# — a live tunnel's deleted_at marshals to "0001-01-01T00:00:00Z", not null.
+# Reading the listing as JSON and filtering on that field is what made the first
+# version of this script mistake a freshly created tunnel for a deleted one and
+# report no UUID at all.
+UUID_RE='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
 
 # ── 0. preflight ──────────────────────────────────────────────────────────
 bold "0. Preflight"
@@ -85,8 +82,8 @@ if ! curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; 
 fi
 ok "the app is answering on 127.0.0.1:${PORT}"
 
-AUTH_REQUIRED="$(curl -fsS "http://127.0.0.1:${PORT}/healthz" | py -c 'import json,sys; print(json.load(sys.stdin).get("auth_required"))' 2>/dev/null || echo unknown)"
-if [ "$AUTH_REQUIRED" != "True" ]; then
+if ! curl -fsS "http://127.0.0.1:${PORT}/healthz" 2>/dev/null \
+     | grep -qE '"auth_required"[[:space:]]*:[[:space:]]*true'; then
   warn "This service has authentication OFF (share.ps1 sets FBC_DEV_UNSAFE_AUTH=1)."
   warn "Once DNS is live, anyone who finds ${DOMAIN} can upload a permit set."
   warn "What limits it: the upload size and page caps, and the rate limits,"
@@ -107,29 +104,38 @@ ok "authorised (${CF_DIR}/cert.pem)"
 # ── 2. the tunnel ─────────────────────────────────────────────────────────
 bold "2. Named tunnel '${TUNNEL}'"
 
+# `tunnel list` without -d lists only live tunnels, so there is no deleted
+# state to filter here — the row carrying the name carries the id we want.
 tunnel_uuid() {
-  cloudflared tunnel list --output json 2>/dev/null \
-    | py -c '
-import json, sys
-name = sys.argv[1]
-try:
-    rows = json.load(sys.stdin) or []
-except Exception:
-    rows = []
-for row in rows:
-    # A deleted tunnel keeps its name in the list until it is purged.
-    if row.get("name") == name and not row.get("deleted_at"):
-        print(row.get("id", ""))
-        break
-' "$TUNNEL"
+  cloudflared tunnel list 2>/dev/null \
+    | grep -E "(^|[[:space:]])${TUNNEL}([[:space:]]|\$)" \
+    | grep -oE "$UUID_RE" \
+    | head -1
 }
 
 UUID="$(tunnel_uuid || true)"
 if [ -z "$UUID" ]; then
   info "Creating it..."
-  cloudflared tunnel create "$TUNNEL" >/dev/null
-  UUID="$(tunnel_uuid || true)"
-  [ -n "$UUID" ] || die "Created the tunnel but could not read its UUID back."
+  set +e
+  CREATE_OUT="$(cloudflared tunnel create "$TUNNEL" 2>&1)"
+  CREATE_RC=$?
+  set -e
+
+  # create prints the new id; prefer that over listing again.
+  UUID="$(printf '%s' "$CREATE_OUT" | grep -oE "$UUID_RE" | tail -1)"
+  [ -n "$UUID" ] || UUID="$(tunnel_uuid || true)"
+
+  if [ -z "$UUID" ]; then
+    printf '\n%s\n\n' "$CREATE_OUT"
+    if [ $CREATE_RC -ne 0 ]; then
+      die "cloudflared could not create the tunnel '${TUNNEL}'."
+    fi
+    die "Created the tunnel but could not read its UUID back.
+
+     Check what cloudflared reports:  cloudflared tunnel list
+     If '${TUNNEL}' is listed there, this script failed to parse it — report
+     the listing rather than creating a second tunnel."
+  fi
   ok "created — $UUID"
 else
   ok "already exists — $UUID"
