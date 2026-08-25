@@ -108,6 +108,10 @@ It checks prerequisites first and names what is missing rather than failing
 halfway through, then creates the virtualenv, installs both dependency trees,
 builds the client and runs the tests.
 
+To confirm a machine is running what you think it is, read the version in the
+masthead and the footer of the page itself — locally it carries the commit and
+says `.dirty` when the tree has uncommitted changes. §5a explains the scheme.
+
 Deliberately not in git, and what to do about each:
 
 | Not committed | Why | How to get it |
@@ -665,15 +669,19 @@ Then:
 
 `.github/workflows/deploy.yml` runs on every push and PR to `main`:
 
-1. `pytest tests/ -v` (with Tesseract installed, so the OCR test runs rather
+1. **Version** — reads `VERSION`, stamps the build number on, fails the run if
+   `VERSION` is malformed (§5a)
+2. `pytest tests/ -v` (with Tesseract installed, so the OCR test runs rather
    than skips)
-2. `npm run build` and `npm run test:ci` in `web/`
-3. **Client drift check** — regenerates `openapi.json` and `web/src/app/api/`
+3. `npm run build` and `npm run test:ci` in `web/`
+4. **Client drift check** — regenerates `openapi.json` and `web/src/app/api/`
    and fails if either differs from what is committed. This is what keeps the
    typed client honest; without it the whole point of generating it is lost.
-4. On `main` only: build and push the image tagged with the commit SHA, deploy
-   to Cloud Run, smoke-test `/healthz` on the new revision
-5. Deploy Hosting when `web/**`, `firebase.json` or `firestore.*` changed
+5. On `main` only: build and push the image tagged with both the commit SHA and
+   the version, deploy to Cloud Run with `FBC_VERSION` set, then smoke-test
+   `/healthz` on the new revision and check that the version it reports is the
+   one just deployed
+6. Deploy Hosting when `web/**`, `firebase.json` or `firestore.*` changed
 
 ### Workload Identity Federation [not yet run]
 
@@ -748,9 +756,116 @@ that means something.
 
 ---
 
+## 5a. Versioning
+
+### The scheme
+
+`VERSION` at the repository root is the source of truth. It holds the release
+triple and the channel, and nothing else:
+
+```
+1.0.0-alpha
+```
+
+The build number is **not** committed. It is stamped on per build, because a
+number that has to be edited by hand is a number that stops being edited.
+
+| Channel | `VERSION` says | A build is called |
+| --- | --- | --- |
+| **ALPHA** — where the app is now | `1.0.0-alpha` | `1.0.0-alpha.412+3f1c9ab` |
+| **BETA** | `1.0.0-beta` | `1.0.0-beta.430+9ab21cd` |
+| **PROD** | `1.0.0` | `1.0.0+build.450.771ee0f` |
+
+That is SemVer 2.0.0 precedence, unmodified, and it orders the way the release
+train runs:
+
+```
+1.0.0-alpha.9 < 1.0.0-alpha.10 < 1.0.0-beta.1 < 1.0.0
+```
+
+Two properties of SemVer are doing the work, and neither is decoration:
+
+- A **numeric** pre-release identifier compares as a number. Build 10 outranks
+  build 9 — a plain string comparison gets that backwards.
+- Build metadata after `+` is **ignored** in precedence. The commit says *which*
+  build it was, never *whether* it is newer.
+
+A production release has no pre-release part to extend, and `1.0.0.450` would
+not be SemVer at all, so on that channel the build number moves into the
+metadata instead.
+
+### Where the number comes from
+
+The build number is `github.run_number` — the run count of
+`.github/workflows/deploy.yml`. It increments once per run, does not reset when
+a run is retried (that is `run_attempt`), and needs neither a commit back to the
+repository nor `contents: write` on the workflow token. No tag is pushed and no
+file is rewritten by CI; the only thing anyone edits is `VERSION`.
+
+Outside CI there is no build number, so the slot carries the working tree
+instead:
+
+```
+1.0.0-alpha+local.9f3c1ab          a clean checkout
+1.0.0-alpha+local.9f3c1ab.dirty    uncommitted changes
+```
+
+That is the line to read after a `git pull` to confirm the deployment in front
+of you is the code you just pulled. `scripts/share.ps1` resolves it on the host
+and passes it into the container as `FBC_VERSION`, because the image carries
+`VERSION` but no `.git`.
+
+### Promoting a channel
+
+One edit, one commit:
+
+```bash
+echo 1.0.0-beta > VERSION      # alpha -> beta
+echo 1.0.0      > VERSION      # beta  -> production
+echo 1.1.0-alpha > VERSION     # start the next release on alpha
+pytest tests/test_version.py -v
+```
+
+`tests/test_version.py` rejects anything that is not `MAJOR.MINOR.PATCH` with an
+optional `-alpha` or `-beta`, and so does the workflow's version job — on pull
+requests as well, so a typo fails on the branch rather than on `main`.
+
+### Where it shows up
+
+| Surface | Shows | Why |
+| --- | --- | --- |
+| `GET /healthz`, `GET /api/healthz` | the full stamped version | what the running service is |
+| The masthead and the footer | the same string | read from `/api/healthz` on load |
+| OpenAPI `info.version` | `1.0.0` — release only | the API *contract*, which does not move when a build number does |
+| Artifact Registry | a `1.0.0-alpha.412_3f1c9ab` tag beside the SHA tag | a Docker tag may not contain `+` |
+| The Actions run summary | the version, channel, build and commit | so a run is identifiable without opening it |
+
+`info.version` is deliberately the release triple alone. CI regenerates the
+published schema and compares it byte-for-byte against what is committed, so
+anything that varies by build or by machine cannot appear in it — a build number
+in there would make the drift check fail on every push for a reason that has
+nothing to do with the contract.
+
+The client shows the version the **API** reports rather than one baked into the
+bundle. Hosting serves the bundle from a CDN and rewrites `/api/**` to Cloud
+Run, so one number from the service that is actually answering beats two numbers
+that can disagree.
+
+### The one rule the code and the workflow share
+
+`webapp/version.py` states the scheme in Python; the workflow's version job
+restates it in shell, because a workflow cannot import Python before it has
+checked out and installed anything. `tests/test_version.py` runs that shell
+against the Python and fails if they have drifted — so the duplication cannot
+rot silently.
+
+---
+
 ## 6. Environment variables the service reads
 
-All are read once at startup by `webapp/config.py`.
+All are read once at startup by `webapp/config.py`, except the two version
+variables, which `webapp/version.py` reads — build identity is not runtime
+configuration, and `config.py` deliberately shells out to nothing.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -768,6 +883,8 @@ All are read once at startup by `webapp/config.py`.
 | `FBC_WORKERS` | 2 | Worker threads per instance |
 | `FBC_COLLECTION` | `reviews` | Firestore collection |
 | `FBC_LOG_LEVEL` | `INFO` | |
+| `FBC_VERSION` | stamped from `VERSION` | The version reported on `/healthz` and shown in the client. Set by CI; wins over anything computed locally. See §5a. |
+| `FBC_BUILD` | unset | Build number, when handing one in without a full `FBC_VERSION`. |
 | `FBC_DEV_UNSAFE_AUTH` | unset | **Local only.** Ignored whenever `K_SERVICE` is set. |
 | `FBC_SMTP_*`, `FBC_MAIL_FROM` | unset | Email stays inert unless all are set |
 

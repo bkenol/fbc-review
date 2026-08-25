@@ -51,7 +51,8 @@ verified off, measured off     ->  7 findings {CRITICAL 1, HIGH 2, MEDIUM 4}   (
 | `GET` | `/api/jobs/{id}` | State, stage, and the full summary when done |
 | `GET` | `/api/jobs/{id}/markup.pdf` | The marked-up set |
 | `GET` | `/api/jobs/{id}/findings.json` | Machine-readable findings |
-| `GET` | `/healthz` | Liveness |
+| `GET` | `/healthz` | Liveness, and the version this build reports. Cloud Run's startup probe. |
+| `GET` | `/api/healthz` | The same answer, on the path the browser can reach. Off the published schema. |
 
 ## Email
 

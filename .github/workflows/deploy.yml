@@ -27,6 +27,83 @@ env:
   NODE_VERSION: '24.19.0'
 
 jobs:
+  # ── version ────────────────────────────────────────────────────────────
+  # What this build is called.
+  #
+  # `VERSION` at the repository root holds the release triple and the channel
+  # and nothing else — `1.0.0-alpha`. The build number is stamped on here, from
+  # `github.run_number`, because a number that has to be edited by hand is a
+  # number that stops being edited. run_number increments once per run of this
+  # workflow, never resets on a re-run of the same one (that is run_attempt),
+  # and needs neither a commit back to the repository nor `contents: write`.
+  #
+  #     ALPHA   1.0.0-alpha.<run>+<sha>
+  #     BETA    1.0.0-beta.<run>+<sha>
+  #     PROD    1.0.0+build.<run>.<sha>
+  #
+  # SemVer 2.0.0 precedence, unmodified: `1.0.0-alpha.9 < 1.0.0-alpha.10 <
+  # 1.0.0-beta.1 < 1.0.0`. Numeric pre-release identifiers compare numerically,
+  # so build 10 outranks build 9 — which a string comparison gets backwards.
+  # A production release has no pre-release part to extend and a fourth number
+  # would not be SemVer, so its build number goes into the metadata.
+  #
+  # Promoting alpha to beta, or beta to production, is one edit to `VERSION`.
+  # webapp/version.py applies the same rule in Python and is what the service
+  # and the local scripts use; tests/test_version.py holds the two together.
+  #
+  # This runs on pull requests too. It is seconds of work and it means a typo in
+  # `VERSION` fails on the branch rather than on main.
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.stamp.outputs.version }}
+      release: ${{ steps.stamp.outputs.release }}
+      channel: ${{ steps.stamp.outputs.channel }}
+      image_tag: ${{ steps.stamp.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: stamp
+        env:
+          BUILD: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          base="$(grep -vE '^[[:space:]]*(#|$)' VERSION | head -1 | tr -d '[:space:]')"
+
+          if ! printf '%s' "$base" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta))?$'; then
+            echo "::error file=VERSION::VERSION must be MAJOR.MINOR.PATCH with an optional -alpha or -beta channel. Got '${base}'."
+            exit 1
+          fi
+
+          release="${base%%-*}"
+          channel="${base#"$release"}"
+          channel="${channel#-}"
+          channel="${channel:-prod}"
+          short="${SHA:0:7}"
+
+          if [ "$channel" = prod ]; then
+            version="${release}+build.${BUILD}.${short}"
+          else
+            version="${base}.${BUILD}+${short}"
+          fi
+
+          # A Docker tag may not contain '+'. Same build, spellable name.
+          image_tag="${version//+/_}"
+
+          {
+            echo "version=${version}"
+            echo "release=${release}"
+            echo "channel=${channel}"
+            echo "image_tag=${image_tag}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "### \`${version}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "channel \`${channel}\` · build \`${BUILD}\` · commit \`${short}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::Build ${version} (${channel})."
+
   # ── the engine and the service ─────────────────────────────────────────
   python-tests:
     name: pytest
@@ -174,7 +251,7 @@ jobs:
 
   deploy-api:
     name: Cloud Run
-    needs: [python-tests, web-tests, client-drift, deploy-gate]
+    needs: [python-tests, web-tests, client-drift, deploy-gate, version]
     # A skipped gate produces no output, so this is false on a pull request as
     # well — the branch and event check is kept because it states the intent.
     if: >-
@@ -200,11 +277,22 @@ jobs:
 
       # linux/amd64 explicitly: Cloud Run runs amd64, and a silently-arm64 image
       # fails at start rather than at build.
+      #
+      # Two tags, one image. The SHA tag is what the revision is deployed from,
+      # because it is the one that cannot be moved or reused. The version tag is
+      # for a human reading `gcloud artifacts docker images list` and wanting to
+      # know which build was 1.0.0-alpha.412 without resolving a SHA first.
       - name: Build and push
         run: |
-          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
-          docker buildx build --platform linux/amd64 -t "$IMAGE" --push .
+          REPO_PATH="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}"
+          IMAGE="${REPO_PATH}:${GITHUB_SHA}"
+          docker buildx build --platform linux/amd64 \
+            -t "$IMAGE" \
+            -t "${REPO_PATH}:${IMAGE_TAG}" \
+            --push .
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+        env:
+          IMAGE_TAG: ${{ needs.version.outputs.image_tag }}
 
       - id: deploy
         uses: google-github-actions/deploy-cloudrun@v3
@@ -220,20 +308,37 @@ jobs:
             --min-instances=0
             --max-instances=5
             --service-account=fbc-review-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+          # FBC_VERSION is what the revision reports on /healthz and what the
+          # client prints in the masthead and the footer. Handed in rather than
+          # recomputed in the container: the image has no .git and no build
+          # number, so this is the only place the full string exists.
           env_vars: |
             FBC_BUCKET=${{ vars.FBC_BUCKET }}
             FBC_PROJECT_ID=${{ env.PROJECT_ID }}
             FBC_ALLOWED_EMAILS=${{ vars.FBC_ALLOWED_EMAILS }}
             FBC_SIGNER_SA=fbc-review-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+            FBC_VERSION=${{ needs.version.outputs.version }}
 
+      # Checks *which* build answered, not just that one did. Traffic can still
+      # be on the previous revision when a deploy has not fully rolled over, and
+      # a 200 from the old one would otherwise read as a successful deploy.
       - name: Smoke-test the new revision
+        env:
+          EXPECTED: ${{ needs.version.outputs.version }}
+          URL: ${{ steps.deploy.outputs.url }}
         run: |
           for attempt in 1 2 3 4 5; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "${{ steps.deploy.outputs.url }}/healthz" || true)
-            [ "$code" = "200" ] && echo "healthz OK" && exit 0
+            body=$(curl -s --max-time 10 "${URL}/healthz" || true)
+            reported=$(printf '%s' "$body" | python3 -c \
+              'import json,sys; print((json.load(sys.stdin) or {}).get("version",""))' 2>/dev/null || true)
+            if [ "$reported" = "$EXPECTED" ]; then
+              echo "healthz OK — serving ${reported}"
+              echo "Deployed \`${EXPECTED}\` to ${URL}" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             sleep 5
           done
-          echo "::error::/healthz did not return 200 on the new revision"
+          echo "::error::/healthz never reported ${EXPECTED}. Last answer: ${reported:-<none>}"
           exit 1
 
   # ── hosting ────────────────────────────────────────────────────────────
@@ -258,7 +363,7 @@ jobs:
 
   deploy-hosting:
     name: Firebase Hosting
-    needs: [deploy-api, changes, deploy-gate]
+    needs: [deploy-api, changes, deploy-gate, version]
     # Stated rather than inherited from deploy-api being skipped, so this does
     # not depend on how a skipped `needs` propagates.
     if: >-
@@ -287,5 +392,10 @@ jobs:
 
       # The CLI picks up Application Default Credentials from the auth step, so
       # no FIREBASE_TOKEN and no key file.
+      #
+      # No version is injected into the bundle: the client reads it from
+      # /api/healthz, which Hosting rewrites to the revision deploy-api just put
+      # up. One number, from the service that is actually answering, rather than
+      # a second one baked into a CDN artefact that can outlive it.
       - name: Deploy Hosting
         run: npx --yes firebase-tools@latest deploy --only hosting --project "${PROJECT_ID}" --non-interactive

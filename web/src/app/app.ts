@@ -2,6 +2,7 @@ import { Component, computed, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 
 import { AuthService } from './core/auth';
+import { HealthService } from './core/health';
 import { ReviewService } from './review/review-service';
 
 @Component({
@@ -11,6 +12,8 @@ import { ReviewService } from './review/review-service';
 })
 export class App {
   protected readonly auth = inject(AuthService);
+  /** Publishes the running API's version to the masthead and the footer. */
+  protected readonly health = inject(HealthService);
   private readonly reviews = inject(ReviewService);
 
   /**

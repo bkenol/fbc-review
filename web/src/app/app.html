@@ -2,10 +2,19 @@
      top of the sheet rather than taking a band out of it, and it scrolls away.
      No fill, one hairline, no nav. -->
 <header class="masthead">
-  <a class="wordmark" href="/">
-    <span class="house">Meridian</span>
-    <span class="tool">FBC Code Reviewer</span>
-  </a>
+  <!-- The build sits beside the wordmark rather than inside it: the lockup is a
+       link home, and a version number is not part of what you click. It says
+       nothing at all until the API answers, because a wrong build number is
+       worse than no build number. -->
+  <div class="lockup">
+    <a class="wordmark" href="/">
+      <span class="house">Meridian</span>
+      <span class="tool">FBC Code Reviewer</span>
+    </a>
+    @if (health.version(); as build) {
+      <span class="build">{{ build }}</span>
+    }
+  </div>
 
   <p class="session">
     @if (auth.openAccess()) {
@@ -50,5 +59,8 @@
     Advisory only. A licensed design professional remains responsible for code compliance —
     this is not a plan approval and does not replace review by the authority having
     jurisdiction.
+    @if (health.version(); as build) {
+      <span class="build-line">FBC Code Reviewer · version {{ build }}</span>
+    }
   </footer>
 </div>

@@ -34,6 +34,12 @@ COPY fbcreview/ ./fbcreview/
 COPY webapp/ ./webapp/
 COPY run.py .
 
+# The base version, so a container started without FBC_VERSION still reports
+# something true rather than "unknown". CI sets FBC_VERSION and that wins; this
+# is the floor under it. Last, because it changes on its own schedule and there
+# is nothing below it to invalidate.
+COPY VERSION .
+
 # Run unprivileged. Added after pip install so the site-packages tree stays
 # root-owned and read-only to the service.
 RUN useradd --create-home --uid 10001 fbc \
