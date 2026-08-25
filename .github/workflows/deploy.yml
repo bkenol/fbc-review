@@ -123,10 +123,63 @@ jobs:
           echo "Generated client matches the API."
 
   # ── deploy ─────────────────────────────────────────────────────────────
-  deploy-api:
-    name: Cloud Run
+  # Is there a deployment to deploy to?
+  #
+  # Every value the deploy jobs need is a repository variable (§5 of the
+  # runbook), and until they are set `google-github-actions/auth` fails with
+  # "must specify exactly one of workload_identity_provider or
+  # credentials_json" — which reads like a broken workflow and is not one.
+  # That failure has been red on every push to main since the workflow was
+  # written, while pytest, ng build/test and the drift check all passed, so
+  # red on main stopped meaning anything and a genuine break would not have
+  # been noticed.
+  #
+  # So the deploy is skipped, loudly, until it is configured. This job reads
+  # the variables in a *step* rather than in a job-level `if:`, because a step
+  # can read them without question and the deploy jobs then gate on a `needs`
+  # output — which is unambiguously available in `if:`.
+  deploy-gate:
+    name: deployment configured?
     needs: [python-tests, web-tests, client-drift]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          WIF_PROVIDER: ${{ vars.WIF_PROVIDER }}
+          DEPLOY_SERVICE_ACCOUNT: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+          FBC_BUCKET: ${{ vars.FBC_BUCKET }}
+          FBC_ALLOWED_EMAILS: ${{ vars.FBC_ALLOWED_EMAILS }}
+        run: |
+          missing=()
+          # All five are required, and the runbook says why: the first three
+          # are what authenticates and names the project, FBC_BUCKET is
+          # required by webapp/config.py, and an empty FBC_ALLOWED_EMAILS
+          # means nobody gets in. Deploying without any of them puts up a
+          # service that cannot work.
+          for v in GCP_PROJECT_ID WIF_PROVIDER DEPLOY_SERVICE_ACCOUNT \
+                   FBC_BUCKET FBC_ALLOWED_EMAILS; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Deploying to ${GCP_PROJECT_ID}."
+            exit 0
+          fi
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Deployment is not configured, so Cloud Run and Hosting are skipped. The tests still gate every push. Set these repository variables to enable it (docs/DEPLOYMENT.md section 5): ${missing[*]}."
+
+  deploy-api:
+    name: Cloud Run
+    needs: [python-tests, web-tests, client-drift, deploy-gate]
+    # A skipped gate produces no output, so this is false on a pull request as
+    # well — the branch and event check is kept because it states the intent.
+    if: >-
+      github.ref == 'refs/heads/main' && github.event_name == 'push'
+      && needs.deploy-gate.outputs.configured == 'true'
     runs-on: ubuntu-latest
     outputs:
       url: ${{ steps.deploy.outputs.url }}
@@ -205,8 +258,12 @@ jobs:
 
   deploy-hosting:
     name: Firebase Hosting
-    needs: [deploy-api, changes]
-    if: needs.changes.outputs.web == 'true'
+    needs: [deploy-api, changes, deploy-gate]
+    # Stated rather than inherited from deploy-api being skipped, so this does
+    # not depend on how a skipped `needs` propagates.
+    if: >-
+      needs.changes.outputs.web == 'true'
+      && needs.deploy-gate.outputs.configured == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

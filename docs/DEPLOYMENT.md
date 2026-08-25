@@ -731,6 +731,21 @@ Then set these as **repository variables** (not secrets — none is sensitive):
 | `FBC_BUCKET` | the bucket name |
 | `FBC_ALLOWED_EMAILS` | comma-separated allowlist |
 
+Until all five are set, the `deployment configured?` job reports which are
+missing and the **Cloud Run** and **Firebase Hosting** jobs are skipped. The
+tests still gate every push — a skipped deploy is not a green light on a broken
+build, it is the deploy declining to run against a deployment that does not
+exist yet. Setting the variables is the only step needed to turn it on; nothing
+in the workflow has to change.
+
+Before that gate existed, an unconfigured repository failed
+`google-github-actions/auth` on every push to main with *"the GitHub Action
+workflow must specify exactly one of `workload_identity_provider` or
+`credentials_json`"*. Every run since the workflow was written was red for that
+reason while all three test jobs passed, which is the same failure mode the
+review engine itself is built to avoid: a red that means nothing hides the one
+that means something.
+
 ---
 
 ## 6. Environment variables the service reads
