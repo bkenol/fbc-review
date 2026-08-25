@@ -289,3 +289,65 @@ def test_a_pasted_table_set_gets_the_rebuild_stage_when_opted_in(client):
     stages = client.get(f"/api/jobs/{pasted.json()['id']}").json()["stages"]
     assert "Rebuilding scanned sheets" in stages
     assert len(stages) == len(plain_stages) + 1
+
+
+# ── rotated sheets ────────────────────────────────────────────────────────
+def rotated_pasted_set(rotation: int = 270) -> bytes:
+    from conftest import make_pdf_with_pasted_table
+
+    doc = pymupdf.open("pdf", make_pdf_with_pasted_table(pages=1))
+    for page in doc:
+        page.set_rotation(rotation)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+@pytest.mark.skipif(not convert.support().ocr, reason="Tesseract not installed")
+def test_region_read_recovers_the_rows_from_a_rotated_sheet():
+    """The same recovery as the upright case, on a sheet plotted sideways.
+
+    A region whose bbox was never mapped out of unrotated space clips to
+    nothing here, and pdfocr_tobytes rejects the zero-height pixmap with
+    "Invalid bandwriter header dimensions" — which reads like a corrupt file
+    rather than a coordinate-space mistake. Every sheet in the JSP set is
+    /Rotate 270, so this path carries real sets, not edge cases.
+    """
+    src = write(rotated_pasted_set(270), "pasted-rot.pdf")
+    before = pdfkind.profile(src)
+    regions = {p: [(r.x0, r.y0, r.x1, r.y1) for r in before.sheets[p].raster_regions]
+               for p in before.region_pages}
+    assert regions, "a rotated sheet must still report its pasted table"
+
+    dest = src.replace("pasted-rot", "read-rot")
+    report = convert.read_regions(src, regions, dest)
+
+    assert report.ocr_used is True
+    # No region may be silently dropped: the note records a failure per region.
+    assert "failed" not in " ".join(p.note for p in report.converted_pages)
+    # The region rendered to a real pixmap and reached Tesseract. What the
+    # glyphs say is not asserted here: this fixture rotates a sheet that was
+    # drawn upright, so its table renders sideways and OCR returns noise. A
+    # real set is the other way round — drawn sideways, /Rotate turns it
+    # upright — and the upright recovery is pinned by the test above. The
+    # regression this guards is the region going off-sheet, which produced a
+    # zero-height pixmap and no OCR call at all.
+    assert report.total_chars > 0
+
+
+def test_a_region_off_the_sheet_is_skipped_rather_than_raising():
+    """A degenerate region costs one table, never the whole conversion."""
+    src = write(pasted_set(), "pasted.pdf")
+    dest = src.replace("pasted", "read")
+    doc = pymupdf.open(src)
+    page = doc[0]
+    # Entirely below the sheet.
+    off = pymupdf.Rect(0, page.rect.y1 + 500, page.rect.x1, page.rect.y1 + 900)
+    assert convert._ocr_region(page, off, "eng") == 0
+    doc.close()
+
+    report = convert.read_regions(
+        src, {0: [(off.x0, off.y0, off.x1, off.y1)]}, dest
+    )
+    assert Path(dest).exists()
+    assert "failed" not in " ".join(p.note for p in report.converted_pages)

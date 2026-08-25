@@ -173,3 +173,52 @@ def test_regions_reach_the_job_and_the_schema(client):
     schemas = client.get("/openapi.json").json()["components"]["schemas"]
     assert "RasterRegion" in schemas
     assert "region_pages" in schemas["SourceProfile"]["properties"]
+
+
+# ── rotated sheets ────────────────────────────────────────────────────────
+def rotated(data: bytes, rotation: int = 270) -> bytes:
+    """The same set, replotted with /Rotate on every sheet."""
+    doc = pymupdf.open("pdf", data)
+    for page in doc:
+        page.set_rotation(rotation)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+@pytest.mark.parametrize("rotation", [90, 180, 270])
+def test_a_pasted_table_on_a_rotated_sheet_stays_on_the_sheet(rotation):
+    """get_image_info() reports bboxes in the page's *unrotated* space.
+
+    page.rect is the rotated one, and every clip downstream is taken against
+    it, so an unmapped bbox on a /Rotate 270 sheet lands off the page: the
+    region clips to nothing, the pixmap comes back zero-height and the OCR
+    call fails with an error naming none of that. Seven of ITEC's thirty-five
+    sheets carry /Rotate 270 and all fourteen of the JSP set do, so this is
+    the common case, not the exotic one.
+    """
+    from conftest import make_pdf_with_pasted_table
+
+    data = rotated(make_pdf_with_pasted_table(pages=1), rotation)
+    doc = pymupdf.open("pdf", data)
+    prof = pdfkind.profile("", doc)
+
+    assert prof.region_pages == [0]
+    page_rect = doc[0].rect
+    for region in prof.sheets[0].raster_regions:
+        box = pymupdf.Rect(region.x0, region.y0, region.x1, region.y1)
+        assert box in page_rect, f"{box} is not inside {page_rect}"
+        assert not (box & page_rect).is_empty
+
+
+def test_rotation_does_not_change_how_many_regions_are_found():
+    """The sheet carries the same pasted table whichever way it is plotted."""
+    from conftest import make_pdf_with_pasted_table
+
+    upright = make_pdf_with_pasted_table(pages=1)
+    turned = rotated(upright, 270)
+
+    a = profile_of(upright).sheets[0]
+    b = profile_of(turned).sheets[0]
+    assert len(a.raster_regions) == len(b.raster_regions) == 1
+    assert b.has_readable_regions is True

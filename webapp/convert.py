@@ -301,8 +301,18 @@ def _ocr_region(page: pymupdf.Page, box: pymupdf.Rect, language: str) -> int:
 
     Returns the number of characters recovered.
     """
+    # Clip to the sheet before rendering. A region that falls outside the page
+    # produces a zero-dimension pixmap, and pdfocr_tobytes reports that as
+    # "Invalid bandwriter header dimensions" — an error that says nothing about
+    # the real cause. Returning 0 here loses one region instead of the table.
+    box = box & page.rect
+    if box.is_empty or box.width <= 0 or box.height <= 0:
+        return 0
+
     dpi = _region_dpi(box)
     pix = page.get_pixmap(clip=box, dpi=dpi, alpha=False)
+    if not pix.width or not pix.height:
+        return 0
     rebuilt = pymupdf.open("pdf", pix.pdfocr_tobytes(language=language))
     try:
         ocr_page = rebuilt[0]
