@@ -48,6 +48,18 @@ try {
     $node24 = Join-Path $env:LOCALAPPDATA 'nvm\v24.19.0'
     if (Test-Path $node24) { $env:PATH = "$node24;$env:PATH" }
 
+    # Stamp the version on the host, where the checkout is. The image carries
+    # VERSION but no .git, so a container left to work it out alone can only say
+    # `1.0.0-alpha` — true, and not enough to tell one local build from the next.
+    # Resolved here it reads `1.0.0-alpha+local.9f3c1ab`, and `.dirty` when the
+    # tree has uncommitted changes, which is what answers "is this the code I
+    # just pulled?" from the page itself.
+    $python = Join-Path $repo '.venv\Scripts\python.exe'
+    if (-not (Test-Path $python)) { $python = 'python' }
+    $version = ''
+    try { $version = (& $python -m webapp.version 2>$null | Select-Object -First 1).Trim() } catch { }
+    if ($version) { Write-Host "Version $version" -ForegroundColor DarkGray }
+
     $bundle = Join-Path $repo 'web\dist\fbc-review\browser'
     if (-not $SkipBuild -or -not (Test-Path $bundle)) {
         Write-Host 'Building the client...' -ForegroundColor Cyan
@@ -67,8 +79,10 @@ try {
     # same command run from Git Bash needs it, or /app/client is rewritten to a
     # Windows path and the client silently 404s.
     $lifecycle = if ($Persistent) { '--restart=unless-stopped' } else { '--rm' }
+    $versionArgs = if ($version) { @('-e', "FBC_VERSION=$version") } else { @() }
     & docker run $lifecycle -d --name fbc-test `
         -p "${Port}:8080" `
+        @versionArgs `
         -e FBC_DEV_UNSAFE_AUTH=1 `
         -e FBC_BUCKET=fbc-dev-local `
         -e FBC_PROJECT_ID=fbc-dev-local `
@@ -89,6 +103,7 @@ try {
 
     Write-Host ''
     Write-Host "  Running on http://127.0.0.1:$Port/" -ForegroundColor Green
+    Write-Host "  Version: $($health.version)" -ForegroundColor Green
     Write-Host "  Sign-in required: $($health.auth_required)" -ForegroundColor Yellow
     Write-Host ''
     Write-Host "  Upload limit: $MaxUploadMb MB" -ForegroundColor DarkGray

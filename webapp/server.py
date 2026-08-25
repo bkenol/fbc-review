@@ -29,7 +29,8 @@ from fbcreview.declaration import ProjectDeclaration
 from fbcreview.options import (AVAILABLE_EDITIONS, EDITIONS, OCCUPANCY_GROUPS,
                                SEVERITY_ORDER, ReviewOptions)
 from fbcreview.rules import registered
-from webapp import errors, logging_config, mailer, models, prefill, storage, upload
+from webapp import (errors, logging_config, mailer, models, prefill, storage,
+                    upload, version)
 from webapp.auth import User, current_user
 from webapp.config import settings
 from webapp.errors import ApiError
@@ -40,7 +41,15 @@ from webapp.worker import STAGES, run_review, stages_for
 logging_config.configure()
 log = logging.getLogger("fbc.api")
 
-VERSION = "1.0.0"
+#: The full string this build reports: release, channel, build number and
+#: commit. `webapp/version.py` owns the scheme and explains it.
+VERSION = version.resolve()
+
+#: What the OpenAPI document publishes, and deliberately only the release
+#: triple. The contract does not move when a build number does, and CI
+#: regenerates this schema and compares it byte-for-byte against what is
+#: committed — so nothing that varies by build or by machine can appear in it.
+API_VERSION = version.release()
 
 _pool: Optional[ThreadPoolExecutor] = None
 
@@ -54,6 +63,7 @@ async def lifespan(app: FastAPI):
         "service starting",
         extra={
             "version": VERSION,
+            "channel": version.channel(),
             "workers": cfg.workers,
             "bucket": cfg.bucket,
             "allowlist_size": len(cfg.allowed_emails),
@@ -78,7 +88,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FBC Code Review",
-    version=VERSION,
+    version=API_VERSION,
     summary="Deterministic Florida Building Code plan review.",
     description=(
         "Upload a vector permit set, choose the review parameters, download a "
@@ -200,6 +210,20 @@ def healthz() -> models.Health:
         version=VERSION,
         auth_required=not settings().dev_unsafe_auth,
     )
+
+
+@app.get("/api/healthz", response_model=models.Health, include_in_schema=False)
+def healthz_via_api() -> models.Health:
+    """The same answer, on a path the browser can actually reach.
+
+    Firebase Hosting rewrites `/api/**` to Cloud Run and sends everything else
+    to `index.html`, so a client fetching `/healthz` gets the app shell back
+    rather than this — and the same is true of `ng serve`, whose proxy is keyed
+    on `/api`. Cloud Run's startup probe keeps using `/healthz`; the client uses
+    this. Off the schema deliberately: it is one alias, not a second endpoint,
+    and publishing it would put a duplicate method on the generated client.
+    """
+    return healthz()
 
 
 # -- config ----------------------------------------------------------------

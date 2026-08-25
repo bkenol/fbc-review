@@ -256,6 +256,15 @@ a:hover {
   pointer-events: auto;
 }
 
+/* Left column of the masthead: the wordmark, and the build beside it. Grouping
+   them keeps the header's space-between a two-child rule. */
+.lockup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+}
+
 .wordmark {
   display: flex;
   align-items: baseline;
@@ -280,6 +289,20 @@ a:hover {
   letter-spacing: 0.28em;
   color: var(--text-muted);
   text-transform: uppercase;
+}
+
+/* The build number. Mono, because it is a figure to be read character by
+   character and compared against another one — not a label. Quieter than the
+   wordmark's qualifier and set at the ink ramp's muted step, so it identifies
+   the deployment without competing with what the page is for. Never uppercased:
+   it carries digits, dots and a short SHA, and letter-spacing them apart makes
+   them harder to compare, not easier. */
+.build {
+  font: var(--type-code);
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .session {
@@ -1415,6 +1438,19 @@ footer {
   max-width: 92ch;
   font: var(--type-small);
   color: var(--text-muted);
+}
+
+/* The same figure as the masthead's, restated where someone who has scrolled to
+   the bottom of a findings register will look for it. Its own line, under the
+   disclaimer rather than inside it: the disclaimer is fixed prose and nothing
+   may read as part of it. */
+.build-line {
+  display: block;
+  margin-top: var(--space-3);
+  font: var(--type-code);
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--text-faint);
 }
 
 /* The system's motion budget is 120ms for colour and 200ms for anything larger, and it

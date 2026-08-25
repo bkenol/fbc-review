@@ -8,7 +8,7 @@
  * The SDK's `User` is bridged into a signal, so templates react without any
  * manual change detection — this app is zoneless.
  */
-import { Injectable, computed, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { FirebaseApp, getApps, initializeApp } from 'firebase/app';
 import {
   Auth,
@@ -21,6 +21,7 @@ import {
 } from 'firebase/auth';
 
 import { FIREBASE_CONFIG, isFirebaseConfigured } from './firebase-config';
+import { HealthService } from './health';
 
 /** What the UI needs to distinguish. The middle state is the one that is easy
  *  to get wrong: signed in with a real Google account, and still not allowed. */
@@ -34,6 +35,7 @@ const OPEN_ACCESS_USER = {
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
+  private readonly health = inject(HealthService);
   private app: FirebaseApp | null = null;
   private auth: Auth | null = null;
 
@@ -91,26 +93,23 @@ export class AuthService {
   }
 
   /**
-   * Ask /healthz — which is unauthenticated by design — whether this
-   * deployment requires sign-in at all.
+   * Wait on the health probe — which is unauthenticated by design — to learn
+   * whether this deployment requires sign-in at all.
    *
-   * Uses `fetch` rather than HttpClient on purpose: HttpClient would run the
-   * auth interceptor, which injects this service, and a service cannot cleanly
-   * depend on something that depends on it during construction.
+   * The probe lives in HealthService because the masthead and the footer need
+   * the same call's version, and firing it twice on boot to answer two
+   * questions about one response would be silly. A probe that never answers
+   * leaves `authRequired()` null, which is the same outcome as before: the
+   * deployment keeps requiring sign-in, and the review page surfaces the
+   * connection failure on its own.
    */
   private async probeOpenAccess(): Promise<void> {
     try {
-      const response = await fetch('healthz', { cache: 'no-store' });
-      if (response.ok) {
-        const health = (await response.json()) as { auth_required?: boolean };
-        if (health.auth_required === false) {
-          this._openAccess.set(true);
-          this._user.set(OPEN_ACCESS_USER);
-        }
+      await this.health.whenProbed();
+      if (this.health.authRequired() === false) {
+        this._openAccess.set(true);
+        this._user.set(OPEN_ACCESS_USER);
       }
-    } catch {
-      // Unreachable server. Leave it requiring sign-in; the review page will
-      // surface the connection failure on its own.
     } finally {
       this.settleReady();
     }
