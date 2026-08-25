@@ -67,7 +67,12 @@ jobs:
       - id: stamp
         env:
           BUILD: ${{ github.run_number }}
-          SHA: ${{ github.sha }}
+          # The PR head rather than `github.sha`, which on a pull_request event
+          # is the ephemeral merge ref — a commit nobody can resolve locally,
+          # which is the one thing a commit in a version string has to be good
+          # for. On a push `github.event.pull_request` is null and this falls
+          # through to `github.sha`, which is then the head of main.
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           base="$(grep -vE '^[[:space:]]*(#|$)' VERSION | head -1 | tr -d '[:space:]')"
