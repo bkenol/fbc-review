@@ -34,9 +34,14 @@ not a better tracer.
 """
 from __future__ import annotations
 
+import csv
 import dataclasses
 import logging
 import math
+import os
+import shutil
+import subprocess
+import tempfile
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -65,6 +70,24 @@ HOUGH_THRESHOLD = 80
 #: A gap this many text-heights wide separates two columns; anything
 #: narrower is a space inside one cell.
 _CELL_GAP_EMS = 1.2
+
+#: The OCR binary, and how long one region may take before it is abandoned.
+TESSERACT = "tesseract"
+OCR_TIMEOUT_S = 120
+
+#: Tesseract's own confidence, below which a word is not written back.
+#:
+#: A code review turns on values, so a misread digit is worse than a missing
+#: one: "26'-4"" read as "28'-4"" is a wrong number presented as a fact,
+#: while a dropped word leaves the rule with nothing and it abstains. 40 is
+#: low enough to keep the ordinary imperfect word and high enough to drop the
+#: noise Tesseract emits over rules, hatching and logos.
+MIN_WORD_CONFIDENCE = 40.0
+
+#: Page segmentation. 3 is Tesseract's full automatic layout analysis, which
+#: measured best on ITEC's code block — the sheet is a grid of separate ruled
+#: tables and the single-uniform-block modes (6) merge them into nonsense.
+OCR_PSM = 3
 
 MIN_LINE_PX = 40
 MAX_GAP_PX = 6
@@ -125,8 +148,14 @@ def support() -> Support:
     """What this deployment can actually do, checked rather than assumed."""
     ocr = False
     ocr_detail = "Tesseract is not installed"
+    # Both halves are needed and they fail independently: get_tessdata() finds
+    # the language data, `tesseract` is the binary the region reader runs. A
+    # deployment can have the data and no binary, and checking only the data
+    # reports OCR as available right up until the first call.
     try:
         pymupdf.get_tessdata()
+        if shutil.which(TESSERACT) is None:
+            raise RuntimeError("tesseract binary not on PATH")
         ocr = True
         ocr_detail = "Tesseract available"
     except Exception as exc:
@@ -300,7 +329,59 @@ def read_regions(
     return report
 
 
-def _ocr_cells(ocr_page: pymupdf.Page):
+def _tesseract_words(pix: pymupdf.Pixmap):
+    """Read one rendered region, returning (rect, text, confidence) per word.
+
+    Tesseract is driven directly rather than through `Pixmap.pdfocr_tobytes`
+    for two reasons. It renders at a resolution we choose rather than one the
+    library picks, which on a 150 dpi pasted picture is the difference between
+    recovering 13 of the block's known values and 26. And TSV carries a
+    confidence per word, so a doubtful reading can be dropped instead of
+    entering a code review as a fact.
+
+    Coordinates come back in pixels, in the pixmap's own space.
+    """
+    work = tempfile.mkdtemp(prefix="fbc-ocr-")
+    try:
+        png = os.path.join(work, "region.png")
+        pix.save(png)
+        stem = os.path.join(work, "out")
+        proc = subprocess.run(
+            [TESSERACT, png, stem, "--psm", str(OCR_PSM), "--oem", "3",
+             "-l", "eng", "tsv"],
+            capture_output=True, timeout=OCR_TIMEOUT_S,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                (proc.stderr or b"").decode("utf-8", "replace").strip()[:200]
+                or f"tesseract exited {proc.returncode}"
+            )
+        tsv = stem + ".tsv"
+        if not os.path.exists(tsv):
+            return []
+        words = []
+        with open(tsv, encoding="utf-8", errors="replace", newline="") as fh:
+            for row in csv.DictReader(fh, delimiter="\t", quoting=csv.QUOTE_NONE):
+                text = (row.get("text") or "").strip()
+                if not text:
+                    continue
+                try:
+                    conf = float(row.get("conf", -1))
+                    left, top = float(row["left"]), float(row["top"])
+                    width, height = float(row["width"]), float(row["height"])
+                except (TypeError, ValueError, KeyError):
+                    continue
+                if conf < MIN_WORD_CONFIDENCE:
+                    continue
+                words.append(
+                    (pymupdf.Rect(left, top, left + width, top + height), text, conf)
+                )
+        return words
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _ocr_cells(words):
     """Group OCR words into table cells: y-bands first, then runs of x.
 
     Tesseract reports a faithful box per word, and that geometry is the only
@@ -315,29 +396,28 @@ def _ocr_cells(ocr_page: pymupdf.Page):
 
     Yields (rect, text) in reading order, one entry per cell.
     """
-    words = ocr_page.get_text("words")
     if not words:
         return []
 
-    heights = sorted((w[3] - w[1]) for w in words)
+    heights = sorted((r.y1 - r.y0) for r, _t, _c in words)
     line_h = heights[len(heights) // 2] or 1.0
     row_tol = line_h * 0.6
     gap_limit = line_h * _CELL_GAP_EMS
 
-    rows: List[List[tuple]] = []
-    for w in sorted(words, key=lambda w: ((w[1] + w[3]) / 2, w[0])):
-        centre = (w[1] + w[3]) / 2
+    rows: List[tuple] = []
+    for w in sorted(words, key=lambda w: ((w[0].y0 + w[0].y1) / 2, w[0].x0)):
+        centre = (w[0].y0 + w[0].y1) / 2
         if rows and abs(centre - rows[-1][0]) <= row_tol:
             rows[-1][1].append(w)
         else:
-            rows.append((centre, [w]))          # type: ignore[arg-type]
+            rows.append((centre, [w]))
 
     cells = []
     for _centre, row in rows:
-        row = sorted(row, key=lambda w: w[0])
+        row = sorted(row, key=lambda w: w[0].x0)
         run = [row[0]]
         for w in row[1:]:
-            if w[0] - run[-1][2] > gap_limit:
+            if w[0].x0 - run[-1][0].x1 > gap_limit:
                 cells.append(_join(run))
                 run = [w]
             else:
@@ -347,12 +427,16 @@ def _ocr_cells(ocr_page: pymupdf.Page):
 
 
 def _join(run):
-    """One cell from a run of words: its bounding box and its text."""
-    x0 = min(w[0] for w in run)
-    y0 = min(w[1] for w in run)
-    x1 = max(w[2] for w in run)
-    y1 = max(w[3] for w in run)
-    return pymupdf.Rect(x0, y0, x1, y1), " ".join(w[4] for w in run)
+    """One cell from a run of words: its box, its text, its worst confidence.
+
+    The weakest word governs: a cell is only as trustworthy as its shakiest
+    part, and a value read half-well is not a value.
+    """
+    box = pymupdf.Rect(
+        min(w[0].x0 for w in run), min(w[0].y0 for w in run),
+        max(w[0].x1 for w in run), max(w[0].y1 for w in run),
+    )
+    return box, " ".join(w[1] for w in run), min(w[2] for w in run)
 
 
 def _ocr_region(page: pymupdf.Page, box: pymupdf.Rect, language: str) -> int:
@@ -361,80 +445,109 @@ def _ocr_region(page: pymupdf.Page, box: pymupdf.Rect, language: str) -> int:
     Returns the number of characters recovered.
     """
     # Clip to the sheet before rendering. A region that falls outside the page
-    # produces a zero-dimension pixmap, and pdfocr_tobytes reports that as
-    # "Invalid bandwriter header dimensions" — an error that says nothing about
-    # the real cause. Returning 0 here loses one region instead of the table.
+    # renders to a zero-dimension pixmap and there is nothing to read.
     box = box & page.rect
     if box.is_empty or box.width <= 0 or box.height <= 0:
         return 0
 
-    dpi = _region_dpi(box)
+    dpi = _region_dpi(page, box)
     pix = page.get_pixmap(clip=box, dpi=dpi, alpha=False)
     if not pix.width or not pix.height:
         return 0
-    rebuilt = pymupdf.open("pdf", pix.pdfocr_tobytes(language=language))
+
+    words = _tesseract_words(pix)
+    if not words:
+        return 0
+
+    # Tesseract works in pixels; the sheet works in points.
+    sx = box.width / pix.width
+    sy = box.height / pix.height
+
+    writer = pymupdf.TextWriter(page.rect)
+    recovered = 0
+
+    # Cells, not whole lines and not single words.
+    #
+    # Word by word loses the gaps: the glyphs land at their own origins,
+    # PyMuPDF re-derives word boundaries from spacing on extraction, and
+    # adjacent cells fuse — "MIXED OCCUPANCY" comes back as "MIXEDOCCUPANCY",
+    # which no label match will ever find.
+    #
+    # A whole line keeps the words legible but throws the columns away. It is
+    # written at one origin, so every glyph after the first is placed by the
+    # substitute font's advance widths rather than by where the ink actually
+    # sits: read back, "MIXED" spans two points and a row's words no longer
+    # share a y. Nothing downstream can recover columns from that, and
+    # `_rows()` groups by y-band and sorts by x precisely to find them.
+    #
+    # So each cell is written at its own true origin, and its font size is
+    # scaled so the run lands in roughly the width the ink occupied.
+    for rect, text, _conf in _ocr_cells(words):
+        text = text.strip()
+        if not text:
+            continue
+        width = max(rect.width * sx, 1.0)
+        height = max(rect.height * sy, 1.0)
+        origin = pymupdf.Point(box.x0 + rect.x0 * sx, box.y0 + rect.y1 * sy)
+        size = height * 0.85
+        try:
+            natural = pymupdf.get_text_length(text, fontsize=size)
+            if natural > 0:
+                # Never widen a cell past its ink, or neighbouring columns
+                # overlap and the x order stops meaning anything.
+                size = min(size, size * width / natural)
+            writer.append(origin, text, fontsize=max(size, 1.0))
+            recovered += len(text)
+        except Exception:
+            # A glyph the base font cannot encode. Dropping one cell is
+            # better than losing the whole table.
+            continue
+
+    if recovered:
+        # render_mode=3 is the invisible-text convention every OCR layer
+        # uses: extractable and searchable, never drawn over the drawing.
+        writer.write_text(page, render_mode=3)
+    return recovered
+
+
+def _native_dpi(page: pymupdf.Page, box: pymupdf.Rect) -> Optional[int]:
+    """The resolution the pasted image was actually stored at.
+
+    Rendering above it invents no detail: ITEC's code block is a 3111 x 1365
+    picture placed at 1493 x 655 points, so 150 dpi is all the ink there is.
+    """
+    best = None
     try:
-        ocr_page = rebuilt[0]
-        if not ocr_page.rect.width or not ocr_page.rect.height:
-            return 0
-
-        # Map the OCR page's coordinate space back onto the region as it sits
-        # on the real sheet.
-        sx = box.width / ocr_page.rect.width
-        sy = box.height / ocr_page.rect.height
-
-        writer = pymupdf.TextWriter(page.rect)
-        recovered = 0
-
-        # Cells, not whole lines and not single words.
-        #
-        # Word by word loses the gaps: the glyphs land at their own origins,
-        # PyMuPDF re-derives word boundaries from spacing on extraction, and
-        # adjacent cells fuse — "MIXED OCCUPANCY" comes back as
-        # "MIXEDOCCUPANCY", which no label match will ever find.
-        #
-        # A whole line keeps the words legible but throws the columns away. It
-        # is written at one origin, so every glyph after the first is placed by
-        # the substitute font's advance widths rather than by where the ink
-        # actually sits: read back, "MIXED" spans two points and a row's words
-        # no longer share a y. Nothing downstream can recover columns from that,
-        # and `_rows()` groups by y-band and sorts by x precisely to find them.
-        #
-        # So each cell is written at its own true origin, and its font size is
-        # scaled so the run lands in roughly the width the ink occupied. Text
-        # inside a cell keeps its spaces; separate cells stay separate.
-        for rect, text in _ocr_cells(ocr_page):
-            text = text.strip()
-            if not text:
+        for info in page.get_image_info():
+            bb = pymupdf.Rect(info["bbox"]) * page.rotation_matrix
+            overlap = bb & box
+            if overlap.is_empty or not bb.width or not bb.height:
                 continue
-            width = max((rect.x1 - rect.x0) * sx, 1.0)
-            height = max((rect.y1 - rect.y0) * sy, 1.0)
-            origin = pymupdf.Point(box.x0 + rect.x0 * sx, box.y0 + rect.y1 * sy)
-            size = height * 0.85
-            try:
-                natural = pymupdf.get_text_length(text, fontsize=size)
-                if natural > 0:
-                    # Never widen a cell past its ink, or neighbouring columns
-                    # overlap and the x order stops meaning anything.
-                    size = min(size, size * width / natural)
-                writer.append(origin, text, fontsize=max(size, 1.0))
-                recovered += len(text)
-            except Exception:
-                # A glyph the base font cannot encode. Dropping one cell is
-                # better than losing the whole table.
+            if abs(overlap.get_area()) < 0.5 * abs(box.get_area()):
                 continue
-
-        if recovered:
-            # render_mode=3 is the invisible-text convention every OCR layer
-            # uses: extractable and searchable, never drawn over the drawing.
-            writer.write_text(page, render_mode=3)
-        return recovered
-    finally:
-        rebuilt.close()
+            dpi = int(round(info.get("width", 0) / (bb.width / 72.0)))
+            if dpi > 0 and (best is None or dpi > best):
+                best = dpi
+    except Exception:
+        return None
+    return best
 
 
-def _region_dpi(box: pymupdf.Rect) -> int:
-    """Enough resolution for small table text, without rendering a poster."""
+def _region_dpi(page: pymupdf.Page, box: pymupdf.Rect) -> int:
+    """The resolution to render a pasted region at before reading it.
+
+    Twice the stored resolution, which is the setting that measured best on
+    ITEC's code block: Tesseract wants more pixels per glyph than the source
+    carries, but rendering far past the source only interpolates, and the old
+    fixed 400 dpi did exactly that to a 150 dpi picture — it recovered 13 of
+    the block's 27 known values where 300 dpi recovers 26.
+
+    Falls back to the long-edge budget when the region is not a single stored
+    image and there is no native resolution to key on.
+    """
+    native = _native_dpi(page, box)
+    if native:
+        return max(MIN_REGION_DPI, min(MAX_DPI, native * 2))
     longest_in = max(box.width, box.height) / 72.0
     if longest_in <= 0:
         return MIN_REGION_DPI

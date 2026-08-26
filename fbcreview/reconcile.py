@@ -354,6 +354,30 @@ def _sheet_hit(facts: ProjectFacts, pattern: re.Pattern) -> Optional[Tuple[str, 
     return None
 
 
+# A code-analysis block states its values two ways, and both are in use.
+#
+# One punctuates — `BUILDING HEIGHT: 26'-4"` — and every pattern below that
+# requires `[:=]` is reading that form. The other tabulates: the label is a row
+# heading and the value sits in a column beside it, with nothing but whitespace
+# between them. ITEC's G-002 is entirely the second kind:
+#
+#     PROPOSED  FBC ALLOWABLE*
+#     HEIGHT                              26'-4"    75 FT.
+#     STORIES                             1         4
+#     SQUARE FOOTAGE PER FLOOR (MAXIMUM)  15,376    92,000
+#
+# The tabular patterns take the FIRST value on the row, which is the proposed
+# one. That ordering is the whole point: the second column is the code limit,
+# and reading it as the building would compare the limit against itself and
+# report every set as compliant. The patterns bound how far they will look
+# ahead for that first number, so a row whose value did not survive OCR runs
+# past its own limit and matches nothing rather than borrowing the next row's.
+# The gap may contain newlines: each recovered cell is written as its own run,
+# so `get_text()` returns the row as "LABEL\n15,376\n92,000" rather than as one
+# line, and a pattern that stopped at the line break would never reach a value.
+#
+# Punctuated forms are listed first, and the sweep stops at the first hit, so an
+# explicit statement always beats a positional read.
 _PATTERNS: Dict[str, List[str]] = {
     "occupancy_group": [
         # The value ends at a slash or a comma as often as at a line break:
@@ -376,17 +400,27 @@ _PATTERNS: Dict[str, List[str]] = {
     "building_area_sf": [
         r"\bBUILDING\s+AREA\s*[:=]\s*([\d,]+)\s*(?:SF|S\.F\.|SQ)",
         r"\bAREA\s+PER\s+(?:FLOOR|STOR[EY]{1,2})\s*[:=]\s*([\d,]+)",
+        # Tabular. See the note on the tabular forms below.
+        r"\bSQUARE\s+FOOTAGE\s+PER\s+(?:FLOOR|STOR[EY]{1,2})[^\d]{0,24}([\d][\d,]{2,})",
     ],
     "total_area_sf": [
         r"\bTOTAL\s+(?:BUILDING\s+)?AREA\s*[:=]\s*([\d,]+)\s*(?:SF|S\.F\.|SQ)",
         r"\bGROSS\s+(?:BUILDING\s+)?AREA\s*[:=]\s*([\d,]+)\s*(?:SF|S\.F\.|SQ)",
+        r"\bTOTAL\s+SQUARE\s+FOOTAGE[^\d]{0,24}([\d][\d,]{2,})",
     ],
     "height_ft": [
         r"\bBUILDING\s+HEIGHT\s*[:=]\s*(\d+\s*'\s*-?\s*\d*\s*\"?|\d+(?:\.\d+)?\s*(?:FT|FEET))",
         r"\bMEAN\s+ROOF\s+HEIGHT\s*[:=]\s*(\d+\s*'\s*-?\s*\d*\s*\"?|\d+(?:\.\d+)?)",
+        r"\bHEIGHT\s+(\d+\s*'\s*-?\s*\d*\s*\"?)",
     ],
     "stories": [
         r"\b(?:NUMBER\s+OF\s+)?STOR(?:IES|EYS)\s*[:=]\s*(\d+)\b",
+        # The tabular row, ahead of the loose form below. ITEC states its
+        # storey count only in a column beside the STORIES heading, and the
+        # loose pattern was answering from "FSPK 1 STORY" in the sprinkler
+        # status row instead — right on that set by luck, and wrong on any
+        # multi-storey building carrying the same boilerplate.
+        r"\bSTOR(?:IES|EYS)\s+(\d+)\b",
         r"\b(\d+)\s+STOR(?:Y|IES|EY|EYS)\b",
     ],
     "sprinkler_system": [
