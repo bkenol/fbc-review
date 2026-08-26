@@ -351,3 +351,87 @@ def test_a_region_off_the_sheet_is_skipped_rather_than_raising():
     )
     assert Path(dest).exists()
     assert "failed" not in " ".join(p.note for p in report.converted_pages)
+
+
+# ── writing onto a CAD-plotted page ───────────────────────────────────────
+def unbalanced_page() -> bytes:
+    """A sheet whose content stream leaves a transform on the stack.
+
+    `q ... cm` with no matching `Q` is common in plotted CAD output, and it is
+    invisible until something is appended: the new content inherits the
+    dangling matrix. On the ITEC sheets that matrix put text written at
+    (1299, 102) in 21pt down at (92, 1601) in half a point — the words were all
+    still there and extraction read them in order, so the rules saw the values
+    and only the geometry was wrong.
+    """
+    doc = pymupdf.open()
+    page = doc.new_page(width=2592, height=1728)
+    page.draw_line((100, 100), (2400, 100))
+    xref = page.get_contents()[0]
+    stream = doc.xref_stream(xref) or b""
+    # Push a scale-and-shift and never pop it, exactly as the real sheets do.
+    doc.update_stream(xref, b"q 0.0708 0 0 0.0708 0 1520 cm\n" + stream)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def test_recovered_text_lands_where_the_ink_was(tmp_path):
+    """The region reader must not inherit the page's dangling transform.
+
+    Nothing here needs OCR: the failure is in how text is written back, so it
+    is reproduced with the same TextWriter call the reader makes.
+    """
+    src = write(unbalanced_page(), "unbalanced.pdf")
+    doc = pymupdf.open(src)
+    page = doc[0]
+
+    page.wrap_contents()
+    writer = pymupdf.TextWriter(page.rect)
+    writer.append(pymupdf.Point(1299, 102), "PROBEWORD", fontsize=21.2)
+    writer.write_text(page, render_mode=3)
+
+    dest = src.replace("unbalanced", "written")
+    doc.save(dest)
+    doc.close()
+
+    check = pymupdf.open(dest)
+    hits = check[0].search_for("PROBEWORD")
+    assert hits, "text was not written at all"
+    got = hits[0]
+    check.close()
+
+    # Within a line of where it was asked for, at the size it was asked for.
+    assert abs(got.x0 - 1299) < 5, f"x drifted to {got.x0}"
+    assert abs(got.y1 - 102) < 40, f"y drifted to {got.y1}"
+    assert got.height > 15, f"shrank to {got.height:.2f}pt tall"
+
+
+@pytest.mark.skipif(not convert.support().ocr, reason="Tesseract not installed")
+def test_region_read_writes_full_size_text_on_an_unbalanced_page():
+    """End to end: the reader balances the page itself, so callers need not."""
+    doc = pymupdf.open("pdf", unbalanced_page())
+    page = doc[0]
+    table = pymupdf.open()
+    tp = table.new_page(width=900, height=300)
+    tp.insert_text((40, 90), "MIXED OCCUPANCY", fontsize=40)
+    tp.insert_text((40, 180), "CONSTRUCTION TYPE", fontsize=40)
+    pix = tp.get_pixmap(dpi=150)
+    table.close()
+    page.insert_image(pymupdf.Rect(300, 300, 1800, 800), pixmap=pix)
+    src = write(doc.tobytes(), "unbalanced-table.pdf")
+    doc.close()
+
+    dest = src.replace("unbalanced-table", "read-table")
+    report = convert.read_regions(src, {0: [(300, 300, 1800, 800)]}, dest)
+    assert report.total_chars > 0
+
+    out = pymupdf.open(dest)
+    sizes = [s["size"]
+             for b in out[0].get_text("dict")["blocks"]
+             for l in b.get("lines", [])
+             for s in l.get("spans", [])]
+    out.close()
+    assert sizes, "no text recovered"
+    # Not one span may come back microscopic: that is the dangling-matrix bug.
+    assert min(sizes) > 2.0, f"smallest span is {min(sizes):.2f}pt"

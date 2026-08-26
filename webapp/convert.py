@@ -284,6 +284,28 @@ def read_regions(
             recovered = 0
             note = f"{len(boxes)} region(s)"
 
+            # Balance the page's content streams before writing onto it.
+            #
+            # A sheet plotted from CAD often ends its content with an unclosed
+            # `q ... cm` — the transform is never popped with `Q`. Anything
+            # appended afterwards inherits that dangling matrix, and on ITEC's
+            # sheets it is a heavy one: text written at (1299, 102) in 21pt
+            # lands at (92, 1601) in half a point. The words were all still
+            # *there*, and extraction read them in order, which is why the
+            # rules saw the values and only the geometry was wrong — the
+            # columns this reader works to preserve were being flattened into
+            # a corner on the way out, and no viewer could select them.
+            #
+            # wrap_contents() puts the existing stream inside its own q/Q, so
+            # the text starts from the identity matrix the coordinates assume.
+            try:
+                page.wrap_contents()
+            except Exception:
+                # Older or unusual pages may refuse; writing on an unbalanced
+                # page is still better than dropping the region entirely.
+                log.warning("could not balance page contents",
+                            extra={"page": number})
+
             if caps.ocr:
                 for box in boxes:
                     try:
