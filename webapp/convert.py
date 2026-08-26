@@ -62,6 +62,10 @@ MIN_REGION_DPI = 300
 
 # Hough parameters, in pixels of the rendered image.
 HOUGH_THRESHOLD = 80
+#: A gap this many text-heights wide separates two columns; anything
+#: narrower is a space inside one cell.
+_CELL_GAP_EMS = 1.2
+
 MIN_LINE_PX = 40
 MAX_GAP_PX = 6
 
@@ -296,6 +300,61 @@ def read_regions(
     return report
 
 
+def _ocr_cells(ocr_page: pymupdf.Page):
+    """Group OCR words into table cells: y-bands first, then runs of x.
+
+    Tesseract reports a faithful box per word, and that geometry is the only
+    record of the table's columns — a pasted table has no ruling lines for
+    `find_tables()` to read, so the grid has to come from where the words sit.
+
+    Rows are words whose vertical centres agree to within half a line height.
+    Inside a row, a gap wider than `_CELL_GAP_EMS` times the text height is a
+    column boundary; anything narrower is a space inside one cell. That
+    threshold matters in both directions: too small and "MIXED OCCUPANCY"
+    splits into two cells, too large and a label fuses with its value.
+
+    Yields (rect, text) in reading order, one entry per cell.
+    """
+    words = ocr_page.get_text("words")
+    if not words:
+        return []
+
+    heights = sorted((w[3] - w[1]) for w in words)
+    line_h = heights[len(heights) // 2] or 1.0
+    row_tol = line_h * 0.6
+    gap_limit = line_h * _CELL_GAP_EMS
+
+    rows: List[List[tuple]] = []
+    for w in sorted(words, key=lambda w: ((w[1] + w[3]) / 2, w[0])):
+        centre = (w[1] + w[3]) / 2
+        if rows and abs(centre - rows[-1][0]) <= row_tol:
+            rows[-1][1].append(w)
+        else:
+            rows.append((centre, [w]))          # type: ignore[arg-type]
+
+    cells = []
+    for _centre, row in rows:
+        row = sorted(row, key=lambda w: w[0])
+        run = [row[0]]
+        for w in row[1:]:
+            if w[0] - run[-1][2] > gap_limit:
+                cells.append(_join(run))
+                run = [w]
+            else:
+                run.append(w)
+        cells.append(_join(run))
+    return cells
+
+
+def _join(run):
+    """One cell from a run of words: its bounding box and its text."""
+    x0 = min(w[0] for w in run)
+    y0 = min(w[1] for w in run)
+    x1 = max(w[2] for w in run)
+    y1 = max(w[3] for w in run)
+    return pymupdf.Rect(x0, y0, x1, y1), " ".join(w[4] for w in run)
+
+
 def _ocr_region(page: pymupdf.Page, box: pymupdf.Rect, language: str) -> int:
     """OCR one pasted image and lay its words back over it, invisibly.
 
@@ -327,29 +386,43 @@ def _ocr_region(page: pymupdf.Page, box: pymupdf.Rect, language: str) -> int:
         writer = pymupdf.TextWriter(page.rect)
         recovered = 0
 
-        # Whole lines, not individual words.
+        # Cells, not whole lines and not single words.
         #
-        # Writing word by word loses the gaps between them: the glyphs land at
-        # their own origins, PyMuPDF re-derives word boundaries from spacing on
-        # extraction, and adjacent cells fuse — "MIXED OCCUPANCY" comes back as
-        # "MIXEDOCCUPANCY", which no label match will ever find. A line carries
-        # real space characters, so the boundaries survive the round trip.
-        for block in ocr_page.get_text("dict").get("blocks", []):
-            for line in block.get("lines", []):
-                text = "".join(span.get("text", "") for span in line.get("spans", []))
-                text = text.strip()
-                if not text:
-                    continue
-                x0, y0, x1, y1 = line["bbox"]
-                height = max((y1 - y0) * sy, 1.0)
-                origin = pymupdf.Point(box.x0 + x0 * sx, box.y0 + y1 * sy)
-                try:
-                    writer.append(origin, text, fontsize=height * 0.85)
-                    recovered += len(text)
-                except Exception:
-                    # A glyph the base font cannot encode. Dropping one line is
-                    # better than losing the whole table.
-                    continue
+        # Word by word loses the gaps: the glyphs land at their own origins,
+        # PyMuPDF re-derives word boundaries from spacing on extraction, and
+        # adjacent cells fuse — "MIXED OCCUPANCY" comes back as
+        # "MIXEDOCCUPANCY", which no label match will ever find.
+        #
+        # A whole line keeps the words legible but throws the columns away. It
+        # is written at one origin, so every glyph after the first is placed by
+        # the substitute font's advance widths rather than by where the ink
+        # actually sits: read back, "MIXED" spans two points and a row's words
+        # no longer share a y. Nothing downstream can recover columns from that,
+        # and `_rows()` groups by y-band and sorts by x precisely to find them.
+        #
+        # So each cell is written at its own true origin, and its font size is
+        # scaled so the run lands in roughly the width the ink occupied. Text
+        # inside a cell keeps its spaces; separate cells stay separate.
+        for rect, text in _ocr_cells(ocr_page):
+            text = text.strip()
+            if not text:
+                continue
+            width = max((rect.x1 - rect.x0) * sx, 1.0)
+            height = max((rect.y1 - rect.y0) * sy, 1.0)
+            origin = pymupdf.Point(box.x0 + rect.x0 * sx, box.y0 + rect.y1 * sy)
+            size = height * 0.85
+            try:
+                natural = pymupdf.get_text_length(text, fontsize=size)
+                if natural > 0:
+                    # Never widen a cell past its ink, or neighbouring columns
+                    # overlap and the x order stops meaning anything.
+                    size = min(size, size * width / natural)
+                writer.append(origin, text, fontsize=max(size, 1.0))
+                recovered += len(text)
+            except Exception:
+                # A glyph the base font cannot encode. Dropping one cell is
+                # better than losing the whole table.
+                continue
 
         if recovered:
             # render_mode=3 is the invisible-text convention every OCR layer

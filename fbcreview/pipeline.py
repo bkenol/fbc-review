@@ -17,6 +17,100 @@ from .declaration import ProjectDeclaration
 _FTIN = re.compile(r"(\d+)\s*'\s*-\s*(\d+)")
 
 
+# ── where the data lives ──────────────────────────────────────────────────
+#
+# A sheet number tells you the discipline and the series. It does not tell you
+# what is printed on the sheet, and no two offices number alike: the three sets
+# this engine has been measured against use G-001/A-101, AG.001/AA.101 and
+# M.101/E.201, and none of them contains a sheet numbered G-0, A-2, M-1 or E-3.
+# Keying extraction on a literal sheet number found the code block on none of
+# them and the schedules on none of them — the lookups simply returned nothing
+# and the review came back empty on a set that carried every table it needed.
+#
+# What is stable is what the blocks and schedules are *called*, because the name
+# is printed on the sheet as the table's own title. So the vocabulary below is
+# names, every sheet is searched for them, and where a sheet number appears it
+# is carried as provenance rather than used as a key.
+
+#: Headers a code-analysis block is printed under. Order is preference: the
+#: first header that yields a row for a given section wins.
+CODE_BLOCK_HEADERS = (
+    "EGRESS",
+    "BUILDING CODE ANALYSIS",
+    "CODE COMPLIANCE DATA",
+    "CODE COMPLIANCE",
+    "CODE ANALYSIS",
+)
+
+#: (name the rules ask for, titles a set might actually print).
+#:
+#: The left-hand name is the contract with `ProjectFacts.schedule()` and must
+#: not drift; the right-hand titles are what real title blocks say. ITEC prints
+#: "DOOR SCHEDULE" where the JSP set prints "DOOR AND FRAME SCHEDULE", and both
+#: are the table the door rules want.
+SCHEDULE_VOCABULARY = (
+    ("DOOR AND FRAME SCHEDULE",
+     ("DOOR AND FRAME SCHEDULE", "DOOR SCHEDULE")),
+    ("ROOF TOP UNIT SCHEDULE",
+     ("ROOF TOP UNIT SCHEDULE", "ROOF TOP UNIT", "RTU SCHEDULE")),
+    ("AIR BALANCE", ("AIR BALANCE",)),
+    ("OCCUPANT DENSITY", ("OCCUPANT DENSITY",)),
+    ("ELECTRICAL LOAD CALCULATIONS",
+     ("ELECTRICAL LOAD CALCULATIONS", "LOAD CALCULATIONS", "LOAD CALCULATION")),
+    ("PANEL SCHEDULE", ("PANEL SCHEDULE",)),
+    # Not on a predictable sheet either: a tenant fit-out puts one on the
+    # life-safety sheet, a shell puts one on the first floor plan.
+    ("OCCUPANT LOAD", ("OCCUPANT LOAD",)),
+)
+
+
+_SERIES = re.compile(r"^([A-Za-z]+)")
+
+
+def _series(code: str) -> str:
+    """The letters a sheet number opens with — its discipline series.
+
+    'G-001' -> 'G', 'AG.001' -> 'AG', 'M.101' -> 'M', 'E-3' -> 'E'. Offices
+    prefix the discipline letter differently (a plain 'G' general sheet, or an
+    'AG' architectural-general one), so callers test the series with startswith
+    or endswith rather than equality.
+    """
+    m = _SERIES.match(code or "")
+    return m.group(1).upper() if m else ""
+
+
+def _comma_float(raw: str) -> float:
+    return float(raw.replace(",", ""))
+
+
+def _first_match(sheets, text, pattern, cast=None):
+    """First capture of `pattern` across `sheets`, in sheet order.
+
+    Returns None when no sheet states it, which is the same "not stated" the
+    fixed-sheet lookup produced when the sheet was absent — the rules abstain
+    on it rather than assuming a value.
+    """
+    rx = re.compile(pattern, re.I)
+    for s in sheets:
+        m = rx.search(text.get(s.index) or "")
+        if m:
+            return cast(m.group(1)) if cast else m.group(1)
+    return None
+
+
+def _sheets_naming(facts, text, needle):
+    """Sheets whose own text carries `needle`.
+
+    This text check is what keeps searching every sheet affordable:
+    `find_tables()` and `search_for()` both cost real time, and a permit set is
+    mostly sheets that carry neither a code block nor a schedule. Reading the
+    already-extracted page text first costs nothing and rules almost all of
+    them out.
+    """
+    n = needle.upper()
+    return [s for s in facts.sheets if n in (text.get(s.index) or "").upper()]
+
+
 def _leaf_inches(raw: str):
     m = _FTIN.search(raw or "")
     if m:
@@ -29,7 +123,6 @@ def build_facts(path: str) -> ProjectFacts:
     text = {p: doc[p].get_text() for p in range(doc.page_count)}
     facts = ProjectFacts(source_path=path, text_by_page=text)
     facts.sheets = sheet_index(doc, text)
-    by_code = {s.code: s for s in facts.sheets}
     facts.meta["cad_layers"] = ocg_names(doc)
     facts.meta["native_vector"] = len(facts.meta["cad_layers"]) > 0
 
@@ -37,39 +130,32 @@ def build_facts(path: str) -> ProjectFacts:
         facts.geometry[p] = page_geometry(doc, p, text[p])
 
     # ── code data blocks (unruled) ────────────────────────────────────────
-    for code in ("G-0", "G-1"):
-        s = by_code.get(code)
-        if not s:
-            continue
-        for header in ("EGRESS", "BUILDING CODE ANALYSIS"):
-            for d in code_data_block(doc, s.index, header, code):
-                facts.code_data.append(normalise(d))
+    seen_data = set()
+    for header in CODE_BLOCK_HEADERS:
+        for s in _sheets_naming(facts, text, header):
+            for d in code_data_block(doc, s.index, header, s.code):
+                d = normalise(d)
+                # The same row reached through two headers is one row. A block
+                # titled "LIFE SAFETY / EGRESS" answers to both.
+                key = (d.section, d.label, d.sheet)
+                if key in seen_data:
+                    continue
+                seen_data.add(key)
+                facts.code_data.append(d)
 
     # ── ruled schedules ───────────────────────────────────────────────────
-    wanted = [("A-2", "DOOR AND FRAME SCHEDULE"), ("M-1", "ROOF TOP UNIT SCHEDULE"),
-              ("M-1", "AIR BALANCE"), ("M-1", "OCCUPANT DENSITY"),
-              ("E-3", "ELECTRICAL LOAD CALCULATIONS"), ("E-3", "PANEL SCHEDULE")]
-    for code, title in wanted:
-        s = by_code.get(code)
-        if not s:
+    for canonical, titles in SCHEDULE_VOCABULARY:
+        if facts.schedule(canonical):
             continue
-        sch = find_schedule(doc, s.index, title, code)
-        if sch:
-            facts.schedules.append(sch)
-
-    # Occupant-load tables are not on a predictable sheet: a tenant fit-out puts
-    # one on the life-safety sheet, a shell puts one on the first floor plan.
-    # Sheets are filtered on their own text first, so this costs a find_tables()
-    # only where the words actually appear.
-    for s in facts.sheets:
-        if "OCCUPANT LOAD" not in (text.get(s.index) or "").upper():
-            continue
-        if any(sch.page == s.index and "OCCUPANT" in sch.name.upper()
-               for sch in facts.schedules):
-            continue
-        sch = find_schedule(doc, s.index, "OCCUPANT LOAD", s.code)
-        if sch:
-            facts.schedules.append(sch)
+        for title in titles:
+            found = None
+            for s in _sheets_naming(facts, text, title):
+                found = find_schedule(doc, s.index, title, s.code, name=canonical)
+                if found:
+                    facts.schedules.append(found)
+                    break
+            if found:
+                break
 
     # ── doors ─────────────────────────────────────────────────────────────
     ds = facts.schedule("DOOR AND FRAME SCHEDULE")
@@ -109,19 +195,28 @@ def build_facts(path: str) -> ProjectFacts:
                         p.mark, _f(v, 1), _f(v, 2), _f(v, 3), _f(v, 4), _f(v, 5), _f(v, 6)))
 
     # ── scalar project data scraped from the general sheets ───────────────
-    g0 = text.get(by_code["G-0"].index, "") if "G-0" in by_code else ""
-    g1 = text.get(by_code["G-1"].index, "") if "G-1" in by_code else ""
-    m = re.search(r"AREA:?\s*([\d,]+)\s*SF", g0, re.I)
-    if m:
-        facts.meta["area_g0_sf"] = float(m.group(1).replace(",", ""))
-    m = re.search(r"TOTAL\s+([\d,]+)\s*SF", g1, re.I)
-    if m:
-        facts.meta["area_g1_sf"] = float(m.group(1).replace(",", ""))
-    m = re.search(r"RISK\s*CATEGORY:?\s*(I{1,3}V?|\d)", g0, re.I)
-    if m:
-        facts.meta["risk_category"] = m.group(1)
-    if "G-1" in by_code:
-        bca = labelled_values(doc, by_code["G-1"].index, "BUILDING CODE ANALYSIS")
+    #
+    # "The general sheets" is a role, not a number. G-001 and AG.001 both fill
+    # it. The two area reads stay deliberately separate: XSHEET.BUILDING_AREA
+    # is a cross-sheet check, and collapsing them onto one sheet would make it
+    # compare a value with itself and never disagree. So each phrasing is
+    # searched across the general sheets independently, exactly as the two
+    # fixed sheets used to supply them.
+    general = [s for s in facts.sheets if _series(s.code).endswith("G")]
+    facts.meta["area_g0_sf"] = _first_match(
+        general, text, r"AREA:?\s*([\d,]+)\s*SF", cast=_comma_float)
+    facts.meta["area_g1_sf"] = _first_match(
+        general, text, r"TOTAL\s+([\d,]+)\s*SF", cast=_comma_float)
+    facts.meta["risk_category"] = _first_match(
+        general, text, r"RISK\s*CATEGORY:?\s*(I{1,3}V?|\d)")
+    for key in ("area_g0_sf", "area_g1_sf", "risk_category"):
+        if facts.meta[key] is None:
+            del facts.meta[key]
+
+    for s in _sheets_naming(facts, text, "BUILDING CODE ANALYSIS"):
+        bca = labelled_values(doc, s.index, "BUILDING CODE ANALYSIS")
+        if not bca:
+            continue
         facts.meta["building_code_analysis"] = bca
         for k, v in bca.items():
             ku = k.upper()
@@ -131,13 +226,18 @@ def build_facts(path: str) -> ProjectFacts:
                 facts.meta["sprinklered"] = v.strip().upper().startswith("Y")
             elif "EGRESS WIDTH FACTOR" in ku:
                 facts.meta["stated_capacity_factor"] = float(re.sub(r"[^\d.]", "", v) or 0) or None
-    e3 = text.get(by_code["E-3"].index, "") if "E-3" in by_code else ""
-    m = re.search(r"ELECTRICAL\s+PANEL[^\n]*\n(?:[^\n]*\n){0,3}?\s*(\d{3,4})\s*A\b", e3, re.I)
-    if m:
-        facts.meta["panel_rating_a"] = float(m.group(1))
-    m = re.search(r"(\d{3,4})\s*KAIC", e3, re.I)
-    if m:
-        facts.meta["service_kaic"] = float(m.group(1))
+        break
+
+    electrical = [s for s in facts.sheets if _series(s.code).startswith("E")]
+    rating = _first_match(
+        electrical, text,
+        r"ELECTRICAL\s+PANEL[^\n]*\n(?:[^\n]*\n){0,3}?\s*(\d{3,4})\s*A\b",
+        cast=float)
+    if rating is not None:
+        facts.meta["panel_rating_a"] = rating
+    kaic = _first_match(electrical, text, r"(\d{3,4})\s*KAIC", cast=float)
+    if kaic is not None:
+        facts.meta["service_kaic"] = kaic
     doc.close()
     return facts
 
