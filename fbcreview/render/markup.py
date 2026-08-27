@@ -7,6 +7,7 @@ rule engine, so the pipeline is PDF in / PDF out with nothing hand-placed.
 from __future__ import annotations
 from typing import Dict, List, Optional, Sequence
 import datetime
+import re
 import pymupdf
 
 from ..rules import Finding
@@ -246,8 +247,8 @@ class Renderer:
         # page. Nothing else in the legend is duplicated anywhere.
         about_h = 250 if self.declared else 190
         inc_about = space - fixed >= about_h
-        inc_tally = space - fixed - (about_h if inc_about else 0) >= 84
-        need = fixed + (84 if inc_tally else 0) + (about_h if inc_about else 0)
+        inc_tally = space - fixed - (about_h if inc_about else 0) >= 106
+        need = fixed + (106 if inc_tally else 0) + (about_h if inc_about else 0)
         slack = max(0.0, space - need)
         grow = min(slack, len(rows) * 16); rh = 26 + grow / len(rows); slack -= grow
         gap = slack / (1 + int(inc_tally) + int(inc_about))
@@ -299,7 +300,16 @@ class Renderer:
                     f"<div style='font-family:Helvetica;text-align:center;'>"
                     f"<div style='font-size:17pt;font-weight:bold;color:{HEX[name]};'>{n}</div>"
                     f"<div style='font-size:8.5pt;color:#5b6572;letter-spacing:.6pt;'>{name}</div></div>")
-            y += 56 + gap
+            # One line of coverage under the tally. A tally of zeroes and a
+            # tally on an unread set look identical, and the reader of a
+            # plotted sheet has no register in front of them to check.
+            cov = self._coverage()
+            pg.insert_htmlbox(pymupdf.Rect(X0, y + 54, X1, y + 78),
+                f"<div style='font-family:Helvetica;font-size:9.5pt;color:#5b6572;"
+                f"line-height:1.3;'>Read from <b>{cov['read']} of {cov['total']}</b> sheets"
+                f" &middot; sheet number identified on <b>{cov['numbered']}</b>"
+                f" &middot; drawing content on <b>{cov['drawn']}</b></div>")
+            y += 78 + gap
         if inc_about:
             pg.draw_line(pymupdf.Point(X0, y), pymupdf.Point(X1, y), color=(0.84, 0.86, 0.90), width=1)
             pg.insert_htmlbox(pymupdf.Rect(X0, y + 6, X1, y + 30),
@@ -575,6 +585,56 @@ reviews the sheet. A dashed marker means the two readings disagree; the detail i
 {table}
 {divergence}""")
 
+    #: A sheet counts as read when this much text came off it, and as drawn
+    #: when it carries this many vector paths. Both are deliberately low: the
+    #: question is "did the reader get into this sheet at all", not "is it a
+    #: rich sheet".
+    MIN_SHEET_CHARS = 200
+    MIN_SHEET_PATHS = 50
+
+    def _coverage(self) -> Dict[str, int]:
+        """How much of the set the reader actually got into.
+
+        The severity tally answers "what did this review find". It says nothing
+        about "did this review look at everything", and those are different
+        questions with the same-looking answer: a set comes back with no
+        findings either because it is clean or because half its sheets were
+        pictures the reader could not read. Printing only the tally leaves the
+        reader unable to tell those apart, so the coverage is printed beside it.
+
+        Counted per sheet, not per finding — a sheet nothing was found on was
+        still examined, and saying so is the point.
+        """
+        # Memoised: the legend is drawn once per sheet and the register once
+        # more, so an uncached scan walks every page of the set for every page
+        # of the set — 35 sheets becomes 1,225 page reads, and get_drawings()
+        # on a plotted sheet is not cheap.
+        cached = getattr(self, "_coverage_cache", None)
+        if cached is not None:
+            return cached
+
+        total = self.doc.page_count
+        numbered = read = drawn = 0
+        for n in range(total):
+            page = self.doc[n]
+            sheet = self.sheets.get(n)
+            code = str(getattr(sheet, "code", "") or "")
+            # sheet_index falls back to "p<n>" when no title block was found.
+            if code and not re.fullmatch(r"p\d+", code):
+                numbered += 1
+            if len((page.get_text() or "").strip()) > self.MIN_SHEET_CHARS:
+                read += 1
+            try:
+                if len(page.get_drawings()) > self.MIN_SHEET_PATHS:
+                    drawn += 1
+            except Exception:
+                # A sheet whose geometry will not parse is simply not counted
+                # as drawn; it is still counted in the total.
+                pass
+        self._coverage_cache = {"total": total, "numbered": numbered,
+                                "read": read, "drawn": drawn}
+        return self._coverage_cache
+
     def _register(self, opens, passes, tally):
         o = self.opt
         d = self.declaration
@@ -594,9 +654,28 @@ reviews the sheet. A dashed marker means the two readings disagree; the detail i
         counts = "".join(
             f"<tr><td class='{self.CLS[n]}'>{n}</td><td><b>{c}</b></td>"
             f"<td>{SEV_DESC[n]}</td></tr>" for n, c in tally)
+        cov = self._coverage()
         self._put(p, lead + f"""
 <table><colgroup><col style='width:14%'><col style='width:9%'><col style='width:77%'></colgroup>
 <tr><th>Severity</th><th>Count</th><th>What it means</th></tr>{counts}</table>
+<h2>Sheet coverage</h2>
+<p class='sm'>What the reader got into, sheet by sheet. The severity counts above say what was
+found; these say how much of the set was examined to find it — a review with nothing to report
+reads the same as one that could not read the drawings, and these two tables are what tell
+them apart.</p>
+<table><colgroup><col style='width:22%'><col style='width:12%'><col style='width:66%'></colgroup>
+<tr><th>Measure</th><th>Count</th><th>What it means</th></tr>
+<tr><td>Sheets in the set</td><td><b>{cov['total']}</b></td>
+<td>Every page of the submitted PDF.</td></tr>
+<tr class='n'><td>Text recovered</td><td><b>{cov['read']} of {cov['total']}</b></td>
+<td>The reader obtained readable text from this many sheets, counting text recovered by OCR from
+pasted images. A sheet not counted here is one nothing could be read from.</td></tr>
+<tr><td>Sheet number identified</td><td><b>{cov['numbered']} of {cov['total']}</b></td>
+<td>The title block was located and its sheet number read. The rest are referred to by page
+number; nothing is skipped for want of a number.</td></tr>
+<tr class='n'><td>Drawing content present</td><td><b>{cov['drawn']} of {cov['total']}</b></td>
+<td>Carries vector linework rather than being a flat picture.</td></tr>
+</table>
 <h2>Review parameters</h2>
 <table><colgroup><col style='width:28%'><col style='width:72%'></colgroup>
 <tr><th>Setting</th><th>Value</th></tr>
