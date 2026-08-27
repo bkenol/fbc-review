@@ -16,6 +16,10 @@ GUTTER = 702
 RED = (0.80, 0.06, 0.06); ORG = (0.93, 0.45, 0.00); AMB = (0.85, 0.62, 0.00)
 GRN = (0.00, 0.55, 0.24); BLU = (0.10, 0.35, 0.80); GRY = (0.42, 0.45, 0.50)
 MAG = (0.78, 0.05, 0.55); INK = (0.05, 0.07, 0.11); VIO = (0.42, 0.16, 0.72)
+#: Coverage is not a severity and must not read as one, so it sits in its own
+#: slate family rather than borrowing a colour that already means something.
+SLATE = (0.28, 0.35, 0.45)
+SLATE_HEX = "#" + "".join(f"{int(v * 255):02x}" for v in SLATE)
 SEVC = {"CRITICAL": RED, "HIGH": ORG, "MEDIUM": AMB, "LOW": BLU,
         "VERIFIED": GRN, "MEASURED": MAG, "SCOPE": GRY}
 HEX = {k: "#" + "".join(f"{int(v*255):02x}" for v in c) for k, c in SEVC.items()}
@@ -247,8 +251,13 @@ class Renderer:
         # page. Nothing else in the legend is duplicated anywhere.
         about_h = 250 if self.declared else 190
         inc_about = space - fixed >= about_h
-        inc_tally = space - fixed - (about_h if inc_about else 0) >= 106
-        need = fixed + (106 if inc_tally else 0) + (about_h if inc_about else 0)
+        inc_tally = space - fixed - (about_h if inc_about else 0) >= 84
+        # The coverage tiles are a second row and degrade on their own: a
+        # short margin keeps the severities and drops coverage rather than
+        # losing both. Coverage is on the register page either way.
+        inc_cover = inc_tally and (
+            space - fixed - (about_h if inc_about else 0) >= 160)
+        need = fixed + (160 if inc_cover else 84 if inc_tally else 0) + (about_h if inc_about else 0)
         slack = max(0.0, space - need)
         grow = min(slack, len(rows) * 16); rh = 26 + grow / len(rows); slack -= grow
         gap = slack / (1 + int(inc_tally) + int(inc_about))
@@ -300,16 +309,39 @@ class Renderer:
                     f"<div style='font-family:Helvetica;text-align:center;'>"
                     f"<div style='font-size:17pt;font-weight:bold;color:{HEX[name]};'>{n}</div>"
                     f"<div style='font-size:8.5pt;color:#5b6572;letter-spacing:.6pt;'>{name}</div></div>")
-            # One line of coverage under the tally. A tally of zeroes and a
-            # tally on an unread set look identical, and the reader of a
-            # plotted sheet has no register in front of them to check.
+            # A second row of tiles, for coverage. A tally of zeroes on a clean
+            # set and a tally of zeroes on an unread one look identical, and
+            # the reader of a plotted sheet has no register in front of them to
+            # check — so how much was read is given the same weight, in the
+            # same shape, as what was found.
+            y += 56
+            if not inc_cover:
+                y += gap
+        if inc_tally and inc_cover:
             cov = self._coverage()
-            pg.insert_htmlbox(pymupdf.Rect(X0, y + 54, X1, y + 78),
-                f"<div style='font-family:Helvetica;font-size:9.5pt;color:#5b6572;"
-                f"line-height:1.3;'>Read from <b>{cov['read']} of {cov['total']}</b> sheets"
-                f" &middot; sheet number identified on <b>{cov['numbered']}</b>"
-                f" &middot; drawing content on <b>{cov['drawn']}</b></div>")
-            y += 78 + gap
+            pg.insert_htmlbox(pymupdf.Rect(X0, y + 2, X1, y + 22),
+                f"<div style='font-family:Helvetica;font-size:8.5pt;color:#5b6572;"
+                f"letter-spacing:.9pt;'>OF {cov['total']} SHEETS IN THE SET</div>")
+            y += 20
+            cover_tiles = [("TEXT READ", cov["read"]),
+                           ("NUMBERED", cov["numbered"]),
+                           ("DRAWINGS", cov["drawn"])]
+            cw2 = (X1 - X0) / len(cover_tiles)
+            for k, (name, n) in enumerate(cover_tiles):
+                bx = pymupdf.Rect(X0 + k * cw2 + 1, y + 2, X0 + (k + 1) * cw2 - 3, y + 50)
+                pg.draw_rect(bx, color=(0.88, 0.90, 0.93), fill=(1, 1, 1), width=1)
+                pg.draw_rect(pymupdf.Rect(bx.x0, bx.y0, bx.x1, bx.y0 + 4),
+                             color=None, fill=SLATE)
+                # A short count is the interesting case, so it is shown against
+                # its total rather than alone: "28" reads as fine, "28/35" does
+                # not, and the second one is the truth.
+                shown = str(n) if n == cov["total"] else f"{n}/{cov['total']}"
+                pg.insert_htmlbox(bx + (0, 7, 0, -2),
+                    f"<div style='font-family:Helvetica;text-align:center;'>"
+                    f"<div style='font-size:17pt;font-weight:bold;color:{SLATE_HEX};'>{shown}</div>"
+                    f"<div style='font-size:8.5pt;color:#5b6572;letter-spacing:.6pt;'>{name}</div>"
+                    f"</div>")
+            y += 56 + gap
         if inc_about:
             pg.draw_line(pymupdf.Point(X0, y), pymupdf.Point(X1, y), color=(0.84, 0.86, 0.90), width=1)
             pg.insert_htmlbox(pymupdf.Rect(X0, y + 6, X1, y + 30),

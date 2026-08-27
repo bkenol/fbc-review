@@ -17,20 +17,27 @@ from fbcreview.render.markup import Renderer
 from fbcreview.rules import run_all
 
 
+#: A 36" x 24" sheet, which is what a permit set is actually plotted at. The
+#: margin legend sizes itself to the sheet, and the glance tiles only earn
+#: their space on a sheet this tall — on a letter-size page they are dropped
+#: and the counts are carried by the register instead.
+SHEET_W, SHEET_H = 2592, 1728
+
+
 def _set(tmp_path, readable=3, blank=2):
     """A set of readable sheets plus some that carry nothing to read."""
     doc = pymupdf.open()
     for i in range(readable):
-        page = doc.new_page(width=1224, height=792)
+        page = doc.new_page(width=SHEET_W, height=SHEET_H)
         for n in range(120):
-            page.draw_line((20 + n * 8, 40), (20 + n * 8, 500))
-        page.insert_text((40, 600),
-                         "LIFE SAFETY PLAN  OCCUPANT LOAD 70  " * 6, fontsize=9)
+            page.draw_line((40 + n * 16, 80), (40 + n * 16, 1100))
+        page.insert_text((80, 1300),
+                         "LIFE SAFETY PLAN  OCCUPANT LOAD 70  " * 6, fontsize=18)
         r = page.rect
         page.insert_text((r.x0 + 0.84 * r.width, r.y0 + 0.9 * r.height),
-                         f"G-{i}", fontsize=15)
+                         f"G-{i}", fontsize=30)
     for _ in range(blank):
-        doc.new_page(width=1224, height=792)     # nothing on it at all
+        doc.new_page(width=SHEET_W, height=SHEET_H)   # nothing on it at all
     path = tmp_path / "set.pdf"
     doc.save(str(path))
     doc.close()
@@ -81,3 +88,27 @@ def test_coverage_reaches_the_register_page(tmp_path):
     assert "SHEET COVERAGE" in text
     assert "TEXT RECOVERED" in text
     assert "3 OF 5" in text, "the shortfall must be printed as a ratio"
+
+
+def test_coverage_tiles_sit_in_the_glance_row_on_the_sheet(tmp_path):
+    """The margin legend carries the counts too, as tiles beside the severities.
+
+    A reader holding a plotted sheet has no register in front of them, so the
+    "was it all read" answer has to be on the sheet itself.
+    """
+    path = _set(tmp_path, readable=3, blank=2)
+    facts = build_facts(path)
+    options = ReviewOptions(project_name="Coverage")
+    res = run_all(facts, options)
+    out = tmp_path / "review.pdf"
+    Renderer(path, res.findings, facts.sheets, options, res.abstentions).build(str(out))
+
+    doc = pymupdf.open(str(out))
+    margin = doc[0].get_text().upper()
+    doc.close()
+    assert "THE WHOLE SET AT A GLANCE" in margin
+    assert "OF 5 SHEETS IN THE SET" in margin
+    for label in ("TEXT READ", "NUMBERED", "DRAWINGS"):
+        assert label in margin, f"{label} tile missing from the glance row"
+    # A short count is shown against its total; a full one stands alone.
+    assert "3/5" in margin, "a shortfall must show as a ratio, not a bare count"
