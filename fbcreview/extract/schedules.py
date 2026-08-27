@@ -19,7 +19,13 @@ def _clean(c) -> str:
 
 
 def find_schedule(doc: pymupdf.Document, pno: int, title_contains: str,
-                  sheet: str) -> Optional[Schedule]:
+                  sheet: str, name: Optional[str] = None) -> Optional[Schedule]:
+    """`name` is what the schedule is filed under, when that differs from the
+    title searched for. A set that prints "DOOR SCHEDULE" and one that prints
+    "DOOR AND FRAME SCHEDULE" carry the same table, and the rules ask for it
+    by one name — so the title is how it is found and `name` is how it is
+    stored. Omitted, the two are the same, which is the old behaviour.
+    """
     up = title_contains.upper()
     page_area = abs(doc[pno].rect.get_area())
     cands = []
@@ -56,7 +62,8 @@ def find_schedule(doc: pymupdf.Document, pno: int, title_contains: str,
             mark = cells[0]
             rows.append(ScheduleRow(mark, {c or f"col{i}": v
                                            for i, (c, v) in enumerate(zip(cols, cells))}))
-        return Schedule(title_contains.upper(), sheet, pno, cols, rows, title_contains)
+        return Schedule(name or title_contains.upper(), sheet, pno, cols, rows,
+                        title_contains)
     return None
 
 

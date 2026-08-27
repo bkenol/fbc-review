@@ -289,3 +289,149 @@ def test_a_pasted_table_set_gets_the_rebuild_stage_when_opted_in(client):
     stages = client.get(f"/api/jobs/{pasted.json()['id']}").json()["stages"]
     assert "Rebuilding scanned sheets" in stages
     assert len(stages) == len(plain_stages) + 1
+
+
+# ── rotated sheets ────────────────────────────────────────────────────────
+def rotated_pasted_set(rotation: int = 270) -> bytes:
+    from conftest import make_pdf_with_pasted_table
+
+    doc = pymupdf.open("pdf", make_pdf_with_pasted_table(pages=1))
+    for page in doc:
+        page.set_rotation(rotation)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+@pytest.mark.skipif(not convert.support().ocr, reason="Tesseract not installed")
+def test_region_read_recovers_the_rows_from_a_rotated_sheet():
+    """The same recovery as the upright case, on a sheet plotted sideways.
+
+    A region whose bbox was never mapped out of unrotated space clips to
+    nothing here, and pdfocr_tobytes rejects the zero-height pixmap with
+    "Invalid bandwriter header dimensions" — which reads like a corrupt file
+    rather than a coordinate-space mistake. Every sheet in the JSP set is
+    /Rotate 270, so this path carries real sets, not edge cases.
+    """
+    src = write(rotated_pasted_set(270), "pasted-rot.pdf")
+    before = pdfkind.profile(src)
+    regions = {p: [(r.x0, r.y0, r.x1, r.y1) for r in before.sheets[p].raster_regions]
+               for p in before.region_pages}
+    assert regions, "a rotated sheet must still report its pasted table"
+
+    dest = src.replace("pasted-rot", "read-rot")
+    report = convert.read_regions(src, regions, dest)
+
+    assert report.ocr_used is True
+    # No region may be silently dropped: the note records a failure per region.
+    assert "failed" not in " ".join(p.note for p in report.converted_pages)
+    # The region rendered to a real pixmap and reached Tesseract. What the
+    # glyphs say is not asserted here: this fixture rotates a sheet that was
+    # drawn upright, so its table renders sideways and OCR returns noise. A
+    # real set is the other way round — drawn sideways, /Rotate turns it
+    # upright — and the upright recovery is pinned by the test above. The
+    # regression this guards is the region going off-sheet, which produced a
+    # zero-height pixmap and no OCR call at all.
+    assert report.total_chars > 0
+
+
+def test_a_region_off_the_sheet_is_skipped_rather_than_raising():
+    """A degenerate region costs one table, never the whole conversion."""
+    src = write(pasted_set(), "pasted.pdf")
+    dest = src.replace("pasted", "read")
+    doc = pymupdf.open(src)
+    page = doc[0]
+    # Entirely below the sheet.
+    off = pymupdf.Rect(0, page.rect.y1 + 500, page.rect.x1, page.rect.y1 + 900)
+    assert convert._ocr_region(page, off, "eng") == 0
+    doc.close()
+
+    report = convert.read_regions(
+        src, {0: [(off.x0, off.y0, off.x1, off.y1)]}, dest
+    )
+    assert Path(dest).exists()
+    assert "failed" not in " ".join(p.note for p in report.converted_pages)
+
+
+# ── writing onto a CAD-plotted page ───────────────────────────────────────
+def unbalanced_page() -> bytes:
+    """A sheet whose content stream leaves a transform on the stack.
+
+    `q ... cm` with no matching `Q` is common in plotted CAD output, and it is
+    invisible until something is appended: the new content inherits the
+    dangling matrix. On the ITEC sheets that matrix put text written at
+    (1299, 102) in 21pt down at (92, 1601) in half a point — the words were all
+    still there and extraction read them in order, so the rules saw the values
+    and only the geometry was wrong.
+    """
+    doc = pymupdf.open()
+    page = doc.new_page(width=2592, height=1728)
+    page.draw_line((100, 100), (2400, 100))
+    xref = page.get_contents()[0]
+    stream = doc.xref_stream(xref) or b""
+    # Push a scale-and-shift and never pop it, exactly as the real sheets do.
+    doc.update_stream(xref, b"q 0.0708 0 0 0.0708 0 1520 cm\n" + stream)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def test_recovered_text_lands_where_the_ink_was(tmp_path):
+    """The region reader must not inherit the page's dangling transform.
+
+    Nothing here needs OCR: the failure is in how text is written back, so it
+    is reproduced with the same TextWriter call the reader makes.
+    """
+    src = write(unbalanced_page(), "unbalanced.pdf")
+    doc = pymupdf.open(src)
+    page = doc[0]
+
+    page.wrap_contents()
+    writer = pymupdf.TextWriter(page.rect)
+    writer.append(pymupdf.Point(1299, 102), "PROBEWORD", fontsize=21.2)
+    writer.write_text(page, render_mode=3)
+
+    dest = src.replace("unbalanced", "written")
+    doc.save(dest)
+    doc.close()
+
+    check = pymupdf.open(dest)
+    hits = check[0].search_for("PROBEWORD")
+    assert hits, "text was not written at all"
+    got = hits[0]
+    check.close()
+
+    # Within a line of where it was asked for, at the size it was asked for.
+    assert abs(got.x0 - 1299) < 5, f"x drifted to {got.x0}"
+    assert abs(got.y1 - 102) < 40, f"y drifted to {got.y1}"
+    assert got.height > 15, f"shrank to {got.height:.2f}pt tall"
+
+
+@pytest.mark.skipif(not convert.support().ocr, reason="Tesseract not installed")
+def test_region_read_writes_full_size_text_on_an_unbalanced_page():
+    """End to end: the reader balances the page itself, so callers need not."""
+    doc = pymupdf.open("pdf", unbalanced_page())
+    page = doc[0]
+    table = pymupdf.open()
+    tp = table.new_page(width=900, height=300)
+    tp.insert_text((40, 90), "MIXED OCCUPANCY", fontsize=40)
+    tp.insert_text((40, 180), "CONSTRUCTION TYPE", fontsize=40)
+    pix = tp.get_pixmap(dpi=150)
+    table.close()
+    page.insert_image(pymupdf.Rect(300, 300, 1800, 800), pixmap=pix)
+    src = write(doc.tobytes(), "unbalanced-table.pdf")
+    doc.close()
+
+    dest = src.replace("unbalanced-table", "read-table")
+    report = convert.read_regions(src, {0: [(300, 300, 1800, 800)]}, dest)
+    assert report.total_chars > 0
+
+    out = pymupdf.open(dest)
+    sizes = [s["size"]
+             for b in out[0].get_text("dict")["blocks"]
+             for l in b.get("lines", [])
+             for s in l.get("spans", [])]
+    out.close()
+    assert sizes, "no text recovered"
+    # Not one span may come back microscopic: that is the dangling-matrix bug.
+    assert min(sizes) > 2.0, f"smallest span is {min(sizes):.2f}pt"

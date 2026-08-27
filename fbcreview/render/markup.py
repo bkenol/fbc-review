@@ -7,6 +7,7 @@ rule engine, so the pipeline is PDF in / PDF out with nothing hand-placed.
 from __future__ import annotations
 from typing import Dict, List, Optional, Sequence
 import datetime
+import re
 import pymupdf
 
 from ..rules import Finding
@@ -15,6 +16,10 @@ GUTTER = 702
 RED = (0.80, 0.06, 0.06); ORG = (0.93, 0.45, 0.00); AMB = (0.85, 0.62, 0.00)
 GRN = (0.00, 0.55, 0.24); BLU = (0.10, 0.35, 0.80); GRY = (0.42, 0.45, 0.50)
 MAG = (0.78, 0.05, 0.55); INK = (0.05, 0.07, 0.11); VIO = (0.42, 0.16, 0.72)
+#: Coverage is not a severity and must not read as one, so it sits in its own
+#: slate family rather than borrowing a colour that already means something.
+SLATE = (0.28, 0.35, 0.45)
+SLATE_HEX = "#" + "".join(f"{int(v * 255):02x}" for v in SLATE)
 SEVC = {"CRITICAL": RED, "HIGH": ORG, "MEDIUM": AMB, "LOW": BLU,
         "VERIFIED": GRN, "MEASURED": MAG, "SCOPE": GRY}
 HEX = {k: "#" + "".join(f"{int(v*255):02x}" for v in c) for k, c in SEVC.items()}
@@ -28,6 +33,19 @@ SEV_DESC = {
     "SCOPE": "Not reviewed in this pass.",
 }
 ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "MEASURED", "VERIFIED", "SCOPE"]
+
+#: The coverage tiles, and what each one counts. These say how much of the set
+#: was examined, which is a different question from what was found in it — and
+#: the one a reader cannot answer from a severity count, because a clean set
+#: and an unread one both report nothing.
+COVERAGE_LEGEND = [
+    ("TEXT READ", "Text came off the sheet and could be searched for code data — "
+                  "including text recovered by OCR from a table pasted in as a picture."),
+    ("NUMBERED", "The title block was found and its sheet number read. The rest are "
+                 "still read in full; they are referred to by page number."),
+    ("DRAWINGS", "The sheet carries vector linework that can be traced and measured, "
+                 "rather than being a flat picture of a drawing."),
+]
 
 #: Statuses that need action. CONFLICT is a status, not a severity: the ink ramp
 #: still says how much it matters, and the dashed marker says where it came from.
@@ -220,18 +238,36 @@ class Renderer:
            ".id{font-size:10.5pt;color:#666;font-family:Courier;letter-spacing:.5pt;}"
            ".b{font-size:10pt;color:#5b6572;font-style:italic;margin-top:3pt;}")
 
+    @staticmethod
+    def _legend_h(rows, markers, crows, rh, crh, mrh, gap,
+                  inc_tally, inc_cover, inc_about, about_h) -> float:
+        """Exactly how tall the legend block is at these row and gap sizes.
+
+        This mirrors the layout below section for section. It is the one place
+        the block's height is known before it is drawn, which is what lets the
+        block be sized to its contents rather than stretched to its rail.
+        """
+        h = 42 + len(rows) * rh + len(markers) * mrh         # title bar and rows
+        if inc_cover:
+            h += 36 + crows * crh                            # rule, heading, rows
+        h += gap * (2 if inc_tally else 1)
+        if inc_tally:
+            h += 86                                          # heading and tiles
+            if inc_cover:
+                h += 76                                      # caption and tiles
+        if inc_about:
+            h += 34 + about_h
+        return h + 46 + 12                                   # footer strip, cushion
+
     def _legend(self, pg, R, tally):
-        pg.draw_rect(R, color=(0.84, 0.86, 0.90), fill=(0.985, 0.99, 1.0), width=1.3)
-        t = pymupdf.Rect(R.x0, R.y0, R.x1, R.y0 + 34)
-        pg.draw_rect(t, color=None, fill=(0.09, 0.13, 0.22))
-        pg.insert_htmlbox(t + (14, 8, -8, -2),
-            "<div style='font-family:Helvetica;font-size:11.5pt;font-weight:bold;color:#fff;"
-            "letter-spacing:1.3pt;'>LEGEND &mdash; HOW TO READ THIS SHEET</div>")
         rows = [s for s in ORDER if s != "SCOPE"]
         # The two marker entries only earn their space on a review that actually
         # has a declaration behind it.
         markers = MARKER_LEGEND if self.declared else []
-        space = R.height - 34 - 46 - 20
+        # 34 for the title bar, 46 for the footer strip and 20 of padding
+        # below the last section.
+        CHROME = 34 + 46 + 20
+        space = R.height - CHROME
         fixed = len(rows) * 26 + len(markers) * 28
         # The strip is 233 pt of usable height at its tightest, so the marker
         # rows have to be able to lose the argument: if they do not fit, they
@@ -246,11 +282,49 @@ class Renderer:
         # page. Nothing else in the legend is duplicated anywhere.
         about_h = 250 if self.declared else 190
         inc_about = space - fixed >= about_h
-        inc_tally = space - fixed - (about_h if inc_about else 0) >= 84
-        need = fixed + (84 if inc_tally else 0) + (about_h if inc_about else 0)
+        inc_tally = space - fixed - (about_h if inc_about else 0) >= 86
+        # The coverage tiles are a second row and degrade on their own: a
+        # short margin keeps the severities and drops coverage rather than
+        # losing both. Coverage is on the register page either way.
+        # 76 for the second tile row and its caption, 36 for the rule and
+        # heading that set the coverage block apart, and a row per coverage
+        # entry: a metric named but never explained is what sent a reader
+        # looking for a bug in the measurement code. Each entry runs to two
+        # lines where a severity runs to one, hence 39 against 26.
+        cover_legend_h = 36 + len(COVERAGE_LEGEND) * 39
+        inc_cover = inc_tally and (
+            space - fixed - (about_h if inc_about else 0) >= 162 + cover_legend_h)
+        crows = len(COVERAGE_LEGEND) if inc_cover else 0
+        need = (fixed + (162 + cover_legend_h if inc_cover else 86 if inc_tally else 0)
+                + (about_h if inc_about else 0))
+        slots = 1 + int(inc_tally) + int(inc_about)
+        # A rail carrying one card has hundreds of points to spare, and a block
+        # stretched over all of it is mostly hole — which is what this looked
+        # like. The legend takes only what it can use: roomier rows, and gaps
+        # between sections that still read as gaps rather than as gaps in the
+        # page. The rest it gives back, sitting at the foot of the rail with
+        # the cards above it. On a rail that is already tight nothing here
+        # fires and the block fills its space exactly as before.
+        want = self._legend_h(rows, markers, crows, 42, 55, 44, 34,
+                              inc_tally, inc_cover, inc_about, about_h)
+        if want < R.height:
+            R = pymupdf.Rect(R.x0, R.y1 - want, R.x1, R.y1)
+            space = R.height - CHROME
+        pg.draw_rect(R, color=(0.84, 0.86, 0.90), fill=(0.985, 0.99, 1.0), width=1.3)
+        t = pymupdf.Rect(R.x0, R.y0, R.x1, R.y0 + 34)
+        pg.draw_rect(t, color=None, fill=(0.09, 0.13, 0.22))
+        pg.insert_htmlbox(t + (14, 8, -8, -2),
+            "<div style='font-family:Helvetica;font-size:11.5pt;font-weight:bold;color:#fff;"
+            "letter-spacing:1.3pt;'>LEGEND &mdash; HOW TO READ THIS SHEET</div>")
         slack = max(0.0, space - need)
-        grow = min(slack, len(rows) * 16); rh = 26 + grow / len(rows); slack -= grow
-        gap = slack / (1 + int(inc_tally) + int(inc_about))
+        # Severity rows and coverage rows grow together and by the same amount,
+        # so the two blocks keep one rhythm instead of the second reading as a
+        # denser afterthought stuck under the first.
+        pool = len(rows) + crows + len(markers)
+        grow = min(slack, pool * 16.0) / pool
+        rh, crh, mrh = 26 + grow, 39 + grow, 28 + grow
+        slack -= grow * pool
+        gap = slack / slots
         X0, X1 = R.x0 + 14, R.x1 - 12
         y = R.y0 + 42
         for name in rows:
@@ -264,6 +338,28 @@ class Renderer:
                 f"<div style='font-family:Helvetica;font-size:11pt;color:#333;line-height:1.28;'>"
                 f"<b style='color:{HEX[name]}'>{name}</b> &nbsp;&mdash;&nbsp; {SEV_DESC[name]}</div>")
             y += rh
+        if inc_cover:
+            # Set apart from the severities above it with a rule and a quieter
+            # heading: these are not severities, and a reader who takes them
+            # for severities is being misled about what the counts mean.
+            y += 6
+            pg.draw_line(pymupdf.Point(X0, y), pymupdf.Point(X1, y),
+                         color=(0.84, 0.86, 0.90), width=1)
+            pg.insert_htmlbox(pymupdf.Rect(X0, y + 5, X1, y + 27),
+                "<div style='font-family:Helvetica;font-size:10pt;font-weight:bold;"
+                "color:#5b6572;letter-spacing:1.3pt;'>HOW MUCH OF THE SET WAS READ</div>")
+            y += 26
+            for name, desc in COVERAGE_LEGEND:
+                cy = y + 9.5
+                pg.draw_rect(pymupdf.Rect(X0 + 2, cy - 8, X0 + 24, cy + 8),
+                             color=None, fill=SLATE)
+                pg.insert_htmlbox(pymupdf.Rect(X0 + 36, y - 2, X1, y + crh + 4),
+                    f"<div style='font-family:Helvetica;font-size:10.5pt;color:#333;"
+                    f"line-height:1.28;'><b style='color:{SLATE_HEX}'>{name}</b>"
+                    f" &nbsp;&mdash;&nbsp; {desc}</div>")
+                y += crh
+            y += 4
+
         for name, desc, style in markers:
             cy = y + 9.0
             swatch = pymupdf.Rect(X0 + 2, cy - 8, X0 + 24, cy + 8)
@@ -276,13 +372,13 @@ class Renderer:
             # to read on a plotted sheet, so stop adding rows rather than leave
             # a key nobody can make out.
             _spare, scale = pg.insert_htmlbox(
-                pymupdf.Rect(X0 + 36, y - 2, X1, y + 28),
+                pymupdf.Rect(X0 + 36, y - 2, X1, y + mrh + 4),
                 f"<div style='font-family:Helvetica;font-size:10.5pt;color:#333;"
                 f"line-height:1.24;'><b style='color:{VIO_HEX if style == 'dashed' else '#0b1220'}'>"
                 f"{name}</b> &nbsp;&mdash;&nbsp; {desc}</div>")
             if scale < 0.8:
                 break
-            y += 28
+            y += mrh
         y += gap
         if inc_tally:
             pg.draw_line(pymupdf.Point(X0, y), pymupdf.Point(X1, y), color=(0.84, 0.86, 0.90), width=1)
@@ -299,6 +395,38 @@ class Renderer:
                     f"<div style='font-family:Helvetica;text-align:center;'>"
                     f"<div style='font-size:17pt;font-weight:bold;color:{HEX[name]};'>{n}</div>"
                     f"<div style='font-size:8.5pt;color:#5b6572;letter-spacing:.6pt;'>{name}</div></div>")
+            # A second row of tiles, for coverage. A tally of zeroes on a clean
+            # set and a tally of zeroes on an unread one look identical, and
+            # the reader of a plotted sheet has no register in front of them to
+            # check — so how much was read is given the same weight, in the
+            # same shape, as what was found.
+            y += 56
+            if not inc_cover:
+                y += gap
+        if inc_tally and inc_cover:
+            cov = self._coverage()
+            pg.insert_htmlbox(pymupdf.Rect(X0, y + 2, X1, y + 22),
+                f"<div style='font-family:Helvetica;font-size:8.5pt;color:#5b6572;"
+                f"letter-spacing:.9pt;'>OF {cov['total']} SHEETS IN THE SET</div>")
+            y += 20
+            cover_tiles = [("TEXT READ", cov["read"]),
+                           ("NUMBERED", cov["numbered"]),
+                           ("DRAWINGS", cov["drawn"])]
+            cw2 = (X1 - X0) / len(cover_tiles)
+            for k, (name, n) in enumerate(cover_tiles):
+                bx = pymupdf.Rect(X0 + k * cw2 + 1, y + 2, X0 + (k + 1) * cw2 - 3, y + 50)
+                pg.draw_rect(bx, color=(0.88, 0.90, 0.93), fill=(1, 1, 1), width=1)
+                pg.draw_rect(pymupdf.Rect(bx.x0, bx.y0, bx.x1, bx.y0 + 4),
+                             color=None, fill=SLATE)
+                # A short count is the interesting case, so it is shown against
+                # its total rather than alone: "28" reads as fine, "28/35" does
+                # not, and the second one is the truth.
+                shown = str(n) if n == cov["total"] else f"{n}/{cov['total']}"
+                pg.insert_htmlbox(bx + (0, 7, 0, -2),
+                    f"<div style='font-family:Helvetica;text-align:center;'>"
+                    f"<div style='font-size:17pt;font-weight:bold;color:{SLATE_HEX};'>{shown}</div>"
+                    f"<div style='font-size:8.5pt;color:#5b6572;letter-spacing:.6pt;'>{name}</div>"
+                    f"</div>")
             y += 56 + gap
         if inc_about:
             pg.draw_line(pymupdf.Point(X0, y), pymupdf.Point(X1, y), color=(0.84, 0.86, 0.90), width=1)
@@ -575,6 +703,56 @@ reviews the sheet. A dashed marker means the two readings disagree; the detail i
 {table}
 {divergence}""")
 
+    #: A sheet counts as read when this much text came off it, and as drawn
+    #: when it carries this many vector paths. Both are deliberately low: the
+    #: question is "did the reader get into this sheet at all", not "is it a
+    #: rich sheet".
+    MIN_SHEET_CHARS = 200
+    MIN_SHEET_PATHS = 50
+
+    def _coverage(self) -> Dict[str, int]:
+        """How much of the set the reader actually got into.
+
+        The severity tally answers "what did this review find". It says nothing
+        about "did this review look at everything", and those are different
+        questions with the same-looking answer: a set comes back with no
+        findings either because it is clean or because half its sheets were
+        pictures the reader could not read. Printing only the tally leaves the
+        reader unable to tell those apart, so the coverage is printed beside it.
+
+        Counted per sheet, not per finding — a sheet nothing was found on was
+        still examined, and saying so is the point.
+        """
+        # Memoised: the legend is drawn once per sheet and the register once
+        # more, so an uncached scan walks every page of the set for every page
+        # of the set — 35 sheets becomes 1,225 page reads, and get_drawings()
+        # on a plotted sheet is not cheap.
+        cached = getattr(self, "_coverage_cache", None)
+        if cached is not None:
+            return cached
+
+        total = self.doc.page_count
+        numbered = read = drawn = 0
+        for n in range(total):
+            page = self.doc[n]
+            sheet = self.sheets.get(n)
+            code = str(getattr(sheet, "code", "") or "")
+            # sheet_index falls back to "p<n>" when no title block was found.
+            if code and not re.fullmatch(r"p\d+", code):
+                numbered += 1
+            if len((page.get_text() or "").strip()) > self.MIN_SHEET_CHARS:
+                read += 1
+            try:
+                if len(page.get_drawings()) > self.MIN_SHEET_PATHS:
+                    drawn += 1
+            except Exception:
+                # A sheet whose geometry will not parse is simply not counted
+                # as drawn; it is still counted in the total.
+                pass
+        self._coverage_cache = {"total": total, "numbered": numbered,
+                                "read": read, "drawn": drawn}
+        return self._coverage_cache
+
     def _register(self, opens, passes, tally):
         o = self.opt
         d = self.declaration
@@ -594,9 +772,28 @@ reviews the sheet. A dashed marker means the two readings disagree; the detail i
         counts = "".join(
             f"<tr><td class='{self.CLS[n]}'>{n}</td><td><b>{c}</b></td>"
             f"<td>{SEV_DESC[n]}</td></tr>" for n, c in tally)
+        cov = self._coverage()
         self._put(p, lead + f"""
 <table><colgroup><col style='width:14%'><col style='width:9%'><col style='width:77%'></colgroup>
 <tr><th>Severity</th><th>Count</th><th>What it means</th></tr>{counts}</table>
+<h2>Sheet coverage</h2>
+<p class='sm'>What the reader got into, sheet by sheet. The severity counts above say what was
+found; these say how much of the set was examined to find it — a review with nothing to report
+reads the same as one that could not read the drawings, and these two tables are what tell
+them apart.</p>
+<table><colgroup><col style='width:22%'><col style='width:12%'><col style='width:66%'></colgroup>
+<tr><th>Measure</th><th>Count</th><th>What it means</th></tr>
+<tr><td>Sheets in the set</td><td><b>{cov['total']}</b></td>
+<td>Every page of the submitted PDF.</td></tr>
+<tr class='n'><td>Text recovered</td><td><b>{cov['read']} of {cov['total']}</b></td>
+<td>The reader obtained readable text from this many sheets, counting text recovered by OCR from
+pasted images. A sheet not counted here is one nothing could be read from.</td></tr>
+<tr><td>Sheet number identified</td><td><b>{cov['numbered']} of {cov['total']}</b></td>
+<td>The title block was located and its sheet number read. The rest are referred to by page
+number; nothing is skipped for want of a number.</td></tr>
+<tr class='n'><td>Drawing content present</td><td><b>{cov['drawn']} of {cov['total']}</b></td>
+<td>Carries vector linework rather than being a flat picture.</td></tr>
+</table>
 <h2>Review parameters</h2>
 <table><colgroup><col style='width:28%'><col style='width:72%'></colgroup>
 <tr><th>Setting</th><th>Value</th></tr>

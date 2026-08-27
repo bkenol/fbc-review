@@ -137,9 +137,20 @@ def _images(page: pymupdf.Page):
     covered = 0.0
     count = 0
     regions: List[RasterRegion] = []
+
+    # get_image_info() reports bboxes in the page's *unrotated* space, but
+    # page.rect — and every clip taken against it downstream — is the rotated
+    # one. On a /Rotate 270 sheet the two disagree by a quarter turn, so an
+    # image bbox lands off the page entirely and the region is clipped to
+    # nothing: the pixmap comes back zero-height and pdfocr_tobytes raises
+    # "Invalid bandwriter header dimensions". Mapping through rotation_matrix
+    # puts the bbox back where the rest of the pipeline expects it. The matrix
+    # is the identity on an unrotated page, so this costs nothing there.
+    to_page = page.rotation_matrix
+
     try:
         for info in page.get_image_info():
-            bbox = pymupdf.Rect(info["bbox"])
+            bbox = pymupdf.Rect(info["bbox"]) * to_page
             area = abs(bbox.get_area())
             covered += area
             count += 1
