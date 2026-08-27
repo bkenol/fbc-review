@@ -24,7 +24,7 @@ for one, you have misread the problem.
 
 | Directory | Rule |
 | --- | --- |
-| `fbcreview/` | **Do not modify.** Engine, rules, code corpus, renderer. If something here genuinely blocks you, stop and report it rather than editing it. |
+| `fbcreview/` | Engine, rules, code corpus, renderer. If something here genuinely blocks you, stop and report it rather than editing it. |
 | `webapp/` | The FastAPI service. Yours to harden and extend. |
 | `web/` | The Angular client. Yours to build. |
 | `tests/` | **Do not edit a test to make a change pass.** Fix the change. |
