@@ -25,6 +25,96 @@
         "title": "Abstention",
         "type": "object"
       },
+      "AdminOverview": {
+        "properties": {
+          "active_version": {
+            "title": "Active Version",
+            "type": "integer"
+          },
+          "assist": {
+            "title": "Assist",
+            "type": "string"
+          },
+          "calibrated_rules": {
+            "title": "Calibrated Rules",
+            "type": "integer"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Open feedback by disposition.",
+            "title": "Counts",
+            "type": "object"
+          },
+          "github": {
+            "title": "Github",
+            "type": "string"
+          },
+          "mail": {
+            "$ref": "#/components/schemas/MailStatus"
+          },
+          "open_feedback": {
+            "title": "Open Feedback",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open_feedback",
+          "counts",
+          "mail",
+          "github",
+          "assist",
+          "active_version",
+          "calibrated_rules"
+        ],
+        "title": "AdminOverview",
+        "type": "object"
+      },
+      "AssistOpinion": {
+        "description": "What `webapp.assist` made of a free-text comment.\n\nRecorded so the owner can see what was said about their user's words, and\ntyped so the client can show it. Advisory in the strict sense: the triage\nmay raise a disposition on the strength of it and may never lower one.",
+        "properties": {
+          "aspect": {
+            "default": "",
+            "title": "Aspect",
+            "type": "string"
+          },
+          "confidence": {
+            "default": "low",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          },
+          "names_a_code_section": {
+            "default": false,
+            "title": "Names A Code Section",
+            "type": "boolean"
+          },
+          "rationale": {
+            "default": "",
+            "title": "Rationale",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "verdict": {
+            "default": "",
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary"
+        ],
+        "title": "AssistOpinion",
+        "type": "object"
+      },
       "Body_createReview": {
         "properties": {
           "declaration": {
@@ -67,8 +157,304 @@
         "title": "Body_prefillDeclaration",
         "type": "object"
       },
+      "CalibrationAdjustment": {
+        "description": "One finding this profile actually changed.",
+        "properties": {
+          "after": {
+            "title": "After",
+            "type": "string"
+          },
+          "before": {
+            "title": "Before",
+            "type": "string"
+          },
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "fid": {
+            "title": "Fid",
+            "type": "string"
+          },
+          "knob": {
+            "title": "Knob",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fid",
+          "rule_id",
+          "knob",
+          "before",
+          "after"
+        ],
+        "title": "CalibrationAdjustment",
+        "type": "object"
+      },
+      "CalibrationChange": {
+        "description": "One lever moved on one rule, with why.",
+        "properties": {
+          "knob": {
+            "title": "Knob",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "value": {
+            "default": "",
+            "description": "The value this change sets, rendered for display.",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "knob"
+        ],
+        "title": "CalibrationChange",
+        "type": "object"
+      },
+      "CalibrationKnob": {
+        "description": "One lever, published so the admin console hard-codes no list.",
+        "properties": {
+          "bounds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bounds"
+          },
+          "choices": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choices"
+          },
+          "help": {
+            "title": "Help",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "bool",
+              "int",
+              "float",
+              "severity",
+              "strings"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "help"
+        ],
+        "title": "CalibrationKnob",
+        "type": "object"
+      },
+      "CalibrationProfile": {
+        "description": "A versioned set of rule calibrations. Versions are immutable.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "default": "",
+            "title": "Created By",
+            "type": "string"
+          },
+          "derived_from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived From"
+          },
+          "edition": {
+            "title": "Edition",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "owner_uid": {
+            "default": "",
+            "title": "Owner Uid",
+            "type": "string"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "rules": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RuleCalibration"
+            },
+            "title": "Rules",
+            "type": "object"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "profile_id",
+          "version",
+          "scope",
+          "label",
+          "edition"
+        ],
+        "title": "CalibrationProfile",
+        "type": "object"
+      },
+      "CalibrationReport": {
+        "description": "What the overlay did to a review. Part of the audit trail.\n\nRecorded whether or not anything moved: a review that says \"profile v4,\nnothing adjusted\" is a different statement from a review that never\nmentions calibration at all.",
+        "properties": {
+          "adjusted": {
+            "title": "Adjusted",
+            "type": "integer"
+          },
+          "adjustments": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationAdjustment"
+            },
+            "title": "Adjustments",
+            "type": "array"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "profile_label": {
+            "title": "Profile Label",
+            "type": "string"
+          },
+          "profile_version": {
+            "title": "Profile Version",
+            "type": "integer"
+          },
+          "suppressed": {
+            "title": "Suppressed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "profile_id",
+          "profile_version",
+          "profile_label",
+          "adjusted",
+          "suppressed"
+        ],
+        "title": "CalibrationReport",
+        "type": "object"
+      },
+      "CalibrationView": {
+        "description": "The admin console's calibration screen.",
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/CalibrationProfile"
+          },
+          "knobs": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationKnob"
+            },
+            "title": "Knobs",
+            "type": "array"
+          },
+          "pending": {
+            "description": "Approved-and-not-yet-promoted proposals. Always 0 today: accepting a proposal promotes it.",
+            "title": "Pending",
+            "type": "integer"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationProfile"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "active",
+          "versions",
+          "knobs",
+          "pending"
+        ],
+        "title": "CalibrationView",
+        "type": "object"
+      },
       "ConfigResponse": {
         "properties": {
+          "calibration_knobs": {
+            "description": "Every lever the overlay has. The closed list this publishes is what makes the triage split decidable rather than a judgement.",
+            "items": {
+              "$ref": "#/components/schemas/CalibrationKnob"
+            },
+            "title": "Calibration Knobs",
+            "type": "array"
+          },
           "declaration_fields": {
             "description": "The whole questionnaire, as data. Adding a field or an enum value in `fbcreview/declaration_schema.py` reaches the client through here with no frontend change.",
             "items": {
@@ -96,6 +482,13 @@
           "defaults": {
             "$ref": "#/components/schemas/ReviewOptions"
           },
+          "dispositions": {
+            "items": {
+              "$ref": "#/components/schemas/DispositionInfo"
+            },
+            "title": "Dispositions",
+            "type": "array"
+          },
           "editions": {
             "items": {
               "$ref": "#/components/schemas/Edition"
@@ -103,8 +496,23 @@
             "title": "Editions",
             "type": "array"
           },
+          "feedback_aspects": {
+            "description": "The whole feedback taxonomy, as data. Adding a verdict in `webapp/feedback_schema.py` reaches the client through here with no frontend change \u2014 the same contract the declaration questionnaire has.",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackAspect"
+            },
+            "title": "Feedback Aspects",
+            "type": "array"
+          },
           "mail": {
             "$ref": "#/components/schemas/MailStatus"
+          },
+          "markup_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/MarkupKindInfo"
+            },
+            "title": "Markup Kinds",
+            "type": "array"
           },
           "max_pages": {
             "title": "Max Pages",
@@ -154,6 +562,9 @@
             },
             "title": "Stages",
             "type": "array"
+          },
+          "training": {
+            "$ref": "#/components/schemas/TrainingStatus"
           }
         },
         "required": [
@@ -169,7 +580,12 @@
           "defaults",
           "declaration_groups",
           "declaration_fields",
-          "declaration_unlockable"
+          "declaration_unlockable",
+          "training",
+          "feedback_aspects",
+          "markup_kinds",
+          "dispositions",
+          "calibration_knobs"
         ],
         "title": "ConfigResponse",
         "type": "object"
@@ -253,6 +669,34 @@
           "seconds"
         ],
         "title": "ConvertedPage",
+        "type": "object"
+      },
+      "Decision": {
+        "enum": [
+          "accept",
+          "reject",
+          "action"
+        ],
+        "title": "Decision",
+        "type": "string"
+      },
+      "DecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          },
+          "note": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "DecisionRequest",
         "type": "object"
       },
       "DeclarationField": {
@@ -425,6 +869,33 @@
         "title": "DeclarationTolerance",
         "type": "object"
       },
+      "Disposition": {
+        "enum": [
+          "confirmation",
+          "auto_tunable",
+          "needs_component",
+          "escalate"
+        ],
+        "title": "Disposition",
+        "type": "string"
+      },
+      "DispositionInfo": {
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/Disposition"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ],
+        "title": "DispositionInfo",
+        "type": "object"
+      },
       "Downloads": {
         "description": "V4 signed URLs, fetched straight from Cloud Storage by the browser.",
         "properties": {
@@ -439,6 +910,12 @@
           },
           "markup_pdf": {
             "title": "Markup Pdf",
+            "type": "string"
+          },
+          "source_pdf": {
+            "default": "",
+            "description": "The set as uploaded. The in-app viewer renders this and draws the findings itself as an overlay, rather than rendering `markup_pdf` \u2014 otherwise every marker would be drawn twice, once burnt into the page and once interactively, and neither could be turned off.",
+            "title": "Source Pdf",
             "type": "string"
           }
         },
@@ -505,6 +982,328 @@
           "error"
         ],
         "title": "ErrorResponse",
+        "type": "object"
+      },
+      "Feedback": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Answers",
+            "type": "object"
+          },
+          "applied_to_candidate": {
+            "default": false,
+            "description": "Whether this landed in the submitter's own training profile. Production is untouched until the owner promotes.",
+            "title": "Applied To Candidate",
+            "type": "boolean"
+          },
+          "comment": {
+            "default": "",
+            "title": "Comment",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "default": "",
+            "title": "Decided By",
+            "type": "string"
+          },
+          "decision_note": {
+            "default": "",
+            "title": "Decision Note",
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/Disposition"
+          },
+          "email": {
+            "default": "",
+            "title": "Email",
+            "type": "string"
+          },
+          "filename": {
+            "default": "",
+            "title": "Filename",
+            "type": "string"
+          },
+          "finding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Finding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finding_fid": {
+            "default": "",
+            "title": "Finding Fid",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "issue_url": {
+            "default": "",
+            "title": "Issue Url",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "markup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Markup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "markup_id": {
+            "default": "",
+            "title": "Markup Id",
+            "type": "string"
+          },
+          "page": {
+            "default": 0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "rationale": {
+            "default": "",
+            "title": "Rationale",
+            "type": "string"
+          },
+          "rule_id": {
+            "default": "",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "sheet": {
+            "default": "",
+            "title": "Sheet",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "new",
+              "accepted",
+              "rejected",
+              "actioned"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/FeedbackSubject"
+          },
+          "triage": {
+            "$ref": "#/components/schemas/TriageResult"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "subject",
+          "disposition",
+          "triage",
+          "state",
+          "created_at"
+        ],
+        "title": "Feedback",
+        "type": "object"
+      },
+      "FeedbackAccepted": {
+        "description": "What the submitter is told back.\n\nThe triage verdict is returned rather than hidden: someone who reports a\nmisread table should be told immediately that it needs engine work and is\nnot a knob, instead of watching nothing happen.",
+        "properties": {
+          "applied_to_candidate": {
+            "title": "Applied To Candidate",
+            "type": "boolean"
+          },
+          "candidate_version": {
+            "default": 0,
+            "title": "Candidate Version",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "triage": {
+            "$ref": "#/components/schemas/TriageResult"
+          }
+        },
+        "required": [
+          "id",
+          "triage",
+          "applied_to_candidate",
+          "message"
+        ],
+        "title": "FeedbackAccepted",
+        "type": "object"
+      },
+      "FeedbackAspect": {
+        "description": "One separable dimension of review quality.",
+        "properties": {
+          "help": {
+            "title": "Help",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/FeedbackSubject"
+          },
+          "verdicts": {
+            "items": {
+              "$ref": "#/components/schemas/FeedbackVerdict"
+            },
+            "title": "Verdicts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "help",
+          "subject",
+          "required",
+          "verdicts"
+        ],
+        "title": "FeedbackAspect",
+        "type": "object"
+      },
+      "FeedbackList": {
+        "properties": {
+          "feedback": {
+            "items": {
+              "$ref": "#/components/schemas/Feedback"
+            },
+            "title": "Feedback",
+            "type": "array"
+          }
+        },
+        "required": [
+          "feedback"
+        ],
+        "title": "FeedbackList",
+        "type": "object"
+      },
+      "FeedbackRequest": {
+        "additionalProperties": false,
+        "description": "One piece of feedback about one thing.\n\n`answers` is the structured part and is what gets triaged. `comment` is the\nresidue \u2014 everything the taxonomy did not ask about \u2014 and a submission that\ncarries one always reaches a person, because prose nobody has read cannot be\nrouted deterministically.",
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Aspect key to verdict key, validated against the taxonomy `/api/config` publishes. An unknown key is a 400 naming it.",
+            "title": "Answers",
+            "type": "object"
+          },
+          "comment": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Comment",
+            "type": "string"
+          },
+          "finding_fid": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Finding Fid",
+            "type": "string"
+          },
+          "markup_id": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Markup Id",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/FeedbackSubject",
+            "default": "finding"
+          }
+        },
+        "title": "FeedbackRequest",
+        "type": "object"
+      },
+      "FeedbackSubject": {
+        "enum": [
+          "finding",
+          "coverage"
+        ],
+        "title": "FeedbackSubject",
+        "type": "string"
+      },
+      "FeedbackVerdict": {
+        "description": "One answer to one aspect, as the form should offer it.\n\nDeliberately carries no hint of which calibration lever it moves. The client\ndescribes what a person saw; `webapp.triage` decides what that implies. A UI\nthat showed the lever would invite people to pick the outcome they want\ninstead of the observation they made.",
+        "properties": {
+          "help": {
+            "title": "Help",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "polarity": {
+            "description": "`good` verdicts are real signal, not an opt-out: they are what stops one dissent from moving a rule fifty people corroborated.",
+            "enum": [
+              "good",
+              "defect"
+            ],
+            "title": "Polarity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "help",
+          "polarity"
+        ],
+        "title": "FeedbackVerdict",
         "type": "object"
       },
       "Finding": {
@@ -629,6 +1428,18 @@
       "FindingsDocument": {
         "description": "The exact shape of `findings.json` in the bucket.\n\nNo endpoint serves this \u2014 the browser fetches it from the signed URL \u2014 but\nit is published into `components.schemas` (see `server.custom_openapi`) so\nthe generated TypeScript client carries the type. Without that the findings\ntable would be the one part of the client typed by hand, which is precisely\nthe part most likely to drift.",
         "properties": {
+          "calibration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The profile this review ran under, and what it moved."
+          },
           "declaration": {
             "anyOf": [
               {
@@ -808,11 +1619,46 @@
         "title": "HistoryResponse",
         "type": "object"
       },
+      "IssueCreated": {
+        "properties": {
+          "feedback_id": {
+            "title": "Feedback Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "url": {
+            "description": "Empty when GitHub is not configured on this server.",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feedback_id",
+          "url",
+          "status"
+        ],
+        "title": "IssueCreated",
+        "type": "object"
+      },
       "Job": {
         "properties": {
           "bytes": {
             "title": "Bytes",
             "type": "integer"
+          },
+          "calibration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the calibration overlay did to this review. Present on any finished review, including one where it changed nothing."
           },
           "conversion": {
             "anyOf": [
@@ -1005,6 +1851,201 @@
           "status"
         ],
         "title": "MailStatus",
+        "type": "object"
+      },
+      "Markup": {
+        "properties": {
+          "colour": {
+            "default": "",
+            "title": "Colour",
+            "type": "string"
+          },
+          "comment": {
+            "default": "",
+            "title": "Comment",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "finding_fid": {
+            "default": "",
+            "title": "Finding Fid",
+            "type": "string"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/MarkupGeometry"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MarkupKind"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "sheet": {
+            "default": "",
+            "title": "Sheet",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "job_id",
+          "page",
+          "kind",
+          "geometry",
+          "created_at"
+        ],
+        "title": "Markup",
+        "type": "object"
+      },
+      "MarkupGeometry": {
+        "additionalProperties": false,
+        "description": "Where a markup sits, in PDF user space.\n\nPDF points, not screen pixels, and not a fraction of the page. The viewer\nzooms and the window resizes; the drawing does not. Storing device\ncoordinates would make every markup wrong at a different zoom level, and\nstoring fractions would lose precision on a 24x36 sheet where a door tag is\na few points across.",
+        "properties": {
+          "points": {
+            "description": "Freehand and arrow paths, as [[x, y], ...] in the same space.",
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "maxItems": 2000,
+            "title": "Points",
+            "type": "array"
+          },
+          "x0": {
+            "default": 0,
+            "title": "X0",
+            "type": "number"
+          },
+          "x1": {
+            "default": 0,
+            "title": "X1",
+            "type": "number"
+          },
+          "y0": {
+            "default": 0,
+            "title": "Y0",
+            "type": "number"
+          },
+          "y1": {
+            "default": 0,
+            "title": "Y1",
+            "type": "number"
+          }
+        },
+        "title": "MarkupGeometry",
+        "type": "object"
+      },
+      "MarkupKind": {
+        "enum": [
+          "highlight",
+          "box",
+          "arrow",
+          "strikeout",
+          "freehand",
+          "note"
+        ],
+        "title": "MarkupKind",
+        "type": "string"
+      },
+      "MarkupKindInfo": {
+        "properties": {
+          "help": {
+            "title": "Help",
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/components/schemas/MarkupKind"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "help"
+        ],
+        "title": "MarkupKindInfo",
+        "type": "object"
+      },
+      "MarkupList": {
+        "properties": {
+          "markups": {
+            "items": {
+              "$ref": "#/components/schemas/Markup"
+            },
+            "title": "Markups",
+            "type": "array"
+          }
+        },
+        "required": [
+          "markups"
+        ],
+        "title": "MarkupList",
+        "type": "object"
+      },
+      "MarkupRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "colour": {
+            "default": "",
+            "maxLength": 16,
+            "title": "Colour",
+            "type": "string"
+          },
+          "comment": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Comment",
+            "type": "string"
+          },
+          "finding_fid": {
+            "default": "",
+            "description": "The finding this markup is about, when it is about one.",
+            "maxLength": 64,
+            "title": "Finding Fid",
+            "type": "string"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/MarkupGeometry"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MarkupKind"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "sheet": {
+            "default": "",
+            "maxLength": 40,
+            "title": "Sheet",
+            "type": "string"
+          }
+        },
+        "required": [
+          "page",
+          "kind",
+          "geometry"
+        ],
+        "title": "MarkupRequest",
         "type": "object"
       },
       "OccupancyGroup": {
@@ -1291,6 +2332,31 @@
         "title": "ProjectDeclaration",
         "type": "object"
       },
+      "PromptExport": {
+        "description": "Escalated feedback as a runnable prompt.\n\nReturned as a typed body rather than `text/markdown` so the generated client\ncarries the type, as everything else here does.",
+        "properties": {
+          "feedback_id": {
+            "title": "Feedback Id",
+            "type": "string"
+          },
+          "filename": {
+            "description": "Suggested name under docs/, in the house style.",
+            "title": "Filename",
+            "type": "string"
+          },
+          "markdown": {
+            "title": "Markdown",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feedback_id",
+          "filename",
+          "markdown"
+        ],
+        "title": "PromptExport",
+        "type": "object"
+      },
       "RasterRegion": {
         "description": "A pasted image large enough to plausibly hold a table.",
         "properties": {
@@ -1456,6 +2522,16 @@
             "title": "Min Severity",
             "type": "string"
           },
+          "mode": {
+            "default": "standard",
+            "description": "`standard` reviews against the approved calibration profile, which is what every applicant sees. `training` reviews against the caller's own candidate profile and opens the feedback surface, so a reviewer can see the effect of their own accepted feedback without it reaching anyone else. Rejected with a 400 when training mode is off on this deployment.",
+            "enum": [
+              "standard",
+              "training"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
           "notes": {
             "default": "",
             "maxLength": 2000,
@@ -1482,6 +2558,98 @@
           }
         },
         "title": "ReviewOptions",
+        "type": "object"
+      },
+      "RuleCalibration": {
+        "properties": {
+          "confirmations": {
+            "default": 0,
+            "description": "Reviewers who said this rule got something right.",
+            "title": "Confirmations",
+            "type": "integer"
+          },
+          "drop_verified": {
+            "default": false,
+            "title": "Drop Verified",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "scope_basis": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scope Basis",
+            "type": "array"
+          },
+          "scope_occupancy": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scope Occupancy",
+            "type": "array"
+          },
+          "severity_cap": {
+            "anyOf": [
+              {
+                "enum": [
+                  "CRITICAL",
+                  "HIGH",
+                  "MEDIUM",
+                  "LOW"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity Cap"
+          },
+          "severity_floor": {
+            "anyOf": [
+              {
+                "enum": [
+                  "CRITICAL",
+                  "HIGH",
+                  "MEDIUM",
+                  "LOW"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity Floor"
+          },
+          "severity_shift": {
+            "default": 0,
+            "title": "Severity Shift",
+            "type": "integer"
+          },
+          "weight": {
+            "default": 1.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "rule_id"
+        ],
+        "title": "RuleCalibration",
         "type": "object"
       },
       "SheetProfile": {
@@ -1693,6 +2861,104 @@
         ],
         "title": "Summary",
         "type": "object"
+      },
+      "TrainingStatus": {
+        "description": "Whether this deployment collects feedback, and what it can do with it.",
+        "properties": {
+          "assist": {
+            "description": "Whether free-text comments get summarised, and how.",
+            "title": "Assist",
+            "type": "string"
+          },
+          "calibrated_rules": {
+            "default": 0,
+            "description": "How many rules the active profile changes.",
+            "title": "Calibrated Rules",
+            "type": "integer"
+          },
+          "enabled": {
+            "description": "False reproduces the service exactly as it was.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "github": {
+            "description": "Whether escalations can become issues, and where.",
+            "title": "Github",
+            "type": "string"
+          },
+          "is_owner": {
+            "description": "Whether the caller may read the queue and promote a profile. Checked server-side on every admin route regardless; this is only so the client knows whether to draw the link.",
+            "title": "Is Owner",
+            "type": "boolean"
+          },
+          "profile_label": {
+            "default": "",
+            "title": "Profile Label",
+            "type": "string"
+          },
+          "profile_version": {
+            "description": "The calibration version production uses.",
+            "title": "Profile Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "is_owner",
+          "assist",
+          "github",
+          "profile_version"
+        ],
+        "title": "TrainingStatus",
+        "type": "object"
+      },
+      "TriageResult": {
+        "description": "Where this feedback has to be fixed, and why.",
+        "properties": {
+          "assist": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssistOpinion"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the comment assist made of the free text, when there was some and it was configured. Advisory \u2014 it may raise a disposition and never lower one."
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationChange"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/Disposition"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "signals": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Signals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "disposition",
+          "label",
+          "rationale"
+        ],
+        "title": "TriageResult",
+        "type": "object"
       }
     }
   },
@@ -1704,6 +2970,993 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/admin/calibration": {
+      "get": {
+        "operationId": "adminCalibration",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalibrationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "The active profile, its history, and every lever there is.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/digest": {
+      "post": {
+        "operationId": "adminSendDigest",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Mail everything still waiting.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/feedback": {
+      "get": {
+        "operationId": "adminListFeedback",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "disposition",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Disposition"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "The feedback queue, newest first.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/feedback/{feedback_id}": {
+      "get": {
+        "operationId": "adminGetFeedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "title": "Feedback Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feedback"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Admin Get Feedback",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/feedback/{feedback_id}/decision": {
+      "post": {
+        "description": "Approving an `auto_tunable` proposal promotes it: the changes are applied to the active profile, which is written as a new immutable version and becomes what every standard review runs against. Nothing else changes production.",
+        "operationId": "adminDecideFeedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "title": "Feedback Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feedback"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Approve, reject, or mark as actioned.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/feedback/{feedback_id}/issue": {
+      "post": {
+        "operationId": "adminFeedbackIssue",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "title": "Feedback Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Open a GitHub issue for this feedback.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/feedback/{feedback_id}/prompt": {
+      "get": {
+        "operationId": "adminFeedbackPrompt",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "feedback_id",
+            "required": true,
+            "schema": {
+              "title": "Feedback Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptExport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "The feedback as a runnable prompt, in this repo's house style.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/overview": {
+      "get": {
+        "operationId": "adminOverview",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "What is waiting, and which channels are live.",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/config": {
       "get": {
         "operationId": "getConfig",
@@ -2180,6 +4433,783 @@
         "summary": "What was declared with a review. For support and for the audit trail.",
         "tags": [
           "reviews"
+        ]
+      }
+    },
+    "/api/jobs/{job_id}/feedback": {
+      "get": {
+        "operationId": "listJobFeedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "The caller's own feedback on one review.",
+        "tags": [
+          "training"
+        ]
+      },
+      "post": {
+        "description": "Answers are validated against the taxonomy `/api/config` publishes; an aspect or verdict this build does not know is a 400 naming it rather than a silently dropped answer. The triage verdict comes back in the response, so somebody who reports a misread table is told at once that it needs engine work and is not a knob.",
+        "operationId": "submitFeedback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Say what this review got right and wrong.",
+        "tags": [
+          "training"
+        ]
+      }
+    },
+    "/api/jobs/{job_id}/markups": {
+      "get": {
+        "operationId": "listMarkups",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkupList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "The caller's own markup on one review.",
+        "tags": [
+          "training"
+        ]
+      },
+      "post": {
+        "description": "Geometry is in PDF user space, not screen pixels: the viewer zooms and the window resizes, and a markup recorded in device coordinates would be in the wrong place at every zoom level but the one it was drawn at.",
+        "operationId": "createMarkup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Markup"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Draw on a sheet.",
+        "tags": [
+          "training"
+        ]
+      }
+    },
+    "/api/jobs/{job_id}/markups/{markup_id}": {
+      "delete": {
+        "description": "Answers with the markup that is left rather than an empty 204, so the viewer redraws from what the server actually holds instead of from its own optimistic guess at it.",
+        "operationId": "deleteMarkup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "markup_id",
+            "required": true,
+            "schema": {
+              "title": "Markup Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkupList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Remove a markup.",
+        "tags": [
+          "training"
+        ]
+      },
+      "patch": {
+        "operationId": "updateMarkup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "markup_id",
+            "required": true,
+            "schema": {
+              "title": "Markup Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Markup"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Edit a markup's comment or geometry.",
+        "tags": [
+          "training"
         ]
       }
     },

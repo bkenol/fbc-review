@@ -18,3 +18,11 @@ google-cloud-firestore==2.28.1
 # vector path never imports cv2.
 opencv-python-headless==5.0.0.93
 numpy==2.5.2
+
+# Reading the free-text half of training feedback (webapp/assist.py). Pinned
+# like everything else here. It is imported lazily, inside the one function
+# that uses it, and nothing on the review path reaches that function —
+# tests/test_training.py walks the import graph to keep that true. A deployment
+# with no ANTHROPIC_API_KEY never constructs a client, and training feedback
+# still triages; it just routes an unstructured comment to a person.
+anthropic==1.2.0

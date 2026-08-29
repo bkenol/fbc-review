@@ -30,6 +30,12 @@ class Settings:
     bucket: str
     service_account_email: str
     allowed_emails: FrozenSet[str]
+    #: Who may read the feedback queue, decide proposals and promote a
+    #: calibration profile. A strict subset of the allowlist in practice, but
+    #: checked independently: being allowed to run a review is not being allowed
+    #: to change what every future review reports. Empty means nobody, which is
+    #: the right default — an unset variable must not grant administration.
+    owner_emails: FrozenSet[str]
 
     # ── limits ────────────────────────────────────────────────────────────
     max_upload_mb: int
@@ -43,8 +49,29 @@ class Settings:
 
     # ── misc ──────────────────────────────────────────────────────────────
     collection: str
+    feedback_collection: str
+    markup_collection: str
+    calibration_collection: str
     on_cloud_run: bool
     dev_unsafe_auth: bool
+
+    # ── training mode ─────────────────────────────────────────────────────
+    #: Off by default. Training mode writes to the feedback collections and
+    #: runs reviews against a per-user candidate profile, so a deployment that
+    #: has not opted in behaves exactly as it did before the feature existed.
+    training_enabled: bool
+    #: Repository escalations become issues in, as `owner/repo`. Inert without
+    #: a token, exactly like SMTP.
+    github_repo: str
+
+    @property
+    def github_token(self) -> str:
+        # Read at use rather than captured: a token in a frozen dataclass ends
+        # up in every repr of the settings object, and settings gets logged.
+        return os.environ.get("FBC_GITHUB_TOKEN", "")
+
+    def is_owner(self, email: str) -> bool:
+        return bool(email) and email.lower() in self.owner_emails
 
     #: When set, the API also serves the built Angular bundle from this path.
     #: Off in the Firebase Hosting deployment, where Hosting serves the client
@@ -71,6 +98,7 @@ def settings() -> Settings:
         bucket=os.environ.get("FBC_BUCKET", ""),
         service_account_email=os.environ.get("FBC_SIGNER_SA", ""),
         allowed_emails=_emails("FBC_ALLOWED_EMAILS"),
+        owner_emails=_emails("FBC_OWNER_EMAILS"),
         max_upload_mb=_int("FBC_MAX_UPLOAD_MB", 120),
         max_pages=_int("FBC_MAX_PAGES", 300),
         retain_days=_int("FBC_RETAIN_DAYS", 30),
@@ -80,6 +108,11 @@ def settings() -> Settings:
         stale_running_minutes=_int("FBC_STALE_RUNNING_MINUTES", 15),
         workers=_int("FBC_WORKERS", 2),
         collection=os.environ.get("FBC_COLLECTION", "reviews"),
+        feedback_collection=os.environ.get("FBC_FEEDBACK_COLLECTION", "feedback"),
+        markup_collection=os.environ.get("FBC_MARKUP_COLLECTION", "markups"),
+        calibration_collection=os.environ.get("FBC_CALIBRATION_COLLECTION", "calibration"),
+        training_enabled=os.environ.get("FBC_TRAINING_MODE") == "1",
+        github_repo=os.environ.get("FBC_GITHUB_REPO", ""),
         on_cloud_run=on_cloud_run,
         dev_unsafe_auth=dev_unsafe,
         static_dir=os.environ.get("FBC_STATIC_DIR", ""),

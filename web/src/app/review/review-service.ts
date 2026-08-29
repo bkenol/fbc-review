@@ -141,6 +141,29 @@ export class ReviewService {
       });
   }
 
+  /**
+   * The config, fetched once, as a promise.
+   *
+   * For the route guards, which have to decide before a screen is rendered and
+   * cannot read a signal that has not been filled in yet. Everything else in
+   * the app reads `config()` and re-renders when it arrives.
+   */
+  whenConfigured(): Promise<ConfigResponse | null> {
+    const existing = this._config();
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve) => {
+      this.configApi.getConfig().subscribe({
+        next: (config) => {
+          this._config.set(config);
+          resolve(config);
+        },
+        // A guard must not hang on an unreachable API. Resolving null denies
+        // the owner route, which is the safe direction to fail in.
+        error: () => resolve(null),
+      });
+    });
+  }
+
   // ── read the set before asking about it ─────────────────────────────────
   /**
    * Parse the chosen set and pull out what it already states, so the

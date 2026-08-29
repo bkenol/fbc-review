@@ -29,11 +29,15 @@ from fbcreview.declaration import ProjectDeclaration
 from fbcreview.options import (AVAILABLE_EDITIONS, EDITIONS, OCCUPANCY_GROUPS,
                                SEVERITY_ORDER, ReviewOptions)
 from fbcreview.rules import registered
-from webapp import (errors, logging_config, mailer, models, prefill, storage,
-                    upload, version)
+from webapp import (assist, calibration, errors, feedback_schema,
+                    logging_config, mailer, models, notify, prefill, storage,
+                    triage, upload, version)
 from webapp.auth import User, current_user
+from webapp.calibration import CalibrationProfile, ProfileChange
 from webapp.config import settings
 from webapp.errors import ApiError
+from webapp.feedback_store import (ACCEPTED, ACTIONED, NEW, REJECTED,
+                                   FeedbackStore, get_feedback_store)
 from webapp.jobs import DONE, JobStore, RateLimited, get_job_store, utcnow
 from webapp.storage import Storage, get_storage
 from webapp.worker import STAGES, run_review, stages_for
@@ -193,6 +197,52 @@ def _dev_files():
     return LocalStorage()
 
 
+def feedback_store() -> FeedbackStore:
+    if settings().dev_unsafe_auth:
+        return _dev_feedback()
+    return get_feedback_store()
+
+
+@lru_cache(maxsize=1)
+def _dev_feedback():
+    from webapp.devbackend import LocalFeedbackStore
+
+    return LocalFeedbackStore()
+
+
+# -- who may change what every future review reports ----------------------
+def current_owner(user: User = Depends(current_user)) -> User:
+    """The owner gate.
+
+    Deliberately a second, independent list rather than a flag on the allowlist:
+    being permitted to run a review is not being permitted to re-level a rule
+    for everybody. `FBC_OWNER_EMAILS` empty means nobody, because an unset
+    variable must never grant administration.
+    """
+    if not settings().is_owner(user.email):
+        # Absent rather than forbidden, as everywhere else here: the existence
+        # of an admin surface is not something to confirm to a caller who is
+        # not on it.
+        raise ApiError(404, errors.NOT_FOUND, "No such endpoint.")
+    return user
+
+
+def _require_training() -> None:
+    if not settings().training_enabled:
+        raise ApiError(
+            400,
+            errors.INVALID_REQUEST,
+            "Training mode is not enabled on this deployment.",
+        )
+
+
+def _owned_job(job_id: str, user: User, store: JobStore) -> Dict[str, Any]:
+    record = store.get(job_id)
+    if not record or record.get("uid") != user.uid:
+        raise ApiError(404, errors.NOT_FOUND, "No such review.")
+    return record
+
+
 # -- health ----------------------------------------------------------------
 @app.get(
     "/healthz",
@@ -233,8 +283,22 @@ def healthz_via_api() -> models.Health:
     tags=["config"],
     operation_id="getConfig",
 )
-def config(user: User = Depends(current_user)) -> models.ConfigResponse:
+def config(
+    user: User = Depends(current_user),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.ConfigResponse:
     cfg = settings()
+
+    # The active profile is read here so the client can say which calibration
+    # version a standard review will run under, without a second round trip.
+    # A store that cannot be reached must not take the whole config down with
+    # it — the review path does not depend on any of this.
+    try:
+        active = feedback.active_profile() if cfg.training_enabled else CalibrationProfile()
+    except Exception:
+        log.exception("could not read the active calibration profile")
+        active = CalibrationProfile()
+
     return models.ConfigResponse(
         occupancy_groups=[models.OccupancyGroup(id=i, label=l) for i, l in OCCUPANCY_GROUPS],
         editions=[
@@ -258,6 +322,31 @@ def config(user: User = Depends(current_user)) -> models.ConfigResponse:
             models.DeclarationField.model_validate(f) for f in declaration_schema.to_dicts()
         ],
         declaration_unlockable=list(declaration_schema.ALL_UNLOCKED),
+        # Served whole from the one module that defines it, exactly as the
+        # declaration questionnaire is. The client renders what it is handed and
+        # carries no copy of a verdict label.
+        training=models.TrainingStatus(
+            enabled=cfg.training_enabled,
+            is_owner=cfg.is_owner(user.email),
+            assist=assist.status(),
+            github=notify.github_status(),
+            profile_version=active.version,
+            profile_label=active.label,
+            calibrated_rules=len(active.touched()),
+        ),
+        feedback_aspects=[
+            models.FeedbackAspect.model_validate(a) for a in feedback_schema.to_dicts()
+        ],
+        markup_kinds=[
+            models.MarkupKindInfo(**k) for k in feedback_schema.markup_kinds()
+        ],
+        dispositions=[
+            models.DispositionInfo(key=d, label=triage.DISPOSITION_LABELS[d])
+            for d in triage.DISPOSITIONS
+        ],
+        calibration_knobs=[
+            models.CalibrationKnob.model_validate(k) for k in calibration.knob_catalogue()
+        ],
     )
 
 
@@ -344,6 +433,7 @@ async def create_review(
     user: User = Depends(current_user),
     store: JobStore = Depends(job_store),
     files: Storage = Depends(file_store),
+    feedback: FeedbackStore = Depends(feedback_store),
 ) -> JSONResponse:
     try:
         raw: Dict[str, Any] = json.loads(review_options or "{}")
@@ -372,6 +462,9 @@ async def create_review(
             errors.INVALID_REQUEST,
             f"{parsed.occupancy_group} is not an occupancy group this build reviews.",
         )
+
+    if parsed.mode == "training":
+        _require_training()
 
     declared = _parse_declaration(declaration, parsed, raw)
 
@@ -441,6 +534,13 @@ async def create_review(
         },
     )
 
+    # Which calibration profile this review runs under. Training reviews use
+    # the caller's own candidate profile so a reviewer sees the effect of their
+    # own accepted feedback immediately; everyone else gets the approved one.
+    # Nothing a user has said reaches a standard review until the owner
+    # promotes it.
+    profile = _profile_for(parsed.mode, user, feedback)
+
     assert _pool is not None
     _pool.submit(
         run_review,
@@ -460,8 +560,34 @@ async def create_review(
             for sheet in source.sheets
             if sheet.has_readable_regions
         },
+        profile=profile,
     )
     return JSONResponse({"id": job_id}, status_code=202)
+
+
+def _profile_for(mode: str, user: User, feedback: FeedbackStore
+                 ) -> Optional[CalibrationProfile]:
+    """The calibration profile a review should run against.
+
+    Returns `None` when training is off, which is what makes this feature
+    inert on a deployment that has not opted in: `calibration.apply` with no
+    profile is the identity function, and the review is byte-for-byte the one
+    the service produced before any of this existed.
+
+    A store that cannot be reached is not a reason to fail a review. The
+    uncalibrated result is the honest fallback and is exactly what the service
+    did before — so log it and carry on rather than turning a Firestore blip
+    into a failed upload.
+    """
+    if not settings().training_enabled:
+        return None
+    try:
+        if mode == "training":
+            return feedback.candidate_profile(user.uid)
+        return feedback.active_profile()
+    except Exception:
+        log.exception("could not load a calibration profile; reviewing uncalibrated")
+        return None
 
 
 def _parse_declaration(body: str, options: models.ReviewOptions,
@@ -596,6 +722,13 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
                 storage.output_path(job_id, storage.MARKUP), download_as=pdf_name
             ),
             findings_json=files.signed_url(storage.output_path(job_id, storage.FINDINGS)),
+            # The set as uploaded, for the in-app viewer to render. The markup
+            # PDF has the findings burnt into the page; drawing the interactive
+            # layer on top of that would show every marker twice.
+            source_pdf=(
+                files.signed_url(record["upload_blob"])
+                if record.get("upload_blob") else ""
+            ),
             expires_at=files.expires_at(),
         )
 
@@ -628,6 +761,11 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
             if record.get("conversion")
             else None
         ),
+        calibration=(
+            models.CalibrationReport.model_validate(record["calibration"])
+            if record.get("calibration")
+            else None
+        ),
         downloads=downloads,
         error=record.get("error"),
         error_code=record.get("error_code"),
@@ -656,6 +794,661 @@ def get_job_declaration(
     if not record or record.get("uid") != user.uid:
         raise ApiError(404, errors.NOT_FOUND, "No such review.")
     return models.ProjectDeclaration.model_validate(record.get("declaration") or {})
+
+
+# ══ training mode ═════════════════════════════════════════════════════════
+# Everything below is inert unless FBC_TRAINING_MODE=1. None of it is reachable
+# from `run_review`: the review path is still pure Python over PyMuPDF, and the
+# only model call in this service lives in `webapp/assist.py`, on the feedback
+# path, behind its own configuration flag.
+
+
+def _findings_index(job_id: str, files: Storage) -> Dict[str, Dict[str, Any]]:
+    """The finished review's findings, keyed by fid.
+
+    Read from the artefact rather than trusted from the request body: `rule_id`
+    decides which rule a calibration proposal would move, so it has to come from
+    what the service actually produced, not from what a browser says it
+    produced.
+    """
+    scratch = Path(tempfile.mkdtemp(prefix=f"fbc-fb-{job_id}-"))
+    local = scratch / "findings.json"
+    try:
+        files.download_to(storage.output_path(job_id, storage.FINDINGS), str(local))
+        document = json.loads(local.read_text(encoding="utf-8"))
+    except Exception:
+        log.warning("could not read findings for feedback", extra={"job_id": job_id})
+        return {}
+    finally:
+        with contextlib.suppress(Exception):
+            local.unlink(missing_ok=True)
+            scratch.rmdir()
+
+    return {
+        str(f.get("fid")): f
+        for f in (document.get("findings") or [])
+        if isinstance(f, dict) and f.get("fid")
+    }
+
+
+def _markup_model(record: Dict[str, Any]) -> models.Markup:
+    return models.Markup(
+        id=record.get("id", ""),
+        job_id=record.get("job_id", ""),
+        page=int(record.get("page") or 1),
+        sheet=record.get("sheet", "") or "",
+        kind=record.get("kind", "note"),
+        geometry=models.MarkupGeometry.model_validate(record.get("geometry") or {}),
+        comment=record.get("comment", "") or "",
+        colour=record.get("colour", "") or "",
+        finding_fid=record.get("finding_fid", "") or "",
+        created_at=record.get("created_at") or utcnow(),
+    )
+
+
+def _feedback_model(record: Dict[str, Any], *, include_email: bool) -> models.Feedback:
+    finding = record.get("finding") or None
+    markup = record.get("markup") or None
+    return models.Feedback(
+        id=record.get("id", ""),
+        job_id=record.get("job_id", ""),
+        subject=record.get("subject", "finding"),
+        finding_fid=record.get("finding_fid", "") or "",
+        rule_id=record.get("rule_id", "") or "",
+        sheet=record.get("sheet", "") or "",
+        page=int(record.get("page") or 0),
+        answers=dict(record.get("answers") or {}),
+        comment=record.get("comment", "") or "",
+        markup_id=record.get("markup_id", "") or "",
+        disposition=record.get("disposition", triage.ESCALATE),
+        rationale=record.get("rationale", "") or "",
+        triage=models.TriageResult.model_validate(record.get("triage") or {
+            "disposition": record.get("disposition", triage.ESCALATE),
+            "label": "",
+            "rationale": record.get("rationale", "") or "",
+        }),
+        state=record.get("state", NEW),
+        created_at=record.get("created_at") or utcnow(),
+        decided_at=record.get("decided_at"),
+        decided_by=record.get("decided_by", "") or "",
+        decision_note=record.get("decision_note", "") or "",
+        issue_url=record.get("issue_url", "") or "",
+        email=(record.get("email", "") or "") if include_email else "",
+        filename=record.get("filename", "") or "",
+        applied_to_candidate=bool(record.get("applied_to_candidate")),
+        finding=models.Finding.model_validate(finding) if finding else None,
+        markup=_markup_model(markup) if markup else None,
+    )
+
+
+# -- markup ----------------------------------------------------------------
+@app.get(
+    "/api/jobs/{job_id}/markups",
+    response_model=models.MarkupList,
+    tags=["training"],
+    operation_id="listMarkups",
+    summary="The caller's own markup on one review.",
+)
+def list_markups(
+    job_id: str,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.MarkupList:
+    _require_training()
+    _owned_job(job_id, user, store)
+    return models.MarkupList(
+        markups=[_markup_model(r) for r in feedback.list_markups(job_id, user.uid)]
+    )
+
+
+@app.post(
+    "/api/jobs/{job_id}/markups",
+    response_model=models.Markup,
+    tags=["training"],
+    operation_id="createMarkup",
+    summary="Draw on a sheet.",
+    description=(
+        "Geometry is in PDF user space, not screen pixels: the viewer zooms and "
+        "the window resizes, and a markup recorded in device coordinates would be "
+        "in the wrong place at every zoom level but the one it was drawn at."
+    ),
+)
+def create_markup(
+    job_id: str,
+    body: models.MarkupRequest,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.Markup:
+    _require_training()
+    record = _owned_job(job_id, user, store)
+
+    pages = int(record.get("pages") or 0)
+    if pages and body.page > pages:
+        raise ApiError(
+            400, errors.INVALID_REQUEST,
+            f"This set has {pages} sheets; there is no page {body.page}.",
+        )
+
+    stored = feedback.add_markup({
+        "job_id": job_id,
+        "uid": user.uid,
+        "page": body.page,
+        "sheet": body.sheet,
+        "kind": str(body.kind),
+        "geometry": body.geometry.model_dump(),
+        "comment": body.comment,
+        "colour": body.colour,
+        "finding_fid": body.finding_fid,
+    })
+    # Never the comment and never the geometry: markup can quote what is drawn
+    # on a client's sheet, and CLAUDE.md forbids logging PDF contents.
+    log.info(
+        "markup created",
+        extra={"job_id": job_id, "uid": user.uid, "kind": body.kind, "page": body.page},
+    )
+    return _markup_model(stored)
+
+
+@app.patch(
+    "/api/jobs/{job_id}/markups/{markup_id}",
+    response_model=models.Markup,
+    tags=["training"],
+    operation_id="updateMarkup",
+    summary="Edit a markup's comment or geometry.",
+)
+def update_markup(
+    job_id: str,
+    markup_id: str,
+    body: models.MarkupRequest,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.Markup:
+    _require_training()
+    _owned_job(job_id, user, store)
+
+    existing = feedback.get_markup(markup_id)
+    if not existing or existing.get("uid") != user.uid or existing.get("job_id") != job_id:
+        raise ApiError(404, errors.NOT_FOUND, "No such markup.")
+
+    feedback.update_markup(
+        markup_id,
+        page=body.page,
+        sheet=body.sheet,
+        kind=str(body.kind),
+        geometry=body.geometry.model_dump(),
+        comment=body.comment,
+        colour=body.colour,
+        finding_fid=body.finding_fid,
+    )
+    return _markup_model(feedback.get_markup(markup_id) or existing)
+
+
+@app.delete(
+    "/api/jobs/{job_id}/markups/{markup_id}",
+    response_model=models.MarkupList,
+    tags=["training"],
+    operation_id="deleteMarkup",
+    summary="Remove a markup.",
+    description=(
+        "Answers with the markup that is left rather than an empty 204, so the "
+        "viewer redraws from what the server actually holds instead of from its "
+        "own optimistic guess at it."
+    ),
+)
+def delete_markup(
+    job_id: str,
+    markup_id: str,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.MarkupList:
+    _require_training()
+    _owned_job(job_id, user, store)
+
+    existing = feedback.get_markup(markup_id)
+    if not existing or existing.get("uid") != user.uid or existing.get("job_id") != job_id:
+        raise ApiError(404, errors.NOT_FOUND, "No such markup.")
+
+    feedback.delete_markup(markup_id)
+    return models.MarkupList(
+        markups=[_markup_model(r) for r in feedback.list_markups(job_id, user.uid)]
+    )
+
+
+# -- feedback --------------------------------------------------------------
+@app.get(
+    "/api/jobs/{job_id}/feedback",
+    response_model=models.FeedbackList,
+    tags=["training"],
+    operation_id="listJobFeedback",
+    summary="The caller's own feedback on one review.",
+)
+def list_job_feedback(
+    job_id: str,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.FeedbackList:
+    _require_training()
+    _owned_job(job_id, user, store)
+    return models.FeedbackList(feedback=[
+        _feedback_model(r, include_email=False)
+        for r in feedback.list_feedback_for_job(job_id, user.uid)
+    ])
+
+
+@app.post(
+    "/api/jobs/{job_id}/feedback",
+    response_model=models.FeedbackAccepted,
+    tags=["training"],
+    operation_id="submitFeedback",
+    summary="Say what this review got right and wrong.",
+    description=(
+        "Answers are validated against the taxonomy `/api/config` publishes; an "
+        "aspect or verdict this build does not know is a 400 naming it rather than "
+        "a silently dropped answer. The triage verdict comes back in the response, "
+        "so somebody who reports a misread table is told at once that it needs "
+        "engine work and is not a knob."
+    ),
+)
+def submit_feedback(
+    job_id: str,
+    body: models.FeedbackRequest,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    files: Storage = Depends(file_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.FeedbackAccepted:
+    _require_training()
+    job = _owned_job(job_id, user, store)
+
+    if job.get("state") != DONE:
+        raise ApiError(
+            409, errors.NOT_READY,
+            "This review has not finished, so there is nothing to give feedback on.",
+        )
+
+    problems = feedback_schema.validate(str(body.subject), body.answers)
+    if problems:
+        raise ApiError(400, errors.INVALID_REQUEST, " ".join(problems))
+
+    if body.subject == feedback_schema.SUBJECT_FINDING and not body.finding_fid:
+        raise ApiError(
+            400, errors.INVALID_REQUEST,
+            "Feedback about a finding has to say which finding.",
+        )
+
+    finding: Dict[str, Any] = {}
+    if body.finding_fid:
+        finding = _findings_index(job_id, files).get(body.finding_fid, {})
+        if not finding:
+            raise ApiError(404, errors.NOT_FOUND, "No such finding in this review.")
+
+    markup: Dict[str, Any] = {}
+    if body.markup_id:
+        stored_markup = feedback.get_markup(body.markup_id)
+        if (not stored_markup or stored_markup.get("uid") != user.uid
+                or stored_markup.get("job_id") != job_id):
+            raise ApiError(404, errors.NOT_FOUND, "No such markup.")
+        markup = stored_markup
+
+    if body.subject == feedback_schema.SUBJECT_COVERAGE and not markup:
+        raise ApiError(
+            400, errors.INVALID_REQUEST,
+            "A report about something the review missed has to point at where on "
+            "the sheet it was missed. Draw on the sheet first.",
+        )
+
+    declared = job.get("declaration") or {}
+    mode = (job.get("options") or {}).get("mode", "standard")
+    candidate = feedback.candidate_profile(user.uid)
+
+    verdict = triage.triage(
+        subject=str(body.subject),
+        answers=body.answers,
+        rule_id=finding.get("rule_id", ""),
+        comment=body.comment,
+        occupancy_group=declared.get("occupancy_group") or "",
+        finding=finding or None,
+        profile=candidate,
+    )
+
+    # An auto-tunable proposal lands in the submitter's own candidate profile
+    # straight away, so training mode shows them the effect of their own
+    # feedback on their next run. Production is untouched: it reviews against
+    # the active profile, and only the owner can promote anything into that.
+    applied = False
+    if verdict.changes and verdict.disposition in (triage.AUTO_TUNABLE, triage.CONFIRMATION):
+        candidate = candidate.with_changes(
+            verdict.changes,
+            label="Training candidate",
+            note=f"from feedback on {job_id}",
+            created_by=user.email,
+        )
+        feedback.save_profile(candidate)
+        applied = True
+
+    stored = feedback.add_feedback({
+        "job_id": job_id,
+        "uid": user.uid,
+        "email": user.email,
+        "filename": job.get("filename", ""),
+        "mode": mode,
+        "subject": str(body.subject),
+        "finding_fid": body.finding_fid,
+        "rule_id": finding.get("rule_id", ""),
+        "sheet": finding.get("sheet") or markup.get("sheet", ""),
+        "page": int(finding.get("page") or markup.get("page") or 0),
+        "answers": dict(body.answers),
+        "comment": body.comment,
+        "markup_id": body.markup_id,
+        "finding": finding or None,
+        "markup": markup or None,
+        "disposition": verdict.disposition,
+        "rationale": verdict.rationale,
+        "triage": verdict.to_dict(),
+        "applied_to_candidate": applied,
+    })
+
+    log.info(
+        "feedback submitted",
+        extra={
+            "job_id": job_id,
+            "uid": user.uid,
+            "feedback_id": stored["id"],
+            "subject": str(body.subject),
+            "disposition": verdict.disposition,
+            "signals": ",".join(verdict.signals),
+            "applied_to_candidate": applied,
+        },
+    )
+
+    # Mail can take thirty seconds on a bad SMTP day. The person has already
+    # been told their feedback was received, so notifying must not be what they
+    # wait on.
+    if verdict.disposition in notify.URGENT and _pool is not None:
+        _pool.submit(_notify_owner, dict(stored), dict(job), feedback)
+
+    return models.FeedbackAccepted(
+        id=stored["id"],
+        triage=models.TriageResult.model_validate(verdict.to_dict()),
+        applied_to_candidate=applied,
+        candidate_version=candidate.version,
+        message=_feedback_message(verdict, applied),
+    )
+
+
+def _notify_owner(record: Dict[str, Any], job: Dict[str, Any],
+                  feedback: FeedbackStore) -> None:
+    """Runs on the pool. Never raises — nothing is waiting on it."""
+    try:
+        result = notify.notify_owner(record, job)
+        feedback.update_feedback(record["id"], notified=result.startswith("sent"))
+    except Exception:
+        log.exception("owner notification failed", extra={"feedback_id": record.get("id")})
+
+
+def _feedback_message(verdict: "triage.TriageVerdict", applied: bool) -> str:
+    """What the submitter is told. Specific, because vague thanks teaches nothing.
+
+    Somebody who takes the trouble to report a misread schedule should learn
+    that it is an extraction bug rather than a setting — that is what makes the
+    next piece of feedback they write more useful.
+    """
+    if verdict.disposition == triage.CONFIRMATION:
+        return "Recorded as a confirmation. Agreement is signal too — it is what stops one dissent from re-levelling a rule."
+    if verdict.disposition == triage.AUTO_TUNABLE:
+        if applied:
+            return ("Applied to your training profile, so your next training run will "
+                    "reflect it. It is queued for approval before it reaches anyone else.")
+        return "Queued for approval."
+    if verdict.disposition == triage.NEEDS_COMPONENT:
+        return ("This one needs engine work rather than a setting — the calibration "
+                "overlay runs over a finished findings list and cannot re-read a "
+                "drawing or invent a check. It has been raised as a build item.")
+    return "Sent for review. Nothing has been changed automatically."
+
+
+# -- the owner's queue -----------------------------------------------------
+@app.get(
+    "/api/admin/overview",
+    response_model=models.AdminOverview,
+    tags=["admin"],
+    operation_id="adminOverview",
+    summary="What is waiting, and which channels are live.",
+)
+def admin_overview(
+    owner: User = Depends(current_owner),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.AdminOverview:
+    open_rows = feedback.list_feedback(state=NEW, limit=200)
+    counts: Dict[str, int] = {}
+    for row in open_rows:
+        key = row.get("disposition", "")
+        counts[key] = counts.get(key, 0) + 1
+
+    active = feedback.active_profile()
+    return models.AdminOverview(
+        open_feedback=len(open_rows),
+        counts=counts,
+        mail=models.MailStatus(configured=mailer.configured(), status=mailer.status()),
+        github=notify.github_status(),
+        assist=assist.status(),
+        active_version=active.version,
+        calibrated_rules=len(active.touched()),
+    )
+
+
+@app.get(
+    "/api/admin/feedback",
+    response_model=models.FeedbackList,
+    tags=["admin"],
+    operation_id="adminListFeedback",
+    summary="The feedback queue, newest first.",
+)
+def admin_list_feedback(
+    state: Optional[str] = None,
+    disposition: Optional[str] = None,
+    limit: int = 100,
+    owner: User = Depends(current_owner),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.FeedbackList:
+    if state and state not in (NEW, ACCEPTED, REJECTED, ACTIONED):
+        raise ApiError(400, errors.INVALID_REQUEST, f"{state!r} is not a feedback state.")
+    if disposition and disposition not in triage.DISPOSITIONS:
+        raise ApiError(400, errors.INVALID_REQUEST, f"{disposition!r} is not a disposition.")
+
+    rows = feedback.list_feedback(
+        state=state, disposition=disposition, limit=max(1, min(int(limit), 200))
+    )
+    return models.FeedbackList(
+        feedback=[_feedback_model(r, include_email=True) for r in rows]
+    )
+
+
+@app.get(
+    "/api/admin/feedback/{feedback_id}",
+    response_model=models.Feedback,
+    tags=["admin"],
+    operation_id="adminGetFeedback",
+)
+def admin_get_feedback(
+    feedback_id: str,
+    owner: User = Depends(current_owner),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.Feedback:
+    record = feedback.get_feedback(feedback_id)
+    if not record:
+        raise ApiError(404, errors.NOT_FOUND, "No such feedback.")
+    return _feedback_model(record, include_email=True)
+
+
+@app.get(
+    "/api/admin/feedback/{feedback_id}/prompt",
+    response_model=models.PromptExport,
+    tags=["admin"],
+    operation_id="adminFeedbackPrompt",
+    summary="The feedback as a runnable prompt, in this repo's house style.",
+)
+def admin_feedback_prompt(
+    feedback_id: str,
+    owner: User = Depends(current_owner),
+    store: JobStore = Depends(job_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.PromptExport:
+    record = feedback.get_feedback(feedback_id)
+    if not record:
+        raise ApiError(404, errors.NOT_FOUND, "No such feedback.")
+    job = store.get(record.get("job_id", "")) or {}
+    return models.PromptExport(
+        feedback_id=feedback_id,
+        filename=f"FEEDBACK-PROMPT-{feedback_id}.md",
+        markdown=notify.feature_prompt(record, job),
+    )
+
+
+@app.post(
+    "/api/admin/feedback/{feedback_id}/issue",
+    response_model=models.IssueCreated,
+    tags=["admin"],
+    operation_id="adminFeedbackIssue",
+    summary="Open a GitHub issue for this feedback.",
+)
+def admin_feedback_issue(
+    feedback_id: str,
+    owner: User = Depends(current_owner),
+    store: JobStore = Depends(job_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.IssueCreated:
+    record = feedback.get_feedback(feedback_id)
+    if not record:
+        raise ApiError(404, errors.NOT_FOUND, "No such feedback.")
+    if record.get("issue_url"):
+        return models.IssueCreated(
+            feedback_id=feedback_id, url=record["issue_url"], status="already open"
+        )
+    if not notify.github_configured():
+        return models.IssueCreated(
+            feedback_id=feedback_id, url="", status=notify.github_status()
+        )
+
+    job = store.get(record.get("job_id", "")) or {}
+    url = notify.create_issue(record, job)
+    if url:
+        feedback.update_feedback(feedback_id, issue_url=url, state=ACTIONED)
+    return models.IssueCreated(
+        feedback_id=feedback_id,
+        url=url,
+        status="opened" if url else "GitHub rejected the request; see the server log",
+    )
+
+
+@app.post(
+    "/api/admin/feedback/{feedback_id}/decision",
+    response_model=models.Feedback,
+    tags=["admin"],
+    operation_id="adminDecideFeedback",
+    summary="Approve, reject, or mark as actioned.",
+    description=(
+        "Approving an `auto_tunable` proposal promotes it: the changes are applied "
+        "to the active profile, which is written as a new immutable version and "
+        "becomes what every standard review runs against. Nothing else changes "
+        "production."
+    ),
+)
+def admin_decide_feedback(
+    feedback_id: str,
+    body: models.DecisionRequest,
+    owner: User = Depends(current_owner),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.Feedback:
+    record = feedback.get_feedback(feedback_id)
+    if not record:
+        raise ApiError(404, errors.NOT_FOUND, "No such feedback.")
+
+    state = {"accept": ACCEPTED, "reject": REJECTED, "action": ACTIONED}[str(body.decision)]
+
+    if body.decision == "accept":
+        changes = [
+            ProfileChange.from_dict(c)
+            for c in ((record.get("triage") or {}).get("changes") or [])
+        ]
+        if not changes:
+            raise ApiError(
+                400, errors.INVALID_REQUEST,
+                "There is no calibration proposal on this feedback to approve. "
+                "Mark it actioned instead.",
+            )
+        active = feedback.active_profile()
+        promoted = active.with_changes(
+            changes,
+            label=f"Approved from feedback {feedback_id}",
+            note=body.note or record.get("rationale", ""),
+            created_by=owner.email,
+        )
+        feedback.promote(promoted, by=owner.email)
+        log.info(
+            "proposal approved",
+            extra={
+                "feedback_id": feedback_id,
+                "by": owner.email,
+                "version": promoted.version,
+                "rules": ",".join(sorted({c.rule_id for c in changes})),
+            },
+        )
+
+    feedback.update_feedback(
+        feedback_id,
+        state=state,
+        decided_at=utcnow(),
+        decided_by=owner.email,
+        decision_note=body.note,
+    )
+    return _feedback_model(feedback.get_feedback(feedback_id) or record, include_email=True)
+
+
+@app.get(
+    "/api/admin/calibration",
+    response_model=models.CalibrationView,
+    tags=["admin"],
+    operation_id="adminCalibration",
+    summary="The active profile, its history, and every lever there is.",
+)
+def admin_calibration(
+    owner: User = Depends(current_owner),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.CalibrationView:
+    active = feedback.active_profile()
+    return models.CalibrationView(
+        active=models.CalibrationProfile.model_validate(active.to_dict()),
+        versions=[
+            models.CalibrationProfile.model_validate(v)
+            for v in feedback.profile_versions()
+        ],
+        knobs=[
+            models.CalibrationKnob.model_validate(k) for k in calibration.knob_catalogue()
+        ],
+        pending=0,
+    )
+
+
+@app.post(
+    "/api/admin/digest",
+    response_model=models.MailStatus,
+    tags=["admin"],
+    operation_id="adminSendDigest",
+    summary="Mail everything still waiting.",
+)
+def admin_send_digest(
+    owner: User = Depends(current_owner),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.MailStatus:
+    waiting = feedback.list_feedback(state=NEW, limit=200)
+    result = notify.digest(waiting)
+    return models.MailStatus(configured=mailer.configured(), status=result)
 
 
 # -- dev-only artefact download -------------------------------------------

@@ -1,0 +1,100 @@
+<section class="feedback">
+  @if (accepted(); as result) {
+    <!-- The verdict is shown back rather than a thank-you. Somebody who reports
+         a misread schedule should learn it is an extraction bug and not a
+         setting — that is what makes their next report more useful. -->
+    <div class="feedback-result" [attr.data-disposition]="result.triage.disposition">
+      <p class="eyebrow">{{ result.triage.label }}</p>
+      <p class="feedback-message">{{ result.message }}</p>
+      <p class="hint">{{ result.triage.rationale }}</p>
+
+      @if (result.triage.changes?.length) {
+        <ul class="feedback-changes">
+          @for (change of result.triage.changes; track $index) {
+            <li>
+              <code>{{ change.rule_id }}</code>
+              <span class="dim">{{ change.knob }}</span>
+              <strong>{{ change.value }}</strong>
+            </li>
+          }
+        </ul>
+      }
+
+      @if (result.applied_to_candidate) {
+        <p class="hint">
+          Applied to your training profile, version {{ result.candidate_version }}. Your next
+          training run will reflect it; nobody else's review changes until it is approved.
+        </p>
+      }
+
+      <button type="button" class="btn" (click)="dismissed.emit()">Give more feedback</button>
+    </div>
+  } @else {
+    @if (headline(); as title) {
+      <p class="eyebrow">{{ title }}</p>
+    }
+
+    @for (aspect of asked(); track aspect.key) {
+      <fieldset class="aspect">
+        <legend>
+          {{ aspect.label }}
+          @if (aspect.required) {
+            <span class="dim">required</span>
+          }
+        </legend>
+        <p class="hint">{{ aspect.help }}</p>
+
+        <div class="verdicts">
+          @for (verdict of aspect.verdicts; track verdict.key) {
+            <button
+              type="button"
+              class="verdict"
+              [attr.data-polarity]="verdict.polarity"
+              [class.on]="chosen(aspect.key) === verdict.key"
+              [attr.aria-pressed]="chosen(aspect.key) === verdict.key"
+              [title]="verdict.help"
+              (click)="choose(aspect.key, verdict.key)"
+            >
+              {{ verdict.label }}
+            </button>
+          }
+        </div>
+
+        @if (chosen(aspect.key); as picked) {
+          @for (verdict of aspect.verdicts; track verdict.key) {
+            @if (verdict.key === picked) {
+              <p class="hint chosen-help">{{ verdict.help }}</p>
+            }
+          }
+        }
+      </fieldset>
+    }
+
+    <label class="comment">
+      <span>Anything the questions above did not cover</span>
+      <textarea
+        rows="3"
+        maxlength="4000"
+        [value]="comment()"
+        (input)="onComment($event)"
+        placeholder="Optional. A specific sentence is worth more than a long one."
+      ></textarea>
+    </label>
+    <p class="hint">
+      Written comments always reach a person — nothing is applied automatically on the
+      strength of one.
+    </p>
+
+    @if (missingRequired().length) {
+      <p class="hint" role="status">
+        Answer
+        {{ missingRequired()[0].label }}
+        before sending.
+      </p>
+    }
+
+    <button type="button" class="btn" [disabled]="!ready() || busy()" (click)="send()">
+      {{ busy() ? 'Sending…' : 'Send feedback' }}
+    </button>
+  }
+</section>

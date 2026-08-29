@@ -192,3 +192,218 @@ def _decode(record: Dict[str, Any]) -> Dict[str, Any]:
             except ValueError:
                 record[key] = None
     return record
+
+
+class LocalFeedbackStore:
+    """Feedback, markups and calibration profiles as JSON files.
+
+    Mirrors `webapp.feedback_store.FeedbackStore` exactly, for the same reason
+    the classes above mirror the job store and Cloud Storage: without it the
+    training-mode client cannot be run on a laptop at all, and a front end that
+    can only be reviewed by reading it does not get reviewed.
+    """
+
+    def __init__(self) -> None:
+        root = dev_root()
+        self.feedback_dir = root / "feedback"
+        self.markup_dir = root / "markups"
+        self.profile_dir = root / "calibration"
+        for directory in (self.feedback_dir, self.markup_dir, self.profile_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    # ── plumbing ──────────────────────────────────────────────────────────
+    def _read(self, directory: Path, key: str) -> Optional[Dict[str, Any]]:
+        path = directory / f"{key}.json"
+        if not path.exists():
+            return None
+        try:
+            return _decode_feedback(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            return None
+
+    def _write(self, directory: Path, key: str, record: Dict[str, Any]) -> None:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{key}.json").write_text(
+            json.dumps(record, default=_encode, indent=2), encoding="utf-8"
+        )
+
+    def _all(self, directory: Path) -> List[Dict[str, Any]]:
+        directory.mkdir(parents=True, exist_ok=True)
+        out = []
+        for path in directory.glob("*.json"):
+            try:
+                out.append(_decode_feedback(json.loads(path.read_text(encoding="utf-8"))))
+            except Exception:
+                continue
+        return out
+
+    # ── feedback ──────────────────────────────────────────────────────────
+    def add_feedback(self, record):
+        from webapp import feedback_store as fs
+
+        record = dict(record)
+        record.setdefault("id", fs.new_id())
+        record.setdefault("state", fs.NEW)
+        record.setdefault("created_at", fs.utcnow())
+        for key in ("decided_at",):
+            record.setdefault(key, None)
+        for key in ("decided_by", "decision_note", "issue_url"):
+            record.setdefault(key, "")
+        record.setdefault("notified", False)
+        with self._lock:
+            self._write(self.feedback_dir, record["id"], record)
+        return record
+
+    def get_feedback(self, feedback_id):
+        return self._read(self.feedback_dir, feedback_id)
+
+    def update_feedback(self, feedback_id, **fields):
+        with self._lock:
+            record = self.get_feedback(feedback_id)
+            if record is None:
+                return
+            record.update(fields)
+            self._write(self.feedback_dir, feedback_id, record)
+
+    def list_feedback_for_job(self, job_id, uid, limit=200):
+        mine = [
+            r for r in self._all(self.feedback_dir)
+            if r.get("job_id") == job_id and r.get("uid") == uid
+        ]
+        mine.sort(key=_created)
+        return mine[:limit]
+
+    def list_feedback(self, *, state=None, disposition=None, limit=100):
+        rows = self._all(self.feedback_dir)
+        if state:
+            rows = [r for r in rows if r.get("state") == state]
+        if disposition:
+            rows = [r for r in rows if r.get("disposition") == disposition]
+        rows.sort(key=_created, reverse=True)
+        return rows[:limit]
+
+    def count_open(self):
+        from webapp import feedback_store as fs
+
+        return sum(1 for r in self._all(self.feedback_dir) if r.get("state") == fs.NEW)
+
+    # ── markups ───────────────────────────────────────────────────────────
+    def add_markup(self, record):
+        from webapp import feedback_store as fs
+
+        record = dict(record)
+        record.setdefault("id", fs.new_id())
+        record.setdefault("created_at", fs.utcnow())
+        with self._lock:
+            self._write(self.markup_dir, record["id"], record)
+        return record
+
+    def get_markup(self, markup_id):
+        return self._read(self.markup_dir, markup_id)
+
+    def update_markup(self, markup_id, **fields):
+        with self._lock:
+            record = self.get_markup(markup_id)
+            if record is None:
+                return
+            record.update(fields)
+            self._write(self.markup_dir, markup_id, record)
+
+    def delete_markup(self, markup_id):
+        (self.markup_dir / f"{markup_id}.json").unlink(missing_ok=True)
+
+    def list_markups(self, job_id, uid, limit=500):
+        mine = [
+            r for r in self._all(self.markup_dir)
+            if r.get("job_id") == job_id and r.get("uid") == uid
+        ]
+        mine.sort(key=_created)
+        return mine[:limit]
+
+    # ── calibration ───────────────────────────────────────────────────────
+    def active_profile(self):
+        from webapp.calibration import ACTIVE_ID, CalibrationProfile
+
+        return CalibrationProfile.from_dict(self._read(self.profile_dir, ACTIVE_ID))
+
+    def candidate_profile(self, uid):
+        from webapp import feedback_store as fs
+        from webapp.calibration import CANDIDATE, CalibrationProfile
+
+        stored = self._read(self.profile_dir, fs.candidate_key(uid))
+        if stored:
+            return CalibrationProfile.from_dict(stored)
+        base = self.active_profile()
+        seeded = CalibrationProfile.from_dict(base.to_dict())
+        seeded.profile_id = fs.candidate_key(uid)
+        seeded.scope = CANDIDATE
+        seeded.owner_uid = uid
+        seeded.label = "Training candidate"
+        seeded.derived_from = base.version
+        return seeded
+
+    def save_profile(self, profile):
+        with self._lock:
+            self._write(self.profile_dir, profile.profile_id, profile.to_dict())
+        return profile
+
+    def promote(self, profile, *, by, label="", note=""):
+        from webapp import feedback_store as fs
+        from webapp.calibration import ACTIVE_ID, GLOBAL, CalibrationProfile
+
+        promoted = CalibrationProfile.from_dict(profile.to_dict())
+        promoted.profile_id = ACTIVE_ID
+        promoted.scope = GLOBAL
+        promoted.owner_uid = ""
+        promoted.created_by = by
+        promoted.created_at = fs.utcnow()
+        if label:
+            promoted.label = label
+        if note:
+            promoted.note = note
+
+        archived = CalibrationProfile.from_dict(promoted.to_dict())
+        archived.profile_id = fs.version_key(promoted.version)
+        with self._lock:
+            self._write(self.profile_dir, archived.profile_id, archived.to_dict())
+            self._write(self.profile_dir, ACTIVE_ID, promoted.to_dict())
+        return promoted
+
+    def profile_versions(self, limit=25):
+        from webapp.calibration import ACTIVE_ID, GLOBAL
+
+        rows = [
+            r for r in self._all(self.profile_dir)
+            if r.get("scope") == GLOBAL and r.get("profile_id") != ACTIVE_ID
+        ]
+        rows.sort(key=lambda r: int(r.get("version") or 0), reverse=True)
+        return rows[:limit]
+
+    def profile_version(self, version):
+        from webapp import feedback_store as fs
+        from webapp.calibration import CalibrationProfile
+
+        stored = self._read(self.profile_dir, fs.version_key(version))
+        return CalibrationProfile.from_dict(stored) if stored else None
+
+
+def _created(record: Dict[str, Any]) -> dt.datetime:
+    stamp = record.get("created_at")
+    if isinstance(stamp, dt.datetime):
+        return stamp
+    return dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+
+
+_FEEDBACK_STAMPS = ("created_at", "decided_at")
+
+
+def _decode_feedback(record: Dict[str, Any]) -> Dict[str, Any]:
+    for key in _FEEDBACK_STAMPS:
+        raw = record.get(key)
+        if isinstance(raw, str):
+            try:
+                record[key] = dt.datetime.fromisoformat(raw)
+            except ValueError:
+                record[key] = None
+    return record

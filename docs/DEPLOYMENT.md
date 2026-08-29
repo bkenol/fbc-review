@@ -887,6 +887,14 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_BUILD` | unset | Build number, when handing one in without a full `FBC_VERSION`. |
 | `FBC_DEV_UNSAFE_AUTH` | unset | **Local only.** Ignored whenever `K_SERVICE` is set. |
 | `FBC_SMTP_*`, `FBC_MAIL_FROM` | unset | Email stays inert unless all are set |
+| `FBC_TRAINING_MODE` | unset | `1` turns training mode on. Unset, no feedback collection exists and no Firestore collection beyond `reviews` is touched — see §8. |
+| `FBC_OWNER_EMAILS` | empty | Who may read the feedback queue and promote a calibration profile. A second, independent list: **empty means nobody**, and being on `FBC_ALLOWED_EMAILS` does not put you on this one. |
+| `FBC_FEEDBACK_COLLECTION` | `feedback` | Firestore collection for submitted feedback |
+| `FBC_MARKUP_COLLECTION` | `markups` | Firestore collection for sheet markup |
+| `FBC_CALIBRATION_COLLECTION` | `calibration` | Firestore collection for calibration profile versions |
+| `ANTHROPIC_API_KEY` | unset | Summarising free-text feedback comments (`webapp/assist.py`). **Feedback path only** — never the review path, and `tests/test_training.py` walks the import graph to keep that true. Unset, comments route to a person unread. |
+| `FBC_GITHUB_REPO` | unset | `owner/repo` to open issues in from escalated feedback |
+| `FBC_GITHUB_TOKEN` | unset | Token for the above. Issues stay unavailable unless both are set. |
 
 ---
 
@@ -1220,3 +1228,86 @@ geometric rule needs a semantic layer name that tracing cannot recover.
 **No model call was added anywhere.** OCR is Tesseract and vectorisation is a
 Hough transform; both are deterministic. The review path still makes zero LLM
 calls.
+
+---
+
+## 8. Training mode
+
+Off by default and off in the deployment described above. With
+`FBC_TRAINING_MODE` unset, `webapp/feedback_store.py` never constructs a
+Firestore client, `calibration.apply` runs as the identity function, and the
+review a user gets is byte-for-byte the one this service produced before the
+feature existed. `docs/TRAINING-MODE.md` explains what it does and why it is
+shaped the way it is; this section is what to run.
+
+### Turn it on
+
+```bash
+gcloud run services update fbc-review --region=us-east1 \
+  --update-env-vars="FBC_TRAINING_MODE=1,FBC_OWNER_EMAILS=you@example.com"
+```
+
+`FBC_OWNER_EMAILS` is what makes `/admin` reachable and what gates every
+`/api/admin/*` route. It is deliberately not derived from
+`FBC_ALLOWED_EMAILS`: running a review and re-levelling a rule for every future
+applicant are different privileges, and an unset variable must not grant the
+second one. Leave it empty and training mode still collects and triages
+feedback — nobody can approve anything, which is the safe direction to fail in.
+
+### Firestore indexes
+
+Three new collections and six composite indexes, already in
+`firestore.indexes.json`. Deploy them before turning the feature on, or the
+first queue query fails with a link to create one by hand:
+
+```bash
+firebase deploy --only firestore:indexes
+```
+
+`firestore.rules` still denies everything, and that now covers the new
+collections too. A calibration profile decides what every future review
+reports, so a client-writable path to one would be a way to change other
+people's plan reviews from a browser console. There is no such path: promotion
+happens in the API, behind `FBC_OWNER_EMAILS`.
+
+### Optional channels
+
+Each is inert unless configured and each says so on `/api/admin/overview`.
+
+| Channel | Needs | Without it |
+| --- | --- | --- |
+| Immediate mail on an escalation, and the digest | `FBC_SMTP_*`, `FBC_MAIL_FROM`, `FBC_OWNER_EMAILS` | Feedback still queues; you read `/admin` |
+| A GitHub issue from a report | `FBC_GITHUB_REPO`, `FBC_GITHUB_TOKEN` | The prompt export still works; copy it by hand |
+| Free-text comments summarised before they reach you | `ANTHROPIC_API_KEY` | Any comment routes to you unread, which is what it did before |
+
+Store the two secrets in Secret Manager and mount them, rather than setting
+them as plain environment variables:
+
+```bash
+printf '%s' "$TOKEN" | gcloud secrets create fbc-github-token --data-file=-
+gcloud run services update fbc-review --region=us-east1 \
+  --update-secrets="FBC_GITHUB_TOKEN=fbc-github-token:latest"
+```
+
+The GitHub token needs `issues: write` on that repository and nothing else. The
+Anthropic key is billed per comment summarised, which is a handful of calls a
+day rather than one per review — the review path makes no model calls at all,
+and that is a property the test suite enforces rather than a claim.
+
+### Turning it off again
+
+```bash
+gcloud run services update fbc-review --region=us-east1 \
+  --remove-env-vars="FBC_TRAINING_MODE"
+```
+
+Reviews immediately go back to running uncalibrated. Nothing is deleted: the
+collected feedback and every promoted profile version stay in Firestore, and
+turning the flag back on resumes from the same active version.
+
+**Note what this does not do.** Reviews run against the *active* profile while
+training is on, so if you have promoted anything, switching training off also
+switches those calibrations off. That is usually not what you want in an
+incident — to back out one bad promotion while keeping the rest, promote a
+correction instead. Versions are immutable and `/api/admin/calibration` lists
+them, so you can always see what changed and when.

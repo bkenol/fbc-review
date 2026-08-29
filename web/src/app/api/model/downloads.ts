@@ -16,5 +16,9 @@ export interface Downloads {
     expires_at: string;
     findings_json: string;
     markup_pdf: string;
+    /**
+     * The set as uploaded. The in-app viewer renders this and draws the findings itself as an overlay, rather than rendering `markup_pdf` — otherwise every marker would be drawn twice, once burnt into the page and once interactively, and neither could be turned off.
+     */
+    source_pdf?: string;
 }
 

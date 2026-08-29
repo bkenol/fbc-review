@@ -4,6 +4,12 @@ rules_version = '2';
 // Firebase ID token, checks the email allowlist, and enforces that a job may
 // only be read by the uid that created it.
 //
+// The same is true of the training-mode collections added alongside it —
+// feedback, markups and calibration. A calibration profile decides what every
+// future review reports, so a client-writable path to it would be a way to
+// change other people's plan reviews from a browser console. There is no such
+// path: promotion happens in the API, behind the owner allowlist.
+//
 // So this file denies everything. That is not belt-and-braces on top of the
 // handler check — it is the statement that there is no client-side data path at
 // all. Cloud Run reaches Firestore with the fbc-review-sa service account,
