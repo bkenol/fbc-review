@@ -11,7 +11,9 @@
  */
 import { DatePipe, LowerCasePipe } from '@angular/common';
 import { Component, computed, effect, inject, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { map } from 'rxjs';
 
 import { Feedback, FeedbackSubject, Finding, Markup, MarkupRequest } from '../api';
 import { FeedbackDraft, FeedbackPanel } from '../feedback/feedback-panel';
@@ -40,7 +42,18 @@ export class Workspace {
   protected readonly subject = signal<FeedbackSubject>(FeedbackSubject.Finding);
   protected readonly commentDraft = signal('');
 
-  protected readonly jobId = signal('');
+  /**
+   * The review being looked at.
+   *
+   * Read from the `paramMap` stream rather than `route.snapshot`. The router
+   * reuses this component when only the id changes — following a link from one
+   * review to another — and a snapshot is captured once, so the second review
+   * would never load.
+   */
+  protected readonly jobId = toSignal(
+    this.route.paramMap.pipe(map((params) => params.get('id') ?? '')),
+    { initialValue: '' },
+  );
 
   protected readonly trainingOn = computed(
     () => this.config()?.training?.enabled ?? false,
@@ -66,9 +79,13 @@ export class Workspace {
     this.reviews.loadConfig();
 
     effect(() => {
-      const id = this.route.snapshot.paramMap.get('id') ?? '';
-      if (!id || id === this.jobId()) return;
-      this.jobId.set(id);
+      const id = this.jobId();
+      if (!id) return;
+      // Opening a different review must not leave the previous one's selection
+      // and markup on screen.
+      this.selectedFinding.set(null);
+      this.selectedMarkup.set(null);
+      this.training.clearAccepted();
       this.reviews.open(id);
     });
 
