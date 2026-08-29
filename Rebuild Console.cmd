@@ -4,35 +4,71 @@ rem
 rem  Opens the console in your browser: Pull, Rebuild and Publish as buttons,
 rem  with their output streaming into the page.
 rem
-rem  Run it once with an argument to put a shortcut on the Desktop:
-rem      "Rebuild Console.cmd" shortcut
+rem      "Rebuild Console.cmd"            open the console
+rem      "Rebuild Console.cmd" shortcut   put a shortcut on the Desktop
+rem      "Rebuild Console.cmd" debug      open it with a visible console, so a
+rem                                       startup error is readable
 rem
-rem  No administrator rights are needed. Docker Desktop must be running before
-rem  a rebuild will work, which is a separate matter.
+rem  From Git Bash, use scripts/rebuild-console.sh instead — a POSIX path with
+rem  no spaces in it, which avoids the backslash-escaping this file's name runs
+rem  into there.
+rem
+rem  No administrator rights are needed. Docker Desktop must be running before a
+rem  rebuild will work, which is a separate matter.
 
 setlocal
 set "REPO=%~dp0"
 if "%REPO:~-1%"=="\" set "REPO=%REPO:~0,-1%"
 
-rem Prefer the project virtualenv, then the py launcher, then bare python.
+rem Which interpreter. Each candidate is tested in its own block: written as
+rem `if not defined PY where x && set PY=x` on one line, cmd binds the && to the
+rem whole line rather than to the if, so the set runs even when the if is
+rem skipped — which silently overwrote the virtualenv with whatever came last
+rem and made the not-found message below unreachable.
 set "PY="
-if exist "%REPO%\.venv\Scripts\pythonw.exe" set "PY=%REPO%\.venv\Scripts\pythonw.exe"
-if not defined PY where pyw >nul 2>&1 && set "PY=pyw"
-if not defined PY where pythonw >nul 2>&1 && set "PY=pythonw"
-if not defined PY where python >nul 2>&1 && set "PY=python"
+set "PYC="
+if exist "%REPO%\.venv\Scripts\pythonw.exe" (
+  set "PY=%REPO%\.venv\Scripts\pythonw.exe"
+  set "PYC=%REPO%\.venv\Scripts\python.exe"
+)
+if not defined PY (
+  where pythonw.exe >nul 2>&1
+  if not errorlevel 1 (
+    set "PY=pythonw.exe"
+    set "PYC=python.exe"
+  )
+)
+if not defined PY (
+  where python.exe >nul 2>&1
+  if not errorlevel 1 (
+    set "PY=python.exe"
+    set "PYC=python.exe"
+  )
+)
 
 if not defined PY (
-  echo Python was not found on PATH and there is no .venv in %REPO%.
+  echo.
+  echo Python was not found on PATH, and there is no .venv in:
+  echo   %REPO%
+  echo.
   echo Install Python 3, or run scripts\setup.ps1 to create the virtualenv.
+  echo.
   pause
   exit /b 1
 )
 
 if /i "%~1"=="shortcut" goto :shortcut
+if /i "%~1"=="debug" goto :debug
 
-rem pythonw has no console, so the console window is the browser page and
-rem nothing else. start /b keeps this cmd window from lingering either.
+rem pythonw has no console, so the only window that appears is the browser.
 start "" /b "%PY%" "%REPO%\scripts\rebuild_console.py"
+exit /b 0
+
+:debug
+rem Same thing with a console attached, so a traceback is visible.
+"%PYC%" "%REPO%\scripts\rebuild_console.py"
+echo.
+pause
 exit /b 0
 
 :shortcut
