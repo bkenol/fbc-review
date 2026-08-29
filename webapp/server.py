@@ -31,7 +31,7 @@ from fbcreview.options import (AVAILABLE_EDITIONS, EDITIONS, OCCUPANCY_GROUPS,
 from fbcreview.rules import registered
 from webapp import (assist, calibration, errors, feedback_schema,
                     logging_config, mailer, models, notify, prefill, storage,
-                    triage, upload, version)
+                    storage_urls, triage, upload, version)
 from webapp.auth import User, current_user
 from webapp.calibration import CalibrationProfile, ProfileChange
 from webapp.config import settings
@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI):
             "workers": cfg.workers,
             "bucket": cfg.bucket,
             "allowlist_size": len(cfg.allowed_emails),
+            "backend": cfg.backend,
             "on_cloud_run": cfg.on_cloud_run,
         },
     )
@@ -81,7 +82,7 @@ async def lifespan(app: FastAPI):
     # instance. Failing to reach Firestore here must not stop the service
     # coming up, or a transient outage becomes a crash loop.
     try:
-        (_dev_jobs() if cfg.dev_unsafe_auth else get_job_store()).fail_stale_running()
+        (_dev_jobs() if cfg.local_backend else get_job_store()).fail_stale_running()
     except Exception:
         log.exception("startup sweep for orphaned jobs failed")
 
@@ -167,18 +168,25 @@ app.openapi = custom_openapi  # type: ignore[method-assign]
 
 
 # -- dependency seams (overridden in tests) --------------------------------
-# In local development these resolve to filesystem stand-ins so the Angular
-# client can be run and used without a GCP project. settings().dev_unsafe_auth
-# cannot be true when K_SERVICE is set, so neither branch is reachable on Cloud
-# Run — see webapp/devbackend.py.
+# `local` resolves to the filesystem stand-ins in webapp/devbackend.py, so the
+# whole app runs with no GCP project at all.
+#
+# Keyed on the backend rather than on `dev_unsafe_auth`, which is what selected
+# both until this was split. They are genuinely separate questions: Cloud
+# Storage is the one part of this stack that requires an open billing account,
+# so a deployment that cannot have one still wants the filesystem backend **and
+# real Firebase sign-in** — and while one flag meant both, choosing the first
+# silently gave away the second. config.py forces `gcp` whenever K_SERVICE is
+# set, so neither branch below can pick the filesystem on Cloud Run, where the
+# disk is ephemeral.
 def job_store() -> JobStore:
-    if settings().dev_unsafe_auth:
+    if settings().local_backend:
         return _dev_jobs()
     return get_job_store()
 
 
 def file_store() -> Storage:
-    if settings().dev_unsafe_auth:
+    if settings().local_backend:
         return _dev_files()
     return get_storage()
 
@@ -198,7 +206,7 @@ def _dev_files():
 
 
 def feedback_store() -> FeedbackStore:
-    if settings().dev_unsafe_auth:
+    if settings().local_backend:
         return _dev_feedback()
     return get_feedback_store()
 
@@ -1451,27 +1459,50 @@ def admin_send_digest(
     return models.MailStatus(configured=mailer.configured(), status=result)
 
 
-# -- dev-only artefact download -------------------------------------------
-# Stands in for a Cloud Storage signed URL on a laptop. Registered only when the
-# dev flag is on, so the deployed service has no such route at all — artefacts
-# there are fetched browser-to-GCS and never cross the app.
-if settings().dev_unsafe_auth:
+# -- artefacts, on the filesystem backend ---------------------------------
+# Stands in for a Cloud Storage signed URL when there is no bucket. Registered
+# unconditionally and gated inside the handler, rather than behind a
+# module-level `if`: route registration happens at import, and a deployment's
+# backend is not knowable then in a test that sets it afterwards.
+#
+# Deliberately off the published schema. It serves a 17 MB PDF, not a typed
+# body, and the URL reaches the client inside `Downloads`, which is typed. The
+# rest of the API is the contract; this is a file.
+@app.get("/api/artefacts/{blob_path:path}", include_in_schema=False)
+def artefact(blob_path: str, expires: str = "", sig: str = "", name: str = ""):
+    """One stored artefact, authorised by its signature.
+
+    No bearer token is required and that is the point: this URL is handed to a
+    browser to *navigate* to, and a navigation carries no `Authorization`
+    header. The HMAC is the authorisation, exactly as it is for a GCS V4 signed
+    URL, and it is only minted after ownership of the job has been checked in
+    `GET /api/jobs/{job_id}`.
+    """
     from fastapi.responses import FileResponse
 
-    @app.get("/_dev/blob/{blob_path:path}", include_in_schema=False)
-    def dev_blob(blob_path: str, filename: str | None = None):
-        from webapp.devbackend import LocalStorage
+    if not settings().local_backend:
+        # On the GCP backend the browser fetches straight from Cloud Storage
+        # and nothing should be asking this service for a blob.
+        raise ApiError(404, errors.NOT_FOUND, "No such artefact.")
 
-        root = LocalStorage().dir.resolve()
-        target = (root / blob_path).resolve()
-        # Refuse anything that escapes the blob root.
-        if not str(target).startswith(str(root)) or not target.is_file():
-            raise ApiError(404, errors.NOT_FOUND, "No such artefact.")
-        return FileResponse(
-            target,
-            media_type="application/pdf" if target.suffix == ".pdf" else "application/json",
-            filename=filename or target.name,
-        )
+    if not storage_urls.verify(blob_path, expires, sig, name):
+        # One message for a bad signature, a missing one and an expired one.
+        # Which of the three it was is not something a caller needs to know.
+        raise ApiError(403, errors.FORBIDDEN, "This link is not valid any more.")
+
+    from webapp.devbackend import LocalStorage
+
+    root = LocalStorage().dir.resolve()
+    target = (root / blob_path).resolve()
+    # Belt and braces behind the signature: a signed path still must not escape
+    # the blob root.
+    if not str(target).startswith(str(root)) or not target.is_file():
+        raise ApiError(404, errors.NOT_FOUND, "No such artefact.")
+
+    media = {"pdf": "application/pdf", "json": "application/json"}.get(
+        target.suffix.lstrip("."), "application/octet-stream"
+    )
+    return FileResponse(target, media_type=media, filename=name or target.name)
 
 
 # -- the client, when this deployment serves it itself ---------------------

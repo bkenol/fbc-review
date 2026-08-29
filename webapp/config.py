@@ -16,6 +16,11 @@ def _emails(name: str) -> FrozenSet[str]:
     return frozenset(e.strip().lower() for e in raw.split(",") if e.strip())
 
 
+#: Which stores the service talks to. `gcp` is Firestore plus Cloud Storage;
+#: `local` is the filesystem stand-ins in `webapp/devbackend.py`.
+BACKEND_GCP, BACKEND_LOCAL = "gcp", "local"
+
+
 def _int(name: str, default: int) -> int:
     try:
         return int(os.environ[name])
@@ -48,6 +53,13 @@ class Settings:
     workers: int
 
     # ── misc ──────────────────────────────────────────────────────────────
+    #: `gcp` or `local`. Deliberately independent of `dev_unsafe_auth`, which
+    #: used to select both. Cloud Storage is the one piece of this stack that
+    #: requires an open billing account, so a deployment that cannot have one
+    #: needs to run the filesystem backend **with real authentication** — and
+    #: while those two were the same flag, it could not.
+    backend: str
+
     collection: str
     feedback_collection: str
     markup_collection: str
@@ -63,6 +75,27 @@ class Settings:
     #: Repository escalations become issues in, as `owner/repo`. Inert without
     #: a token, exactly like SMTP.
     github_repo: str
+
+    @property
+    def local_backend(self) -> bool:
+        return self.backend == BACKEND_LOCAL
+
+    @property
+    def artefact_secret(self) -> str:
+        """The key that signs local artefact URLs.
+
+        Read at use rather than captured, as `github_token` is: it is a secret
+        and this dataclass gets logged.
+
+        With nothing set, `webapp.storage_urls` generates one per process. That
+        is a deliberate fail-safe rather than a convenience — links stop working
+        when the service restarts, which is visible and harmless, where a
+        hard-coded default would be a signing key published in the repository.
+        Set it explicitly for a service that restarts often, or one run with
+        more than one uvicorn worker: a link minted by one process is not valid
+        at another that generated its own.
+        """
+        return os.environ.get("FBC_ARTEFACT_SECRET", "")
 
     @property
     def github_token(self) -> str:
@@ -92,6 +125,18 @@ def settings() -> Settings:
     on_cloud_run = bool(os.environ.get("K_SERVICE"))
     dev_unsafe = os.environ.get("FBC_DEV_UNSAFE_AUTH") == "1" and not on_cloud_run
 
+    # An unset or unrecognised value falls back to what the dev flag used to
+    # mean on its own, so every existing invocation keeps working unchanged.
+    backend = os.environ.get("FBC_BACKEND", "").strip().lower()
+    if backend not in (BACKEND_GCP, BACKEND_LOCAL):
+        backend = BACKEND_LOCAL if dev_unsafe else BACKEND_GCP
+    # Refused on Cloud Run for the same reason the dev flag is, and a worse one:
+    # the instance filesystem is ephemeral and instances are replaced freely, so
+    # the local backend there loses every job and every artefact without saying
+    # anything. Failing over to the real stores is the recoverable direction.
+    if on_cloud_run:
+        backend = BACKEND_GCP
+
     return Settings(
         project_id=os.environ.get("FBC_PROJECT_ID", "")
         or os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
@@ -107,6 +152,7 @@ def settings() -> Settings:
         rate_concurrent=_int("FBC_RATE_CONCURRENT", 3),
         stale_running_minutes=_int("FBC_STALE_RUNNING_MINUTES", 15),
         workers=_int("FBC_WORKERS", 2),
+        backend=backend,
         collection=os.environ.get("FBC_COLLECTION", "reviews"),
         feedback_collection=os.environ.get("FBC_FEEDBACK_COLLECTION", "feedback"),
         markup_collection=os.environ.get("FBC_MARKUP_COLLECTION", "markups"),

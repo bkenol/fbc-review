@@ -295,12 +295,11 @@ What limits the damage:
 `tunnel.sh` prints a warning naming this every run, read from `/healthz`'s
 `auth_required`, so it cannot be forgotten quietly.
 
-If it should be closed later, the cheapest fix is a Cloudflare Access policy on
-the hostname — Zero Trust, allowlist by email, free to 50 users, enforced at the
-edge with no change to the app. The alternative is decoupling
-`FBC_DEV_UNSAFE_AUTH` so real Firebase sign-in can run against the filesystem
-backend; Firebase Authentication itself is free-tier and needs no open billing
-account. Neither is done.
+Both remedies named here are now available, and section 0d is how to use them.
+`FBC_DEV_UNSAFE_AUTH` has been split from the backend selection, so
+`bash scripts/share.sh --authenticated` runs the same filesystem stores with
+real Firebase sign-in and the server-side allowlist. A Cloudflare Access policy
+on the hostname remains the zero-code option and composes with it.
 
 ### Persistence
 
@@ -365,6 +364,132 @@ records it holds are what changes. The Firebase records must be **DNS-only
 record puts Cloudflare's certificate in front of a host that is not expecting
 it. That is the mirror image of the tunnel's requirement above, and mixing the
 two up is the single easiest way to break either.
+
+---
+
+## 0d. Running it with no Cloud Billing account at all
+
+Cloud Storage and Cloud Run are the only two pieces of this stack that require
+an open billing account. Firebase **Authentication**, **Hosting** and
+**Firestore** are all free on the Spark plan with no card attached — so the
+absence of billing costs you the bucket and the managed container, and nothing
+else. Since 3 Feb 2026 Cloud Storage for Firebase follows the standard Cloud
+Storage rules and needs a linked billing account even inside the Always Free
+tier, so there is no way around the bucket other than not using one.
+
+This section is what to run instead. Two layers; use either or both.
+
+### Layer 1 — Cloudflare Access, no code change
+
+The tunnel from section 0c publishes the app at a hostname. Access puts an
+identity check in front of that hostname at Cloudflare's edge, before anything
+reaches the machine. Free to 50 users.
+
+1. Cloudflare dashboard → **Zero Trust** → Access → Applications → **Add an
+   application** → **Self-hosted**.
+2. Application domain: `fbc.omniflexfitness.com` (the tunnel hostname; leave
+   the path empty so it covers everything).
+3. Add a policy: Action **Allow**, Include → **Emails** → the addresses that
+   may in. Or **Emails ending in** `@omniflexfitness.com` for the whole domain.
+4. Identity provider: the built-in **One-time PIN** needs no setup and emails a
+   code. Google is a few more clicks and is nicer to use.
+
+That is the whole change, and the app never learns it happened. What it does
+**not** do is give the app per-user identity: with `FBC_DEV_UNSAFE_AUTH=1`
+every request still arrives as the same `dev-local` user, so the rate limits
+stay global and **everyone signed in through Access shares one review
+history**. For a single operator that is fine. For clients it is not, which is
+what layer 2 is for.
+
+### Layer 2 — real sign-in on the filesystem backend
+
+`FBC_BACKEND` and `FBC_DEV_UNSAFE_AUTH` are separate settings. The first
+chooses Firestore + Cloud Storage or the filesystem stand-ins in
+`webapp/devbackend.py`; the second turns authentication off. Choosing the
+filesystem no longer means giving up sign-in.
+
+**One-time setup.** None of it needs billing.
+
+```bash
+# 1. A Firebase project on the free Spark plan, if there is not one already,
+#    with Google sign-in enabled (Console → Authentication → Sign-in method).
+
+# 2. The web config, into the Angular client. These values are public by
+#    design — they identify the project and authorise nothing.
+firebase apps:sdkconfig web > sdk.json
+python scripts/write_firebase_config.py sdk.json && rm sdk.json
+
+# 3. A service account key for the server side.
+mkdir -p secrets                       # already in .gitignore
+gcloud iam service-accounts create fbc-auth --display-name="FBC token verifier"
+gcloud iam service-accounts keys create secrets/firebase-sa.json \
+  --iam-account="fbc-auth@${FBC_PROJECT_ID}.iam.gserviceaccount.com"
+```
+
+**Why a key here, when `CLAUDE.md` says never to download one.** That rule is
+about CI, where Workload Identity Federation is the right answer and a key is
+laziness. This is different: `webapp/auth.py` verifies tokens with
+`check_revoked=True`, and that check calls the Firebase Auth backend to ask
+whether the session has been revoked or the user disabled. Signature
+verification alone needs only Google's public certificates, but the revocation
+check needs credentials — and a container on your own hardware has no ambient
+identity and no OIDC issuer to federate from. The alternatives are worse:
+dropping to `check_revoked=False` means a revoked session keeps working until
+the token expires. Keep the key out of the repository (`secrets/` is ignored),
+mount it read-only, and rotate it if the machine is ever shared.
+
+**Running it.**
+
+```bash
+export FBC_PROJECT_ID=your-firebase-project
+export FBC_ALLOWED_EMAILS=you@example.com,someone@example.com
+bash scripts/share.sh --authenticated --persistent
+bash scripts/tunnel.sh          # in a second shell
+```
+
+`--authenticated` sets `FBC_BACKEND=local` and leaves `FBC_DEV_UNSAFE_AUTH`
+unset, mounts the key, and generates a stable artefact signing key at
+`.devdata/artefact.secret`. `/healthz` will report `auth_required: true`, and
+the script says so rather than warning.
+
+### How artefacts are served without a bucket
+
+Cloud Storage hands the browser a V4 signed URL and the download never touches
+the app. The filesystem backend needs the same shape for a reason worth stating,
+because it is the thing that makes this mode possible at all: **a download is a
+navigation, and a navigation carries no `Authorization` header.** The Angular
+interceptor attaches the Firebase token to XHR, which covers `findings.json`;
+it cannot cover the click that downloads a 17 MB marked-up set.
+
+So `webapp/storage_urls.py` mints the local equivalent — a path, an expiry and
+an HMAC over both, served by `GET /api/artefacts/{blob}`. The signature is the
+authorisation, exactly as it is for GCS, and it is only minted after ownership
+of the job has been checked. This replaced the old `/_dev/blob` route, which
+served any blob under the root to anyone who asked and existed only when
+authentication was off.
+
+The signing key comes from `FBC_ARTEFACT_SECRET`. Unset, the service generates
+one per process: safe, but every outstanding link stops working when the
+container restarts, and links minted by one uvicorn worker are not valid at
+another. `share.sh` writes a stable one for you.
+
+### What this mode costs you
+
+Stated plainly, because it is not free of trade-offs:
+
+| | Cloud Run + GCS | This |
+| --- | --- | --- |
+| Artefact download | direct from GCS | streamed through the app |
+| Availability | Google's | your machine's |
+| Scale to zero | yes | the container runs continuously |
+| Retention | bucket lifecycle rule | `.devdata` until you delete it |
+| Jobs survive a restart | yes | yes, they are files |
+| Cost | pennies a month, needs billing | nothing |
+
+The download path is the one real regression: a 17 MB PDF now occupies a worker
+thread for the length of the transfer. On Cloud Run that was worth avoiding
+because it pins a billable instance. On a machine you already own it is a
+streaming file read, and `FBC_WORKERS` is the knob if it ever matters.
 
 ---
 
@@ -881,6 +1006,8 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_RATE_CONCURRENT` | 3 | Concurrent reviews per user |
 | `FBC_STALE_RUNNING_MINUTES` | 15 | A `running` job older than this is failed at startup |
 | `FBC_WORKERS` | 2 | Worker threads per instance |
+| `FBC_BACKEND` | `gcp` | `gcp` for Firestore + Cloud Storage, `local` for the filesystem stand-ins. Independent of `FBC_DEV_UNSAFE_AUTH` — see section 0d. Forced to `gcp` whenever `K_SERVICE` is set, because Cloud Run's disk is ephemeral. |
+| `FBC_ARTEFACT_SECRET` | generated per process | Signs local artefact URLs. Only read on the `local` backend. Unset means outstanding links break on restart; set it for a service that restarts often or runs more than one uvicorn worker. |
 | `FBC_COLLECTION` | `reviews` | Firestore collection |
 | `FBC_LOG_LEVEL` | `INFO` | |
 | `FBC_VERSION` | stamped from `VERSION` | The version reported on `/healthz` and shown in the client. Set by CI; wins over anything computed locally. See §5a. |

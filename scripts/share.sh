@@ -3,15 +3,33 @@
 # Run the whole app as one container, ready to put behind a tunnel — the Git
 # Bash equivalent of scripts/share.ps1.
 #
-#   bash scripts/share.sh [--port 8060] [--max-upload-mb 95] [--skip-build] [--persistent]
+#   bash scripts/share.sh [--port 8060] [--max-upload-mb 95] [--skip-build]
+#                        [--persistent] [--authenticated]
 #
 # Builds the client, then runs the API with FBC_STATIC_DIR pointed at the bundle
 # so a single origin serves both. That removes CORS from the picture and means a
 # tunnel only has to forward one port.
 #
-# WARNING — this runs with FBC_DEV_UNSAFE_AUTH=1, which turns authentication off
-# entirely. Anyone who has the URL can upload a permit set and spend your CPU.
-# It is for a short, unlisted test, not something to leave running.
+# WARNING — by default this runs with FBC_DEV_UNSAFE_AUTH=1, which turns
+# authentication off entirely. Anyone who has the URL can upload a permit set
+# and spend your CPU. It is for a short, unlisted test, not something to leave
+# running.
+#
+# --authenticated is the answer to that, and needs no Cloud Billing account.
+# It runs the same filesystem backend with real Firebase sign-in and the
+# server-side allowlist, because FBC_BACKEND and FBC_DEV_UNSAFE_AUTH are now
+# separate settings. Firebase Authentication is free on the Spark plan; only
+# Cloud Storage and Cloud Run need billing, and this mode uses neither. It
+# needs three things in the environment:
+#
+#   FBC_PROJECT_ID        the Firebase project id
+#   FBC_ALLOWED_EMAILS    who may sign in, comma-separated
+#   FBC_SA_KEY            path to a service account key JSON (default
+#                         ./secrets/firebase-sa.json), mounted read-only
+#
+# The key is needed because verifying an ID token with check_revoked=True calls
+# the Firebase Auth backend, which off-GCP has no ambient identity to use. Keep
+# it outside the repository; docs/DEPLOYMENT.md section 0d says how to make one.
 #
 # The per-user rate limits still apply and, with authentication off, every
 # request shares one identity — so 3 concurrent and 10 reviews an hour become a
@@ -40,6 +58,7 @@ PORT="${FBC_PORT:-8060}"
 MAX_UPLOAD_MB="${FBC_MAX_UPLOAD_MB:-95}"
 SKIP_BUILD=0
 PERSISTENT=0
+AUTHENTICATED=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -47,7 +66,8 @@ while [ $# -gt 0 ]; do
     --max-upload-mb)  MAX_UPLOAD_MB="$2"; shift 2 ;;
     --skip-build)     SKIP_BUILD=1; shift ;;
     --persistent)     PERSISTENT=1; shift ;;
-    -h|--help)        sed -n '2,30p' "$0"; exit 0 ;;
+    --authenticated)  AUTHENTICATED=1; shift ;;
+    -h|--help)        sed -n '2,48p' "$0"; exit 0 ;;
     *)                printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -109,6 +129,33 @@ docker build -q -t fbc-review:dev "$(winpath "$ROOT")" >/dev/null
 docker rm -f fbc-test >/dev/null 2>&1 || true
 mkdir -p "$ROOT/.devdata"
 
+# ── the artefact signing key ──────────────────────────────────────────────
+# Kept beside the blobs it authorises, so links survive a restart. Without a
+# stable key the service generates one per process, which is safe but means
+# every outstanding download link stops working when the container is replaced.
+SECRET_FILE="$ROOT/.devdata/artefact.secret"
+if [ ! -s "$SECRET_FILE" ]; then
+  ( umask 077; head -c 32 /dev/urandom | base64 | tr -d '\n=' > "$SECRET_FILE" )
+  info "Generated an artefact signing key at .devdata/artefact.secret"
+fi
+ARTEFACT_SECRET="$(cat "$SECRET_FILE")"
+
+# ── authenticated mode preflight ──────────────────────────────────────────
+# Checked before the container starts rather than after: a missing key here
+# fails as an unreadable stack trace three seconds into startup, which is a
+# much worse way to learn about it.
+if [ "$AUTHENTICATED" -eq 1 ]; then
+  SA_KEY="${FBC_SA_KEY:-$ROOT/secrets/firebase-sa.json}"
+  [ -n "${FBC_PROJECT_ID:-}" ] || die "--authenticated needs FBC_PROJECT_ID (the Firebase project id)."
+  [ -n "${FBC_ALLOWED_EMAILS:-}" ] || die "--authenticated needs FBC_ALLOWED_EMAILS. Empty means nobody gets in."
+  [ -f "$SA_KEY" ] || die "No service account key at $SA_KEY. See docs/DEPLOYMENT.md section 0d, or set FBC_SA_KEY."
+  if grep -q 'REPLACE_ME' "$ROOT/web/src/app/core/firebase-config.ts" 2>/dev/null; then
+    warn 'web/src/app/core/firebase-config.ts still has placeholders — sign-in will not work.'
+    warn 'Run: firebase apps:sdkconfig web > sdk.json && python scripts/write_firebase_config.py sdk.json'
+    warn 'then rebuild the client.'
+  fi
+fi
+
 bold 'Starting...'
 LIFECYCLE='--rm'
 if [ "$PERSISTENT" -eq 1 ]; then LIFECYCLE='--restart=unless-stopped'; fi
@@ -118,15 +165,30 @@ if [ "$PERSISTENT" -eq 1 ]; then LIFECYCLE='--restart=unless-stopped'; fi
 RUN_ARGS=(
   run "$LIFECYCLE" -d --name fbc-test
   -p "${PORT}:8080"
-  -e FBC_DEV_UNSAFE_AUTH=1
-  -e FBC_BUCKET=fbc-dev-local
-  -e FBC_PROJECT_ID=fbc-dev-local
+  -e FBC_BACKEND=local
   -e FBC_STATIC_DIR=/app/client
   -e "FBC_MAX_UPLOAD_MB=${MAX_UPLOAD_MB}"
   -e FBC_WORKERS=2
+  -e "FBC_ARTEFACT_SECRET=${ARTEFACT_SECRET}"
   -v "$(winpath "$BUNDLE"):/app/client:ro"
   -v "$(winpath "$ROOT/.devdata"):/app/.devdata"
 )
+
+if [ "$AUTHENTICATED" -eq 1 ]; then
+  RUN_ARGS+=(
+    -e "FBC_PROJECT_ID=${FBC_PROJECT_ID}"
+    -e "FBC_ALLOWED_EMAILS=${FBC_ALLOWED_EMAILS}"
+    -e "FBC_BUCKET=${FBC_BUCKET:-fbc-local}"
+    -e GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/firebase-sa.json
+    -v "$(winpath "$SA_KEY"):/app/secrets/firebase-sa.json:ro"
+  )
+else
+  RUN_ARGS+=(
+    -e FBC_DEV_UNSAFE_AUTH=1
+    -e FBC_BUCKET=fbc-dev-local
+    -e FBC_PROJECT_ID=fbc-dev-local
+  )
+fi
 if [ -n "$VERSION" ]; then RUN_ARGS+=(-e "FBC_VERSION=${VERSION}"); fi
 RUN_ARGS+=(fbc-review:dev)
 
@@ -151,7 +213,13 @@ field() { printf '%s' "$HEALTH" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\
 bold 'Running'
 ok   "http://127.0.0.1:${PORT}/"
 ok   "Version: $(field version)"
-warn "Sign-in required: $(field auth_required)"
+if [ "$(field auth_required)" = 'true' ]; then
+  ok   'Sign-in required: true'
+else
+  warn 'Sign-in required: false — anyone with the URL can use this'
+  warn 'Close it with --authenticated, or a Cloudflare Access policy'
+  warn 'on the hostname (docs/DEPLOYMENT.md section 0d).'
+fi
 info ''
 info "Upload limit: ${MAX_UPLOAD_MB} MB"
 info ''
