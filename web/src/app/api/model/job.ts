@@ -9,6 +9,7 @@
  */
 import { ProjectDeclaration } from './project-declaration';
 import { ReviewOptions } from './review-options';
+import { CalibrationReport } from './calibration-report';
 import { Summary } from './summary';
 import { ConversionReport } from './conversion-report';
 import { Downloads } from './downloads';
@@ -17,6 +18,10 @@ import { SourceProfile } from './source-profile';
 
 export interface Job { 
     bytes: number;
+    /**
+     * What the calibration overlay did to this review. Present on any finished review, including one where it changed nothing.
+     */
+    calibration?: CalibrationReport | null;
     /**
      * Present when scanned sheets were rebuilt.
      */

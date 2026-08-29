@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 JobState = Literal["queued", "running", "done", "error"]
 Severity = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "VERIFIED", "MEASURED"]
@@ -23,6 +23,32 @@ ReconciledState = Literal[
     "CORROBORATED", "CONFLICT", "DECLARED_ONLY", "DRAWN_ONLY", "UNKNOWN"
 ]
 DeclarationFieldKind = Literal["enum", "bool", "number", "integer", "text"]
+ReviewMode = Literal["standard", "training"]
+FeedbackSubject = Literal["finding", "coverage"]
+FeedbackPolarity = Literal["good", "defect"]
+FeedbackState = Literal["new", "accepted", "rejected", "actioned"]
+Disposition = Literal["confirmation", "auto_tunable", "needs_component", "escalate"]
+MarkupKind = Literal["highlight", "box", "arrow", "strikeout", "freehand", "note"]
+Decision = Literal["accept", "reject", "action"]
+
+def render_knob_value(value: object) -> str:
+    """A lever's value, rendered for a person.
+
+    Knob values are genuinely polymorphic — a bool, a step count, a severity, a
+    list of occupancy groups — and `openapi-generator` renders an `anyOf` union
+    as an empty named interface, which is worse than untyped: nothing can be
+    assigned to it at all. Since the client only ever *displays* these (approval
+    is all-or-nothing on the proposal the server already holds, and the raw
+    value is read back from storage, never from a request body), the wire
+    carries the rendering and the store keeps the value.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value)
+    return str(value)
 SheetKind = Literal["vector", "hybrid", "raster", "blank"]
 DocumentKind = Literal["vector", "mixed", "raster", "blank"]
 
@@ -175,6 +201,16 @@ class ReviewOptions(BaseModel):
             "`declaration.sprinkler_system` as an NFPA 13 system or none."
         ),
     )
+    mode: ReviewMode = Field(
+        default="standard",
+        description=(
+            "`standard` reviews against the approved calibration profile, which is "
+            "what every applicant sees. `training` reviews against the caller's own "
+            "candidate profile and opens the feedback surface, so a reviewer can see "
+            "the effect of their own accepted feedback without it reaching anyone "
+            "else. Rejected with a 400 when training mode is off on this deployment."
+        ),
+    )
     min_severity: MinSeverity = "LOW"
     include_verified: bool = True
     include_measured: bool = True
@@ -194,6 +230,377 @@ class ReviewOptions(BaseModel):
         default_factory=list,
         description="Inert unless SMTP is configured on the server. Not surfaced in the web client.",
     )
+
+
+# ── the feedback taxonomy ─────────────────────────────────────────────────
+class FeedbackVerdict(BaseModel):
+    """One answer to one aspect, as the form should offer it.
+
+    Deliberately carries no hint of which calibration lever it moves. The client
+    describes what a person saw; `webapp.triage` decides what that implies. A UI
+    that showed the lever would invite people to pick the outcome they want
+    instead of the observation they made.
+    """
+
+    key: str
+    label: str
+    help: str
+    polarity: FeedbackPolarity = Field(
+        description="`good` verdicts are real signal, not an opt-out: they are what "
+                    "stops one dissent from moving a rule fifty people corroborated."
+    )
+
+
+class FeedbackAspect(BaseModel):
+    """One separable dimension of review quality."""
+
+    key: str
+    label: str
+    help: str
+    subject: FeedbackSubject
+    required: bool
+    verdicts: List[FeedbackVerdict]
+
+
+class MarkupKindInfo(BaseModel):
+    key: str
+    label: str
+    help: str
+
+
+class DispositionInfo(BaseModel):
+    key: Disposition
+    label: str
+
+
+class TrainingStatus(BaseModel):
+    """Whether this deployment collects feedback, and what it can do with it."""
+
+    enabled: bool = Field(description="False reproduces the service exactly as it was.")
+    is_owner: bool = Field(
+        description="Whether the caller may read the queue and promote a profile. "
+                    "Checked server-side on every admin route regardless; this is "
+                    "only so the client knows whether to draw the link."
+    )
+    assist: str = Field(description="Whether free-text comments get summarised, and how.")
+    github: str = Field(description="Whether escalations can become issues, and where.")
+    profile_version: int = Field(description="The calibration version production uses.")
+    profile_label: str = ""
+    calibrated_rules: int = Field(
+        default=0, description="How many rules the active profile changes."
+    )
+
+
+# ── calibration ───────────────────────────────────────────────────────────
+class CalibrationKnob(BaseModel):
+    """One lever, published so the admin console hard-codes no list."""
+
+    name: str
+    kind: Literal["bool", "int", "float", "severity", "strings"]
+    help: str
+    bounds: Optional[List[float]] = None
+    choices: Optional[List[str]] = None
+
+
+class RuleCalibration(BaseModel):
+    rule_id: str
+    enabled: bool = True
+    severity_shift: int = 0
+    severity_cap: Optional[MinSeverity] = None
+    severity_floor: Optional[MinSeverity] = None
+    scope_occupancy: List[str] = Field(default_factory=list)
+    scope_basis: List[str] = Field(default_factory=list)
+    drop_verified: bool = False
+    weight: float = 1.0
+    confirmations: int = Field(
+        default=0, description="Reviewers who said this rule got something right."
+    )
+    note: str = ""
+
+
+class CalibrationProfile(BaseModel):
+    """A versioned set of rule calibrations. Versions are immutable."""
+
+    profile_id: str
+    version: int
+    scope: str
+    owner_uid: str = ""
+    label: str
+    edition: str
+    rules: Dict[str, RuleCalibration] = Field(default_factory=dict)
+    note: str = ""
+    derived_from: Optional[int] = None
+    created_at: Optional[dt.datetime] = None
+    created_by: str = ""
+
+
+class CalibrationChange(BaseModel):
+    """One lever moved on one rule, with why."""
+
+    rule_id: str
+    knob: str
+    value: str = Field(
+        default="", description="The value this change sets, rendered for display."
+    )
+    reason: str = ""
+    note: str = ""
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _render(cls, value: object) -> str:
+        return render_knob_value(value)
+
+
+class CalibrationAdjustment(BaseModel):
+    """One finding this profile actually changed."""
+
+    fid: str
+    rule_id: str
+    knob: str
+    before: str
+    after: str
+    detail: str = ""
+
+
+class CalibrationReport(BaseModel):
+    """What the overlay did to a review. Part of the audit trail.
+
+    Recorded whether or not anything moved: a review that says "profile v4,
+    nothing adjusted" is a different statement from a review that never
+    mentions calibration at all.
+    """
+
+    profile_id: str
+    profile_version: int
+    profile_label: str
+    adjusted: int
+    suppressed: int
+    adjustments: List[CalibrationAdjustment] = Field(default_factory=list)
+
+
+class CalibrationDiffRow(BaseModel):
+    rule_id: str
+    knob: str
+    before: str = ""
+    after: str = ""
+    help: str = ""
+
+    @field_validator("before", "after", mode="before")
+    @classmethod
+    def _render(cls, value: object) -> str:
+        return render_knob_value(value)
+
+
+class CalibrationView(BaseModel):
+    """The admin console's calibration screen."""
+
+    active: CalibrationProfile
+    versions: List[CalibrationProfile]
+    knobs: List[CalibrationKnob]
+    pending: int = Field(description="Approved-and-not-yet-promoted proposals. Always 0 "
+                                     "today: accepting a proposal promotes it.")
+
+
+# ── markup ────────────────────────────────────────────────────────────────
+class MarkupGeometry(BaseModel):
+    """Where a markup sits, in PDF user space.
+
+    PDF points, not screen pixels, and not a fraction of the page. The viewer
+    zooms and the window resizes; the drawing does not. Storing device
+    coordinates would make every markup wrong at a different zoom level, and
+    storing fractions would lose precision on a 24x36 sheet where a door tag is
+    a few points across.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x0: float = 0
+    y0: float = 0
+    x1: float = 0
+    y1: float = 0
+    points: List[List[float]] = Field(
+        default_factory=list,
+        description="Freehand and arrow paths, as [[x, y], ...] in the same space.",
+        max_length=2000,
+    )
+
+
+class MarkupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(ge=1)
+    kind: MarkupKind
+    geometry: MarkupGeometry
+    comment: str = Field(default="", max_length=4000)
+    colour: str = Field(default="", max_length=16)
+    sheet: str = Field(default="", max_length=40)
+    finding_fid: str = Field(
+        default="", max_length=64,
+        description="The finding this markup is about, when it is about one.",
+    )
+
+
+class Markup(BaseModel):
+    id: str
+    job_id: str
+    page: int
+    sheet: str = ""
+    kind: MarkupKind
+    geometry: MarkupGeometry
+    comment: str = ""
+    colour: str = ""
+    finding_fid: str = ""
+    created_at: dt.datetime
+
+
+class MarkupList(BaseModel):
+    markups: List[Markup]
+
+
+# ── feedback ──────────────────────────────────────────────────────────────
+class FeedbackRequest(BaseModel):
+    """One piece of feedback about one thing.
+
+    `answers` is the structured part and is what gets triaged. `comment` is the
+    residue — everything the taxonomy did not ask about — and a submission that
+    carries one always reaches a person, because prose nobody has read cannot be
+    routed deterministically.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: FeedbackSubject = "finding"
+    finding_fid: str = Field(default="", max_length=64)
+    answers: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Aspect key to verdict key, validated against the taxonomy "
+                    "`/api/config` publishes. An unknown key is a 400 naming it.",
+    )
+    comment: str = Field(default="", max_length=4000)
+    markup_id: str = Field(default="", max_length=64)
+
+
+class AssistOpinion(BaseModel):
+    """What `webapp.assist` made of a free-text comment.
+
+    Recorded so the owner can see what was said about their user's words, and
+    typed so the client can show it. Advisory in the strict sense: the triage
+    may raise a disposition on the strength of it and may never lower one.
+    """
+
+    summary: str
+    aspect: str = ""
+    verdict: str = ""
+    names_a_code_section: bool = False
+    confidence: Literal["low", "medium", "high"] = "low"
+    rationale: str = ""
+
+
+class TriageResult(BaseModel):
+    """Where this feedback has to be fixed, and why."""
+
+    disposition: Disposition
+    label: str
+    rationale: str
+    changes: List[CalibrationChange] = Field(default_factory=list)
+    signals: List[str] = Field(default_factory=list)
+    assist: Optional[AssistOpinion] = Field(
+        default=None,
+        description="What the comment assist made of the free text, when there was "
+                    "some and it was configured. Advisory — it may raise a "
+                    "disposition and never lower one.",
+    )
+
+
+class Feedback(BaseModel):
+    id: str
+    job_id: str
+    subject: FeedbackSubject
+    finding_fid: str = ""
+    rule_id: str = ""
+    sheet: str = ""
+    page: int = 0
+    answers: Dict[str, str] = Field(default_factory=dict)
+    comment: str = ""
+    markup_id: str = ""
+    disposition: Disposition
+    rationale: str = ""
+    triage: TriageResult
+    state: FeedbackState
+    created_at: dt.datetime
+    decided_at: Optional[dt.datetime] = None
+    decided_by: str = ""
+    decision_note: str = ""
+    issue_url: str = ""
+    #: Present on the admin view only. The submitter's address is not returned
+    #: to other submitters.
+    email: str = ""
+    filename: str = ""
+    #: Snapshots taken at submission time. Stored rather than looked up later
+    #: because the queue has to show what was reported even after the review's
+    #: artefacts have aged out of the bucket — and because a finding re-read
+    #: from a re-run review is not the finding the person was looking at.
+    finding: Optional[Finding] = None
+    markup: Optional[Markup] = None
+    applied_to_candidate: bool = Field(
+        default=False,
+        description="Whether this landed in the submitter's own training profile. "
+                    "Production is untouched until the owner promotes.",
+    )
+
+
+class FeedbackList(BaseModel):
+    feedback: List[Feedback]
+
+
+class FeedbackAccepted(BaseModel):
+    """What the submitter is told back.
+
+    The triage verdict is returned rather than hidden: someone who reports a
+    misread table should be told immediately that it needs engine work and is
+    not a knob, instead of watching nothing happen.
+    """
+
+    id: str
+    triage: TriageResult
+    applied_to_candidate: bool
+    candidate_version: int = 0
+    message: str
+
+
+class DecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Decision
+    note: str = Field(default="", max_length=2000)
+
+
+class PromptExport(BaseModel):
+    """Escalated feedback as a runnable prompt.
+
+    Returned as a typed body rather than `text/markdown` so the generated client
+    carries the type, as everything else here does.
+    """
+
+    feedback_id: str
+    filename: str = Field(description="Suggested name under docs/, in the house style.")
+    markdown: str
+
+
+class IssueCreated(BaseModel):
+    feedback_id: str
+    url: str = Field(description="Empty when GitHub is not configured on this server.")
+    status: str
+
+
+class AdminOverview(BaseModel):
+    open_feedback: int
+    counts: Dict[str, int] = Field(description="Open feedback by disposition.")
+    mail: MailStatus
+    github: str
+    assist: str
+    active_version: int
+    calibrated_rules: int
 
 
 class ConfigResponse(BaseModel):
@@ -219,6 +626,20 @@ class ConfigResponse(BaseModel):
     )
     declaration_unlockable: List[str] = Field(
         description="Every rule any declaration field unlocks, deduplicated."
+    )
+    training: TrainingStatus
+    feedback_aspects: List[FeedbackAspect] = Field(
+        description=(
+            "The whole feedback taxonomy, as data. Adding a verdict in "
+            "`webapp/feedback_schema.py` reaches the client through here with no "
+            "frontend change — the same contract the declaration questionnaire has."
+        )
+    )
+    markup_kinds: List[MarkupKindInfo]
+    dispositions: List[DispositionInfo]
+    calibration_knobs: List[CalibrationKnob] = Field(
+        description="Every lever the overlay has. The closed list this publishes is "
+                    "what makes the triage split decidable rather than a judgement."
     )
 
 
@@ -384,6 +805,15 @@ class Downloads(BaseModel):
 
     markup_pdf: str
     findings_json: str
+    source_pdf: str = Field(
+        default="",
+        description=(
+            "The set as uploaded. The in-app viewer renders this and draws the "
+            "findings itself as an overlay, rather than rendering `markup_pdf` — "
+            "otherwise every marker would be drawn twice, once burnt into the page "
+            "and once interactively, and neither could be turned off."
+        ),
+    )
     expires_at: dt.datetime
 
 
@@ -477,6 +907,11 @@ class Job(BaseModel):
     conversion: Optional[ConversionReport] = Field(
         default=None, description="Present when scanned sheets were rebuilt."
     )
+    calibration: Optional[CalibrationReport] = Field(
+        default=None,
+        description="What the calibration overlay did to this review. Present on any "
+                    "finished review, including one where it changed nothing.",
+    )
     downloads: Optional[Downloads] = Field(
         default=None, description="Present only while state is `done`."
     )
@@ -505,6 +940,9 @@ class FindingsDocument(BaseModel):
         default=None, description="Present when a project declaration was submitted."
     )
     summary: Summary
+    calibration: Optional[CalibrationReport] = Field(
+        default=None, description="The profile this review ran under, and what it moved."
+    )
     findings: List[Finding]
 
 

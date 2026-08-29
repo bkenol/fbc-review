@@ -8,6 +8,7 @@
  * Do not edit the class manually.
  */
 import { ReviewOptions } from './review-options';
+import { CalibrationReport } from './calibration-report';
 import { DeclarationReport } from './declaration-report';
 import { Finding } from './finding';
 import { Summary } from './summary';
@@ -17,6 +18,10 @@ import { Summary } from './summary';
  * The exact shape of `findings.json` in the bucket.  No endpoint serves this — the browser fetches it from the signed URL — but it is published into `components.schemas` (see `server.custom_openapi`) so the generated TypeScript client carries the type. Without that the findings table would be the one part of the client typed by hand, which is precisely the part most likely to drift.
  */
 export interface FindingsDocument { 
+    /**
+     * The profile this review ran under, and what it moved.
+     */
+    calibration?: CalibrationReport | null;
     /**
      * Present when a project declaration was submitted.
      */

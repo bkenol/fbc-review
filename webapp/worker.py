@@ -24,7 +24,8 @@ from fbcreview.options import ReviewOptions
 from fbcreview.pipeline import build_facts
 from fbcreview.render.markup import render
 from fbcreview.rules import ACTIONABLE, registered, run_all
-from webapp import convert, mailer, storage
+from webapp import calibration, convert, mailer, storage
+from webapp.calibration import CalibrationProfile
 from webapp.jobs import JobStore
 
 log = logging.getLogger("fbc.worker")
@@ -65,6 +66,7 @@ def run_review(
     convert_raster: bool = False,
     raster_pages: Optional[List[int]] = None,
     raster_regions: Optional[Dict[int, List[Any]]] = None,
+    profile: Optional[CalibrationProfile] = None,
 ) -> None:
     """Executed on a worker thread. Never raises — every failure is recorded
     on the job document instead, because nothing is waiting on the return."""
@@ -122,6 +124,24 @@ def run_review(
         advance()
         result = run_all(facts, options, declaration)
 
+        # ── calibration ────────────────────────────────────────────────────
+        # Applied here, between the corpus and the renderer, so the marked-up
+        # PDF and findings.json cannot disagree about what this review found.
+        # Downstream of run_all by construction: the overlay re-levels, re-orders
+        # and suppresses a finished list, and can never add to it.
+        calibrated = calibration.apply(
+            result.findings,
+            profile,
+            occupancy_group=getattr(declaration, "occupancy_group", "") or "",
+        )
+        result.findings = calibrated.findings
+        # A rule the profile silenced has not passed. Recording the abstention is
+        # what keeps "not checked" distinguishable from "checked and passed" —
+        # the first design rule in README.md, and the one calibration is most
+        # able to quietly break.
+        result.abstentions = [*result.abstentions, *calibrated.abstentions]
+        calibration_report = calibrated.to_report()
+
         # ── render ─────────────────────────────────────────────────────────
         advance()
         pdf_name = f"{Path(filename).stem} — CODE REVIEW.pdf"
@@ -140,6 +160,8 @@ def run_review(
             {"rule": a.rule_id, "reason": a.reason, "detail": getattr(a, "detail", "") or ""}
             for a in result.abstentions
         ]
+
+        store.update(job_id, calibration=calibration_report)
 
         summary: Dict[str, Any] = {
             "sheets": len(facts.sheets),
@@ -169,6 +191,7 @@ def run_review(
                     "options": options.to_dict(),
                     "declaration": _declaration_report(result.reconciled),
                     "summary": summary,
+                    "calibration": calibration_report,
                     "findings": findings,
                 },
                 indent=2,
@@ -197,6 +220,8 @@ def run_review(
                 "email": email,
                 "pages": pages,
                 "findings": len(findings),
+                "profile_version": calibration_report["profile_version"],
+                "calibration_adjusted": calibration_report["adjusted"],
                 "elapsed_seconds": round(time.monotonic() - started, 2),
             },
         )

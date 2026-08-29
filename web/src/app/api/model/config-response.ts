@@ -7,15 +7,24 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { MarkupKindInfo } from './markup-kind-info';
 import { ReviewOptions } from './review-options';
 import { OccupancyGroup } from './occupancy-group';
 import { DeclarationField } from './declaration-field';
+import { CalibrationKnob } from './calibration-knob';
+import { DispositionInfo } from './disposition-info';
+import { FeedbackAspect } from './feedback-aspect';
 import { MailStatus } from './mail-status';
 import { DeclarationGroup } from './declaration-group';
 import { Edition } from './edition';
+import { TrainingStatus } from './training-status';
 
 
 export interface ConfigResponse { 
+    /**
+     * Every lever the overlay has. The closed list this publishes is what makes the triage split decidable rather than a judgement.
+     */
+    calibration_knobs: Array<CalibrationKnob>;
     /**
      * The whole questionnaire, as data. Adding a field or an enum value in `fbcreview/declaration_schema.py` reaches the client through here with no frontend change.
      */
@@ -29,8 +38,14 @@ export interface ConfigResponse {
      */
     declaration_unlockable: Array<string>;
     defaults: ReviewOptions;
+    dispositions: Array<DispositionInfo>;
     editions: Array<Edition>;
+    /**
+     * The whole feedback taxonomy, as data. Adding a verdict in `webapp/feedback_schema.py` reaches the client through here with no frontend change — the same contract the declaration questionnaire has.
+     */
+    feedback_aspects: Array<FeedbackAspect>;
     mail: MailStatus;
+    markup_kinds: Array<MarkupKindInfo>;
     max_pages: number;
     max_upload_mb: number;
     occupancy_groups: Array<OccupancyGroup>;
@@ -47,6 +62,7 @@ export interface ConfigResponse {
      * Ordered stage labels a running job moves through.
      */
     stages: Array<string>;
+    training: TrainingStatus;
 }
 export enum ConfigResponseSeveritiesEnum {
     Critical = 'CRITICAL',
