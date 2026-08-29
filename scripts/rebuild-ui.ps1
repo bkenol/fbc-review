@@ -204,7 +204,14 @@ $form.Controls.Add($linkLocal)
 # ── console plumbing ──────────────────────────────────────────────────────
 function Write-Console([string]$Text) {
     if (-not $Text) { return }
-    $console.AppendText(($Text -replace "`r`n", "`n") -replace "`n", "`r`n")
+    # Normalised in two statements rather than one expression inside the call.
+    # PowerShell splits method arguments on top-level commas, and an
+    # unparenthesised `-replace` contributes one: written inline, this reached
+    # AppendText as two arguments and threw "Cannot find an overload for
+    # AppendText and the argument count: 2" on the first line ever written.
+    $normalised = $Text -replace "`r`n", "`n"
+    $normalised = $normalised -replace "`n", "`r`n"
+    $console.AppendText($normalised)
 }
 
 function Write-Rule([string]$Caption) {
