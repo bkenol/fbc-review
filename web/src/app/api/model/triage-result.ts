@@ -8,6 +8,7 @@
  * Do not edit the class manually.
  */
 import { AssistOpinion } from './assist-opinion';
+import { Disposition } from './disposition';
 import { CalibrationChange } from './calibration-change';
 
 
@@ -20,17 +21,11 @@ export interface TriageResult {
      */
     assist?: AssistOpinion | null;
     changes?: Array<CalibrationChange>;
-    disposition: TriageResultDispositionEnum;
+    disposition: Disposition;
     label: string;
     rationale: string;
     signals?: Array<string>;
 }
-export enum TriageResultDispositionEnum {
-    Confirmation = 'confirmation',
-    AutoTunable = 'auto_tunable',
-    NeedsComponent = 'needs_component',
-    Escalate = 'escalate'
-};
 
 
 

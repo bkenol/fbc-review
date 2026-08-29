@@ -21,11 +21,13 @@ model/config-response.ts
 model/conversion-report.ts
 model/converted-page.ts
 model/decision-request.ts
+model/decision.ts
 model/declaration-field.ts
 model/declaration-group.ts
 model/declaration-report.ts
 model/declaration-tolerance.ts
 model/disposition-info.ts
+model/disposition.ts
 model/downloads.ts
 model/edition.ts
 model/error-detail.ts
@@ -34,6 +36,7 @@ model/feedback-accepted.ts
 model/feedback-aspect.ts
 model/feedback-list.ts
 model/feedback-request.ts
+model/feedback-subject.ts
 model/feedback-verdict.ts
 model/feedback.ts
 model/finding.ts
@@ -46,6 +49,7 @@ model/job.ts
 model/mail-status.ts
 model/markup-geometry.ts
 model/markup-kind-info.ts
+model/markup-kind.ts
 model/markup-list.ts
 model/markup-request.ts
 model/markup.ts

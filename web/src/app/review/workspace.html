@@ -1,0 +1,190 @@
+<section class="step workspace">
+  <div class="step-head">
+    <span class="mark">05</span>
+    <h2>{{ job()?.filename || 'Review' }}</h2>
+  </div>
+
+  @if (failure(); as problem) {
+    <p class="hint" role="alert">{{ problem.message }}</p>
+  }
+
+  @if (job(); as review) {
+    <p class="hint workspace-meta">
+      <a routerLink="/">← All reviews</a>
+      <span class="dim">{{ review.pages }} sheets</span>
+      @if (review.options.mode === 'training') {
+        <span class="chip">Training run</span>
+      }
+      @if (review.calibration; as calibration) {
+        <span class="dim">
+          Calibration {{ calibration.profile_label }} v{{ calibration.profile_version }}
+          @if (calibration.adjusted) {
+            · {{ calibration.adjusted }} adjusted, {{ calibration.suppressed }} suppressed
+          }
+        </span>
+      }
+      @if (review.finished_at; as finished) {
+        <span class="dim">{{ finished | date: 'd MMM y, HH:mm' }}</span>
+      }
+    </p>
+  }
+
+  @if (source(); as url) {
+    <div class="workspace-split">
+      <app-sheet-viewer
+        [src]="url"
+        [findings]="findings() ?? []"
+        [markups]="training.markups()"
+        [markupKinds]="markupKinds()"
+        [canDraw]="trainingOn()"
+        [selectedFid]="selectedFinding()?.fid ?? ''"
+        (findingPicked)="pickFinding($event)"
+        (markupPicked)="pickMarkup($event)"
+        (markupDrawn)="onDrawn($event)"
+      />
+
+      <aside class="workspace-side">
+        @if (training.failure(); as problem) {
+          <p class="hint" role="alert">
+            {{ problem.message }}
+            <button type="button" class="inline" (click)="training.dismissFailure()">
+              Dismiss
+            </button>
+          </p>
+        }
+
+        <!-- ── what is selected ─────────────────────────────────────────── -->
+        @if (selectedFinding(); as finding) {
+          <div class="side-card">
+            <p class="eyebrow">{{ finding.severity }} · {{ finding.sheet }}</p>
+            <h3>{{ finding.title }}</h3>
+            <p class="side-line"><span class="dim">Checked</span> {{ finding.checked }}</p>
+            <p class="side-line"><span class="dim">Result</span> {{ finding.result }}</p>
+            @if (finding.code) {
+              <p class="side-line"><span class="dim">Cites</span> {{ finding.code }}</p>
+            }
+            @if (finding.action) {
+              <p class="side-line"><span class="dim">Do</span> {{ finding.action }}</p>
+            }
+            <button type="button" class="inline" (click)="clearSelection()">Close</button>
+          </div>
+
+          @if (trainingOn()) {
+            @if (saidAbout().get(finding.fid); as already) {
+              <p class="hint">
+                You have already given feedback on this finding —
+                {{ already.triage.label | lowercase }}. Sending more is fine; it is
+                recorded separately.
+              </p>
+            }
+            <app-feedback-panel
+              [aspects]="aspects()"
+              [subject]="subject()"
+              [busy]="training.saving()"
+              [accepted]="training.lastAccepted()"
+              [headline]="feedbackHeadline()"
+              (submitted)="onFeedback($event)"
+              (dismissed)="training.clearAccepted()"
+            />
+          }
+        } @else if (selectedMarkup(); as markup) {
+          <div class="side-card">
+            <p class="eyebrow">{{ markup.kind }} · sheet {{ markup.page }}</p>
+            <label class="comment">
+              <span>Comment on this markup</span>
+              <textarea
+                rows="3"
+                maxlength="4000"
+                [value]="commentDraft()"
+                (input)="onCommentInput($event)"
+              ></textarea>
+            </label>
+            <div class="side-actions">
+              <button
+                type="button"
+                class="btn"
+                [disabled]="training.saving()"
+                (click)="saveComment()"
+              >
+                Save comment
+              </button>
+              <button type="button" class="inline" (click)="reportGap(markup)">
+                Report a missed check here
+              </button>
+              <button type="button" class="inline" (click)="removeMarkup(markup)">
+                Delete
+              </button>
+            </div>
+          </div>
+
+          @if (trainingOn() && subject() === 'coverage') {
+            <app-feedback-panel
+              [aspects]="aspects()"
+              [subject]="subject()"
+              [busy]="training.saving()"
+              [accepted]="training.lastAccepted()"
+              [headline]="feedbackHeadline()"
+              (submitted)="onFeedback($event)"
+              (dismissed)="training.clearAccepted()"
+            />
+          }
+        } @else {
+          <p class="hint">
+            Pick a finding to read it and say what it got right or wrong.
+            @if (trainingOn()) {
+              Or draw on the sheet to point at something the review missed.
+            }
+          </p>
+        }
+
+        <!-- ── the register, in reading order ───────────────────────────── -->
+        <div class="side-list">
+          <p class="eyebrow">Findings ({{ open().length }} open)</p>
+          @for (finding of findings() ?? []; track finding.fid) {
+            <button
+              type="button"
+              class="side-row"
+              [class.on]="selectedFinding()?.fid === finding.fid"
+              [attr.data-severity]="finding.severity"
+              (click)="pickFinding(finding)"
+            >
+              <span class="side-sev">{{ finding.severity }}</span>
+              <span class="side-fid">{{ finding.fid }}</span>
+              <span class="side-sheet">{{ finding.sheet }}</span>
+              <span class="side-title">{{ finding.title }}</span>
+              @if (saidAbout().has(finding.fid)) {
+                <span class="side-flag" title="You have given feedback on this">✓</span>
+              }
+            </button>
+          } @empty {
+            <p class="hint">This review reported nothing.</p>
+          }
+        </div>
+
+        @if (trainingOn() && training.markups().length) {
+          <div class="side-list">
+            <p class="eyebrow">Your markup</p>
+            @for (markup of training.markups(); track markup.id) {
+              <button
+                type="button"
+                class="side-row"
+                [class.on]="selectedMarkup()?.id === markup.id"
+                (click)="pickMarkup(markup)"
+              >
+                <span class="side-sev">{{ markup.kind }}</span>
+                <span class="side-sheet">sheet {{ markup.page }}</span>
+                <span class="side-title">{{ markup.comment || 'No comment yet' }}</span>
+              </button>
+            }
+          </div>
+        }
+      </aside>
+    </div>
+  } @else if (job()) {
+    <p class="hint">
+      This review has no viewable set. The uploaded file may have aged out of storage.
+    </p>
+  } @else {
+    <p class="hint" aria-live="polite">Opening the review…</p>
+  }
+</section>

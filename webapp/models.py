@@ -9,6 +9,7 @@ over there, not a runtime `undefined`.
 from __future__ import annotations
 
 import datetime as dt
+from enum import StrEnum
 from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -24,12 +25,50 @@ ReconciledState = Literal[
 ]
 DeclarationFieldKind = Literal["enum", "bool", "number", "integer", "text"]
 ReviewMode = Literal["standard", "training"]
-FeedbackSubject = Literal["finding", "coverage"]
 FeedbackPolarity = Literal["good", "defect"]
 FeedbackState = Literal["new", "accepted", "rejected", "actioned"]
-Disposition = Literal["confirmation", "auto_tunable", "needs_component", "escalate"]
-MarkupKind = Literal["highlight", "box", "arrow", "strikeout", "freehand", "note"]
-Decision = Literal["accept", "reject", "action"]
+
+
+# The four closed sets below are `StrEnum` rather than `Literal`, and the
+# distinction is not stylistic. Pydantic publishes a `Literal` inline at each
+# field, and openapi-generator then emits a *separate nominal enum per
+# property* — so `Markup.kind` and `MarkupRequest.kind`, generated from one
+# definition here, become two TypeScript types that will not assign to each
+# other. The client is then forced into casts at exactly the points where the
+# same value crosses from a response into the next request.
+#
+# A `StrEnum` becomes a named `$ref` component instead, and both properties
+# point at the one generated type. These four are the ones that cross a model
+# boundary; the plain `Literal`s above and elsewhere appear on one field each
+# and have no such problem.
+#
+# `StrEnum` members are real `str` instances, so comparison, JSON encoding and
+# Firestore storage are unchanged.
+class FeedbackSubject(StrEnum):
+    FINDING = "finding"
+    COVERAGE = "coverage"
+
+
+class Disposition(StrEnum):
+    CONFIRMATION = "confirmation"
+    AUTO_TUNABLE = "auto_tunable"
+    NEEDS_COMPONENT = "needs_component"
+    ESCALATE = "escalate"
+
+
+class MarkupKind(StrEnum):
+    HIGHLIGHT = "highlight"
+    BOX = "box"
+    ARROW = "arrow"
+    STRIKEOUT = "strikeout"
+    FREEHAND = "freehand"
+    NOTE = "note"
+
+
+class Decision(StrEnum):
+    ACCEPT = "accept"
+    REJECT = "reject"
+    ACTION = "action"
 
 def render_knob_value(value: object) -> str:
     """A lever's value, rendered for a person.
@@ -263,7 +302,10 @@ class FeedbackAspect(BaseModel):
 
 
 class MarkupKindInfo(BaseModel):
-    key: str
+    # The union rather than a bare `str`: the client picks a tool from this list
+    # and hands the key straight back on `MarkupRequest.kind`, so anything wider
+    # here makes that round trip untyped at exactly the point it matters.
+    key: MarkupKind
     label: str
     help: str
 
@@ -469,7 +511,7 @@ class FeedbackRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    subject: FeedbackSubject = "finding"
+    subject: FeedbackSubject = FeedbackSubject.FINDING
     finding_fid: str = Field(default="", max_length=64)
     answers: Dict[str, str] = Field(
         default_factory=dict,

@@ -671,17 +671,20 @@
         "title": "ConvertedPage",
         "type": "object"
       },
+      "Decision": {
+        "enum": [
+          "accept",
+          "reject",
+          "action"
+        ],
+        "title": "Decision",
+        "type": "string"
+      },
       "DecisionRequest": {
         "additionalProperties": false,
         "properties": {
           "decision": {
-            "enum": [
-              "accept",
-              "reject",
-              "action"
-            ],
-            "title": "Decision",
-            "type": "string"
+            "$ref": "#/components/schemas/Decision"
           },
           "note": {
             "default": "",
@@ -866,17 +869,20 @@
         "title": "DeclarationTolerance",
         "type": "object"
       },
+      "Disposition": {
+        "enum": [
+          "confirmation",
+          "auto_tunable",
+          "needs_component",
+          "escalate"
+        ],
+        "title": "Disposition",
+        "type": "string"
+      },
       "DispositionInfo": {
         "properties": {
           "key": {
-            "enum": [
-              "confirmation",
-              "auto_tunable",
-              "needs_component",
-              "escalate"
-            ],
-            "title": "Key",
-            "type": "string"
+            "$ref": "#/components/schemas/Disposition"
           },
           "label": {
             "title": "Label",
@@ -1026,14 +1032,7 @@
             "type": "string"
           },
           "disposition": {
-            "enum": [
-              "confirmation",
-              "auto_tunable",
-              "needs_component",
-              "escalate"
-            ],
-            "title": "Disposition",
-            "type": "string"
+            "$ref": "#/components/schemas/Disposition"
           },
           "email": {
             "default": "",
@@ -1119,12 +1118,7 @@
             "type": "string"
           },
           "subject": {
-            "enum": [
-              "finding",
-              "coverage"
-            ],
-            "title": "Subject",
-            "type": "string"
+            "$ref": "#/components/schemas/FeedbackSubject"
           },
           "triage": {
             "$ref": "#/components/schemas/TriageResult"
@@ -1195,12 +1189,7 @@
             "type": "boolean"
           },
           "subject": {
-            "enum": [
-              "finding",
-              "coverage"
-            ],
-            "title": "Subject",
-            "type": "string"
+            "$ref": "#/components/schemas/FeedbackSubject"
           },
           "verdicts": {
             "items": {
@@ -1268,17 +1257,20 @@
             "type": "string"
           },
           "subject": {
-            "default": "finding",
-            "enum": [
-              "finding",
-              "coverage"
-            ],
-            "title": "Subject",
-            "type": "string"
+            "$ref": "#/components/schemas/FeedbackSubject",
+            "default": "finding"
           }
         },
         "title": "FeedbackRequest",
         "type": "object"
+      },
+      "FeedbackSubject": {
+        "enum": [
+          "finding",
+          "coverage"
+        ],
+        "title": "FeedbackSubject",
+        "type": "string"
       },
       "FeedbackVerdict": {
         "description": "One answer to one aspect, as the form should offer it.\n\nDeliberately carries no hint of which calibration lever it moves. The client\ndescribes what a person saw; `webapp.triage` decides what that implies. A UI\nthat showed the lever would invite people to pick the outcome they want\ninstead of the observation they made.",
@@ -1895,16 +1887,7 @@
             "type": "string"
           },
           "kind": {
-            "enum": [
-              "highlight",
-              "box",
-              "arrow",
-              "strikeout",
-              "freehand",
-              "note"
-            ],
-            "title": "Kind",
-            "type": "string"
+            "$ref": "#/components/schemas/MarkupKind"
           },
           "page": {
             "title": "Page",
@@ -1967,6 +1950,18 @@
         "title": "MarkupGeometry",
         "type": "object"
       },
+      "MarkupKind": {
+        "enum": [
+          "highlight",
+          "box",
+          "arrow",
+          "strikeout",
+          "freehand",
+          "note"
+        ],
+        "title": "MarkupKind",
+        "type": "string"
+      },
       "MarkupKindInfo": {
         "properties": {
           "help": {
@@ -1974,8 +1969,7 @@
             "type": "string"
           },
           "key": {
-            "title": "Key",
-            "type": "string"
+            "$ref": "#/components/schemas/MarkupKind"
           },
           "label": {
             "title": "Label",
@@ -2032,16 +2026,7 @@
             "$ref": "#/components/schemas/MarkupGeometry"
           },
           "kind": {
-            "enum": [
-              "highlight",
-              "box",
-              "arrow",
-              "strikeout",
-              "freehand",
-              "note"
-            ],
-            "title": "Kind",
-            "type": "string"
+            "$ref": "#/components/schemas/MarkupKind"
           },
           "page": {
             "minimum": 1.0,
@@ -2949,14 +2934,7 @@
             "type": "array"
           },
           "disposition": {
-            "enum": [
-              "confirmation",
-              "auto_tunable",
-              "needs_component",
-              "escalate"
-            ],
-            "title": "Disposition",
-            "type": "string"
+            "$ref": "#/components/schemas/Disposition"
           },
           "label": {
             "title": "Label",

@@ -248,6 +248,24 @@
           </div>
         </fieldset>
 
+        @if (trainingAvailable()) {
+          <fieldset>
+            <legend>Training</legend>
+            <div class="check">
+              <input id="training_mode" type="checkbox" formControlName="training_mode" />
+              <label for="training_mode">
+                <span class="h">Run this as a training review</span>
+                <span class="d">
+                  Reviews against your own calibration profile rather than the approved one,
+                  so you see the effect of feedback you have already given. Nobody else's
+                  review changes until a proposal is approved. You can give feedback on any
+                  finished review either way — this only decides which profile this run uses.
+                </span>
+              </label>
+            </div>
+          </fieldset>
+        }
+
         <fieldset>
           <legend>Scanned sets</legend>
           <div class="check">
@@ -454,6 +472,9 @@
       </div>
 
       <div class="row" style="margin-top: 0">
+        @if (job(); as finished) {
+          <a class="btn" [routerLink]="['/review', finished.id]">Open the set</a>
+        }
         <button type="button" (click)="download('markup_pdf')">Download marked-up set</button>
         <button type="button" class="ghost" (click)="download('findings_json')">
           Findings JSON

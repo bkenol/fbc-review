@@ -17,6 +17,9 @@
   </div>
 
   <p class="session">
+    @if (isOwner()) {
+      <a routerLink="/admin">Feedback</a>
+    }
     @if (auth.openAccess()) {
       <!-- Nothing to sign out of, and saying so is better than showing a
            button that does nothing. -->

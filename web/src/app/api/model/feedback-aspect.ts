@@ -8,6 +8,7 @@
  * Do not edit the class manually.
  */
 import { FeedbackVerdict } from './feedback-verdict';
+import { FeedbackSubject } from './feedback-subject';
 
 
 /**
@@ -18,13 +19,9 @@ export interface FeedbackAspect {
     key: string;
     label: string;
     required: boolean;
-    subject: FeedbackAspectSubjectEnum;
+    subject: FeedbackSubject;
     verdicts: Array<FeedbackVerdict>;
 }
-export enum FeedbackAspectSubjectEnum {
-    Finding = 'finding',
-    Coverage = 'coverage'
-};
 
 
 

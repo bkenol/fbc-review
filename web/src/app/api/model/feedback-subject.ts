@@ -7,13 +7,12 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
-import { Disposition } from './disposition';
 
 
-export interface DispositionInfo { 
-    key: Disposition;
-    label: string;
+export enum FeedbackSubject {
+
+    Finding = 'finding',
+
+    Coverage = 'coverage'
 }
-
-
 

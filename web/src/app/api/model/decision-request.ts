@@ -7,17 +7,13 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { Decision } from './decision';
 
 
 export interface DecisionRequest { 
-    decision: DecisionRequestDecisionEnum;
+    decision: Decision;
     note?: string;
 }
-export enum DecisionRequestDecisionEnum {
-    Accept = 'accept',
-    Reject = 'reject',
-    Action = 'action'
-};
 
 
 

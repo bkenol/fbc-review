@@ -7,6 +7,7 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { FeedbackSubject } from './feedback-subject';
 
 
 /**
@@ -20,12 +21,8 @@ export interface FeedbackRequest {
     comment?: string;
     finding_fid?: string;
     markup_id?: string;
-    subject?: FeedbackRequestSubjectEnum;
+    subject?: FeedbackSubject;
 }
-export enum FeedbackRequestSubjectEnum {
-    Finding = 'finding',
-    Coverage = 'coverage'
-};
 
 
 

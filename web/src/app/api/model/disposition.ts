@@ -7,13 +7,16 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
-import { Disposition } from './disposition';
 
 
-export interface DispositionInfo { 
-    key: Disposition;
-    label: string;
+export enum Disposition {
+
+    Confirmation = 'confirmation',
+
+    AutoTunable = 'auto_tunable',
+
+    NeedsComponent = 'needs_component',
+
+    Escalate = 'escalate'
 }
-
-
 

@@ -1,0 +1,252 @@
+<section class="step admin">
+  <div class="step-head">
+    <span class="mark">06</span>
+    <h2>Feedback</h2>
+  </div>
+
+  <p class="hint">
+    <a routerLink="/">← Back to reviews</a>
+  </p>
+
+  @if (overview(); as summary) {
+    <div class="tally admin-tally">
+      <div class="figures">
+        <span class="pct">{{ summary.open_feedback }}</span>
+        <span class="dim">waiting</span>
+      </div>
+      @for (row of dispositions(); track row.key) {
+        @if (summary.counts[row.key]; as count) {
+          <div class="figures">
+            <span class="pct">{{ count }}</span>
+            <span class="dim">{{ row.label }}</span>
+          </div>
+        }
+      }
+      <div class="figures">
+        <span class="pct">v{{ summary.active_version }}</span>
+        <span class="dim">{{ summary.calibrated_rules }} rules calibrated</span>
+      </div>
+    </div>
+
+    <p class="hint annotations">
+      <span class="annot-name">Mail</span> {{ summary.mail.status }} ·
+      <span class="annot-name">Issues</span> {{ summary.github }} ·
+      <span class="annot-name">Comment assist</span> {{ summary.assist }}
+      <button type="button" class="inline" (click)="training.sendDigest()">
+        Send the digest now
+      </button>
+    </p>
+  }
+
+  @if (training.failure(); as problem) {
+    <p class="hint" role="status">
+      {{ problem.message }}
+      <button type="button" class="inline" (click)="training.dismissFailure()">Dismiss</button>
+    </p>
+  }
+
+  <div class="vocab" role="group" aria-label="Filter by state">
+    @for (option of ['new', 'accepted', 'rejected', 'actioned']; track option) {
+      <button
+        type="button"
+        class="vocab-btn"
+        [class.on]="state() === option"
+        (click)="show(option)"
+      >
+        {{ option }}
+      </button>
+    }
+  </div>
+
+  <!-- ── the queue ─────────────────────────────────────────────────────── -->
+  <div class="queue">
+    @for (item of queue(); track item.id) {
+      <article class="queue-row" [attr.data-disposition]="item.disposition">
+        <button type="button" class="queue-head" (click)="toggle(item)">
+          <span class="queue-verdict">{{ item.triage.label }}</span>
+          <span class="queue-what">
+            @if (item.rule_id) {
+              <code>{{ item.rule_id }}</code>
+            } @else {
+              <code>coverage</code>
+            }
+            {{ item.sheet }}
+          </span>
+          <span class="queue-why">{{ item.rationale }}</span>
+          <span class="dim">{{ item.created_at | date: 'd MMM, HH:mm' }}</span>
+        </button>
+
+        @if (expanded() === item.id) {
+          <div class="queue-body">
+            <p class="side-line"><span class="dim">From</span> {{ item.email }}</p>
+            <p class="side-line"><span class="dim">Set</span> {{ item.filename }}</p>
+
+            @if (item.finding; as finding) {
+              <p class="side-line">
+                <span class="dim">Finding</span>
+                {{ finding.severity }} {{ finding.fid }} — {{ finding.title }}
+              </p>
+              <p class="side-line"><span class="dim">Result</span> {{ finding.result }}</p>
+              @if (finding.code) {
+                <p class="side-line"><span class="dim">Cites</span> {{ finding.code }}</p>
+              }
+            }
+
+            <ul class="queue-answers">
+              @for (answer of item.answers | keyvalue; track answer.key) {
+                <li><span class="dim">{{ answer.key }}</span> {{ answer.value }}</li>
+              }
+            </ul>
+
+            @if (item.comment) {
+              <blockquote class="queue-comment">{{ item.comment }}</blockquote>
+            }
+
+            @if (item.markup; as markup) {
+              <p class="side-line">
+                <span class="dim">Marked</span>
+                {{ markup.kind }} on sheet {{ markup.page }}
+                @if (markup.comment) {
+                  — “{{ markup.comment }}”
+                }
+              </p>
+            }
+
+            @if (item.triage.assist; as assist) {
+              <p class="hint">
+                <span class="annot-name">Comment assist</span> {{ assist.summary }}
+                <span class="dim">(confidence {{ assist.confidence }}; advisory only)</span>
+              </p>
+            }
+
+            @if (item.triage.changes?.length) {
+              <p class="eyebrow">Proposed calibration</p>
+              <ul class="feedback-changes">
+                @for (change of item.triage.changes; track $index) {
+                  <li>
+                    <code>{{ change.rule_id }}</code>
+                    <span class="dim">{{ change.knob }}</span>
+                    <strong>{{ change.value }}</strong>
+                    <span class="dim">{{ change.reason }}</span>
+                  </li>
+                }
+              </ul>
+            }
+
+            <p class="hint">
+              Signals: <code>{{ (item.triage.signals ?? []).join(', ') || 'none' }}</code>
+            </p>
+
+            @if (item.state === 'new') {
+              <label class="comment">
+                <span>Note (kept with the decision)</span>
+                <textarea rows="2" maxlength="2000" (input)="onNote($event)"></textarea>
+              </label>
+
+              <div class="side-actions">
+                @if (canApprove(item)) {
+                  <button type="button" class="btn" [disabled]="busy()" (click)="accept(item)">
+                    Approve and promote
+                  </button>
+                }
+                <button type="button" class="inline" [disabled]="busy()" (click)="action(item)">
+                  Mark actioned
+                </button>
+                <button type="button" class="inline" [disabled]="busy()" (click)="reject(item)">
+                  Reject
+                </button>
+                <button type="button" class="inline" (click)="training.loadPrompt(item.id)">
+                  Export a prompt
+                </button>
+                @if (item.issue_url) {
+                  <a class="inline" [href]="item.issue_url" target="_blank" rel="noopener">
+                    Issue opened
+                  </a>
+                } @else {
+                  <button
+                    type="button"
+                    class="inline"
+                    [disabled]="busy()"
+                    (click)="training.openIssue(item.id)"
+                  >
+                    Open an issue
+                  </button>
+                }
+              </div>
+            } @else {
+              <p class="hint">
+                {{ item.state }} by {{ item.decided_by }}
+                @if (item.decision_note) {
+                  — {{ item.decision_note }}
+                }
+              </p>
+            }
+          </div>
+        }
+      </article>
+    } @empty {
+      <p class="hint">Nothing {{ state() === 'new' ? 'waiting' : state() }}.</p>
+    }
+  </div>
+
+  <!-- ── the exported prompt ───────────────────────────────────────────── -->
+  @if (prompt(); as exported) {
+    <div class="side-card prompt-export">
+      <p class="eyebrow">{{ exported.filename }}</p>
+      <p class="hint">
+        Paste this into Claude Code, or save it under <code>docs/</code>. It carries the
+        finding, the verdicts, the comment and where the fix has to go.
+      </p>
+      <div class="side-actions">
+        <button type="button" class="btn" (click)="copyPrompt()">Copy</button>
+        <button type="button" class="inline" (click)="training.closePrompt()">Close</button>
+      </div>
+      <pre class="prompt-body">{{ exported.markdown }}</pre>
+    </div>
+  }
+
+  <!-- ── what is in force ──────────────────────────────────────────────── -->
+  @if (calibration(); as view) {
+    <div class="side-list">
+      <p class="eyebrow">
+        In force — {{ view.active.label }} v{{ view.active.version }}
+      </p>
+      @if (calibrated().length) {
+        <table class="calibration">
+          <thead>
+            <tr>
+              <th scope="col">Rule</th>
+              <th scope="col">Level</th>
+              <th scope="col">Scope</th>
+              <th scope="col">Confirmed</th>
+              <th scope="col">Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of calibrated(); track row.rule_id) {
+              <tr>
+                <td><code>{{ row.rule_id }}</code></td>
+                <td>
+                  @if (!row.rule.enabled) {
+                    off
+                  } @else if (row.rule.severity_shift) {
+                    {{ row.rule.severity_shift > 0 ? '+' : '' }}{{ row.rule.severity_shift }}
+                  } @else {
+                    —
+                  }
+                </td>
+                <td>{{ row.rule.scope_occupancy?.join(', ') || '—' }}</td>
+                <td>{{ row.rule.confirmations || 0 }}</td>
+                <td class="dim">{{ row.rule.note }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      } @else {
+        <p class="hint">
+          Nothing is calibrated. Every review runs the corpus exactly as it is written.
+        </p>
+      }
+    </div>
+  }
+</section>

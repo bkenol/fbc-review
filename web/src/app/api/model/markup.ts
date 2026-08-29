@@ -7,6 +7,7 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { MarkupKind } from './markup-kind';
 import { MarkupGeometry } from './markup-geometry';
 
 
@@ -18,18 +19,10 @@ export interface Markup {
     geometry: MarkupGeometry;
     id: string;
     job_id: string;
-    kind: MarkupKindEnum;
+    kind: MarkupKind;
     page: number;
     sheet?: string;
 }
-export enum MarkupKindEnum {
-    Highlight = 'highlight',
-    Box = 'box',
-    Arrow = 'arrow',
-    Strikeout = 'strikeout',
-    Freehand = 'freehand',
-    Note = 'note'
-};
 
 
 

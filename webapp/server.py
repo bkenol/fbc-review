@@ -936,7 +936,7 @@ def create_markup(
         "uid": user.uid,
         "page": body.page,
         "sheet": body.sheet,
-        "kind": body.kind,
+        "kind": str(body.kind),
         "geometry": body.geometry.model_dump(),
         "comment": body.comment,
         "colour": body.colour,
@@ -977,7 +977,7 @@ def update_markup(
         markup_id,
         page=body.page,
         sheet=body.sheet,
-        kind=body.kind,
+        kind=str(body.kind),
         geometry=body.geometry.model_dump(),
         comment=body.comment,
         colour=body.colour,
@@ -1071,7 +1071,7 @@ def submit_feedback(
             "This review has not finished, so there is nothing to give feedback on.",
         )
 
-    problems = feedback_schema.validate(body.subject, body.answers)
+    problems = feedback_schema.validate(str(body.subject), body.answers)
     if problems:
         raise ApiError(400, errors.INVALID_REQUEST, " ".join(problems))
 
@@ -1107,7 +1107,7 @@ def submit_feedback(
     candidate = feedback.candidate_profile(user.uid)
 
     verdict = triage.triage(
-        subject=body.subject,
+        subject=str(body.subject),
         answers=body.answers,
         rule_id=finding.get("rule_id", ""),
         comment=body.comment,
@@ -1137,7 +1137,7 @@ def submit_feedback(
         "email": user.email,
         "filename": job.get("filename", ""),
         "mode": mode,
-        "subject": body.subject,
+        "subject": str(body.subject),
         "finding_fid": body.finding_fid,
         "rule_id": finding.get("rule_id", ""),
         "sheet": finding.get("sheet") or markup.get("sheet", ""),
@@ -1159,7 +1159,7 @@ def submit_feedback(
             "job_id": job_id,
             "uid": user.uid,
             "feedback_id": stored["id"],
-            "subject": body.subject,
+            "subject": str(body.subject),
             "disposition": verdict.disposition,
             "signals": ",".join(verdict.signals),
             "applied_to_candidate": applied,
@@ -1369,7 +1369,7 @@ def admin_decide_feedback(
     if not record:
         raise ApiError(404, errors.NOT_FOUND, "No such feedback.")
 
-    state = {"accept": ACCEPTED, "reject": REJECTED, "action": ACTIONED}[body.decision]
+    state = {"accept": ACCEPTED, "reject": REJECTED, "action": ACTIONED}[str(body.decision)]
 
     if body.decision == "accept":
         changes = [

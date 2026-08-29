@@ -7,11 +7,14 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { MarkupKind } from './markup-kind';
 
 
 export interface MarkupKindInfo { 
     help: string;
-    key: string;
+    key: MarkupKind;
     label: string;
 }
+
+
 

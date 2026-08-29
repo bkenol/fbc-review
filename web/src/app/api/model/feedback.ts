@@ -9,7 +9,9 @@
  */
 import { TriageResult } from './triage-result';
 import { Finding } from './finding';
+import { Disposition } from './disposition';
 import { Markup } from './markup';
+import { FeedbackSubject } from './feedback-subject';
 
 
 export interface Feedback { 
@@ -23,7 +25,7 @@ export interface Feedback {
     decided_at?: string | null;
     decided_by?: string;
     decision_note?: string;
-    disposition: FeedbackDispositionEnum;
+    disposition: Disposition;
     email?: string;
     filename?: string;
     finding?: Finding | null;
@@ -38,24 +40,14 @@ export interface Feedback {
     rule_id?: string;
     sheet?: string;
     state: FeedbackStateEnum;
-    subject: FeedbackSubjectEnum;
+    subject: FeedbackSubject;
     triage: TriageResult;
 }
-export enum FeedbackDispositionEnum {
-    Confirmation = 'confirmation',
-    AutoTunable = 'auto_tunable',
-    NeedsComponent = 'needs_component',
-    Escalate = 'escalate'
-};
 export enum FeedbackStateEnum {
     New = 'new',
     Accepted = 'accepted',
     Rejected = 'rejected',
     Actioned = 'actioned'
-};
-export enum FeedbackSubjectEnum {
-    Finding = 'finding',
-    Coverage = 'coverage'
 };
 
 
