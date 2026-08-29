@@ -5,3 +5,6 @@
 
 # Everything else: normalise in the repository, check out native.
 * text=auto
+
+# Windows batch files must keep CRLF or cmd mis-parses line continuations.
+*.cmd text eol=crlf
