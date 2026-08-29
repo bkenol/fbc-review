@@ -166,8 +166,14 @@ class LocalStorage:
         self._path(blob_path).unlink(missing_ok=True)
 
     def signed_url(self, blob_path: str, *, download_as=None, ttl_seconds=None) -> str:
-        suffix = f"&filename={download_as}" if download_as else ""
-        return f"/_dev/blob/{blob_path}?dev=1{suffix}"
+        # The same contract Cloud Storage's V4 signing offers: a link that
+        # carries its own authorisation and expires. See webapp/storage_urls.py
+        # for why a download cannot simply reuse the bearer token.
+        from webapp import storage_urls
+
+        return storage_urls.build(
+            blob_path, download_as=download_as, ttl_seconds=ttl_seconds
+        )
 
     def expires_at(self, ttl_seconds: Optional[int] = None) -> dt.datetime:
         return utcnow() + dt.timedelta(seconds=ttl_seconds or settings().signed_url_ttl_seconds)
