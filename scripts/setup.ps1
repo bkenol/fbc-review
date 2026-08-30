@@ -140,11 +140,27 @@ try {
     }
 
     Write-Host @'
-  Develop locally (hot reload, two processes):
+  START HERE — put the Rebuild Console on the Desktop, then use that:
+      & ".\Rebuild Console.cmd" shortcut
+
+  It opens a page with Pull, Rebuild and Publish as buttons, their output
+  streaming into it, and a line saying whether the running container is on the
+  commit in your working tree. From Git Bash instead:
+      bash scripts/rebuild-console.sh
+
+  What the buttons run, if you would rather run it by hand:
+      powershell -ExecutionPolicy Bypass -File scripts\share.ps1
+      bash scripts/share.sh                     # the same, from Git Bash
+
+  Develop with hot reload instead (two processes, no container):
       powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 
-  Run it as one shareable container:
-      powershell -ExecutionPolicy Bypass -File scripts\share.ps1
+  PUBLISHING FROM A SECOND MACHINE — read this before running tunnel.ps1.
+  fbc.omniflexfitness.com is served by one machine at a time. The named tunnel
+  belongs to the Cloudflare account, but its credentials file sits on whichever
+  machine created it, so tunnel.ps1 here will stop and say so rather than
+  quietly fighting the other one. For a second machine use a hostname of its
+  own:
       tailscale funnel 8060
 
   Deploy to Google Cloud (needs an open billing account):

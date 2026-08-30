@@ -108,9 +108,36 @@ It checks prerequisites first and names what is missing rather than failing
 halfway through, then creates the virtualenv, installs both dependency trees,
 builds the client and runs the tests.
 
+Then put the console on the Desktop and use that from here on:
+
+```powershell
+& ".\Rebuild Console.cmd" shortcut
+```
+
+Pull, Rebuild and Publish become buttons, their output streams into the page,
+and a line says whether the running container is on the commit in your working
+tree. `bash scripts/rebuild-console.sh` is the same thing from Git Bash.
+
 To confirm a machine is running what you think it is, read the version in the
 masthead and the footer of the page itself — locally it carries the commit and
 says `.dirty` when the tree has uncommitted changes. §5a explains the scheme.
+
+### One hostname, one machine
+
+Every machine can run the app locally on `127.0.0.1:8060`; only one can serve
+`fbc.omniflexfitness.com`. The named tunnel belongs to the Cloudflare account,
+but the credentials file it needs sits on whichever machine created it, so
+`tunnel.sh` on a second machine stops with
+
+> The tunnel exists in the account but this machine holds no credentials for it.
+
+which is the intended behaviour, not a fault — it refuses rather than quietly
+competing with the machine already serving the hostname. Two connectors on one
+tunnel would have Cloudflare hand requests to whichever answered, so the same
+URL would sometimes reach the laptop and sometimes the desktop.
+
+For a second machine that needs a public URL, give it one of its own with
+`tailscale funnel 8060`; each machine gets its own hostname.
 
 Deliberately not in git, and what to do about each:
 

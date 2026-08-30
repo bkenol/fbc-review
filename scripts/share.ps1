@@ -62,16 +62,52 @@ try {
 
     $bundle = Join-Path $repo 'web\dist\fbc-review\browser'
     if (-not $SkipBuild -or -not (Test-Path $bundle)) {
-        Write-Host 'Building the client...' -ForegroundColor Cyan
         Push-Location (Join-Path $repo 'web')
-        try { & npx ng build } finally { Pop-Location }
+        try {
+            # Install the client dependencies when they are missing or stale.
+            # This used to go straight to `ng build`, which fails on a machine
+            # that has never run setup.ps1 and — far more often — the first time
+            # you build a branch that added a dependency:
+            #
+            #   Cannot find module 'pdfjs-dist' or its corresponding type
+            #   declarations
+            #
+            # npm writes node_modules/.package-lock.json when it installs, so
+            # comparing that against the real lockfile catches both cases
+            # without paying for an npm ci on every single run.
+            $lock = Join-Path $repo 'web\package-lock.json'
+            $stamp = Join-Path $repo 'web\node_modules\.package-lock.json'
+            $stale = -not (Test-Path $stamp)
+            if (-not $stale -and (Test-Path $lock)) {
+                $stale = (Get-Item $lock).LastWriteTimeUtc -gt (Get-Item $stamp).LastWriteTimeUtc
+            }
+            if ($stale) {
+                Write-Host 'Installing client dependencies...' -ForegroundColor Cyan
+                & npm ci --no-audit --no-fund
+                if ($LASTEXITCODE -ne 0) { throw 'npm ci failed - the client dependencies are not installed.' }
+            }
+
+            Write-Host 'Building the client...' -ForegroundColor Cyan
+            & npx ng build
+            # Checked, because it was not: a failed build printed its errors and
+            # the script carried on to build an image around a stale bundle.
+            if ($LASTEXITCODE -ne 0) { throw 'The client build failed - see the errors above.' }
+        } finally { Pop-Location }
     }
     if (-not (Test-Path $bundle)) { throw "Client bundle not found at $bundle" }
 
     Write-Host 'Building the image...' -ForegroundColor Cyan
     & docker build -q -t fbc-review:dev $repo | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'docker build failed - see the errors above.' }
 
-    & docker rm -f fbc-test 2>$null | Out-Null
+    # Asked rather than attempted. `docker rm` writes "No such container" to
+    # stderr when there is nothing to remove, and PowerShell turns a native
+    # command's *redirected* stderr into an ErrorRecord, which
+    # $ErrorActionPreference='Stop' then makes terminating — so on a machine
+    # that had never run this, the script died right here. Listing first
+    # produces no stderr to trip over.
+    $existing = & docker ps -aq --filter 'name=^fbc-test$'
+    if ($existing) { & docker rm -f fbc-test | Out-Null }
     New-Item -ItemType Directory -Force -Path (Join-Path $repo '.devdata') | Out-Null
 
     Write-Host 'Starting...' -ForegroundColor Cyan

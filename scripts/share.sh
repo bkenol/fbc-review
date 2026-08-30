@@ -97,6 +97,17 @@ if [ -n "$VERSION" ]; then info "Version $VERSION"; fi
 # ── client ────────────────────────────────────────────────────────────────
 BUNDLE="$ROOT/web/dist/fbc-review/browser"
 if [ "$SKIP_BUILD" -eq 0 ] || [ ! -d "$BUNDLE" ]; then
+  # Install the client dependencies when they are missing or stale. Going
+  # straight to `ng build` fails on a machine that has never been set up and —
+  # far more often — the first time you build a branch that added a dependency:
+  # "Cannot find module 'pdfjs-dist'". npm writes
+  # node_modules/.package-lock.json when it installs, so comparing that against
+  # the real lockfile catches both cases without an npm ci on every run.
+  NPM_STAMP="$ROOT/web/node_modules/.package-lock.json"
+  if [ ! -f "$NPM_STAMP" ] || [ "$ROOT/web/package-lock.json" -nt "$NPM_STAMP" ]; then
+    bold 'Installing client dependencies...'
+    ( cd "$ROOT/web" && npm ci --no-audit --no-fund )
+  fi
   bold 'Building the client...'
   ( cd "$ROOT/web" && npx ng build )
 fi
