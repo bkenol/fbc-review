@@ -203,6 +203,11 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
     upload = int(opts.get("upload") or 95)
     persistent = bool(opts.get("persistent"))
     skipbuild = bool(opts.get("skipbuild"))
+    # Real Firebase sign-in over the same filesystem stores. Needs
+    # FBC_PROJECT_ID and FBC_ALLOWED_EMAILS in the environment and a service
+    # account key; both scripts refuse with a named reason rather than starting
+    # a container that will not verify a token.
+    authenticated = bool(opts.get("authenticated"))
 
     pull = ["git", "-C", str(repo), "pull"]
 
@@ -217,6 +222,8 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
             rebuild += ["-Persistent"]
         if skipbuild:
             rebuild += ["-SkipBuild"]
+        if authenticated:
+            rebuild += ["-Authenticated"]
         tunnel = ps + [str(repo / "scripts" / "tunnel.ps1")]
     else:
         rebuild = ["bash", str(repo / "scripts" / "share.sh")]
@@ -228,6 +235,8 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
             rebuild += ["--persistent"]
         if skipbuild:
             rebuild += ["--skip-build"]
+        if authenticated:
+            rebuild += ["--authenticated"]
         tunnel = ["bash", str(repo / "scripts" / "tunnel.sh")]
 
     return {"pull": pull, "rebuild": rebuild, "tunnel": tunnel}
@@ -364,6 +373,7 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
   <label>Upload MB <input type="number" id="upload" value="95" min="1" max="1000"></label>
   <label><input type="checkbox" id="persistent"> Persistent</label>
   <label><input type="checkbox" id="skipbuild"> Skip client build</label>
+  <label><input type="checkbox" id="authenticated"> Require sign-in</label>
 </div>
 
 <div class="strip">
@@ -400,7 +410,8 @@ function opts() {
     port: parseInt(document.getElementById("port").value, 10) || 8060,
     upload: parseInt(document.getElementById("upload").value, 10) || 95,
     persistent: document.getElementById("persistent").checked,
-    skipbuild: document.getElementById("skipbuild").checked
+    skipbuild: document.getElementById("skipbuild").checked,
+    authenticated: document.getElementById("authenticated").checked
   };
 }
 

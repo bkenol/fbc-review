@@ -324,9 +324,12 @@ What limits the damage:
 
 Both remedies named here are now available, and section 0d is how to use them.
 `FBC_DEV_UNSAFE_AUTH` has been split from the backend selection, so
-`bash scripts/share.sh --authenticated` runs the same filesystem stores with
-real Firebase sign-in and the server-side allowlist. A Cloudflare Access policy
-on the hostname remains the zero-code option and composes with it.
+`bash scripts/share.sh --authenticated` — or `share.ps1 -Authenticated`, which
+takes the same environment and passes the same container settings — runs the
+same filesystem stores with real Firebase sign-in and the server-side
+allowlist. The Rebuild Console exposes it as the **Require sign-in** checkbox.
+A Cloudflare Access policy on the hostname remains the zero-code option and
+composes with it.
 
 ### Persistence
 
@@ -523,10 +526,26 @@ bash scripts/share.sh --authenticated --persistent
 bash scripts/tunnel.sh          # in a second shell
 ```
 
-`--authenticated` sets `FBC_BACKEND=local` and leaves `FBC_DEV_UNSAFE_AUTH`
-unset, mounts the key, and generates a stable artefact signing key at
-`.devdata/artefact.secret`. `/healthz` will report `auth_required: true`, and
-the script says so rather than warning.
+Or, from PowerShell:
+
+```powershell
+$env:FBC_PROJECT_ID = 'fbc-reviewer'
+$env:FBC_ALLOWED_EMAILS = 'you@example.com,someone@example.com'
+powershell -ExecutionPolicy Bypass -File scripts\share.ps1 -Authenticated -Persistent
+powershell -ExecutionPolicy Bypass -File scripts\tunnel.ps1   # in a second shell
+```
+
+Or tick **Require sign-in** in the Rebuild Console, having set those two
+variables in the environment it was launched from.
+
+`--authenticated` / `-Authenticated` sets `FBC_BACKEND=local` and leaves
+`FBC_DEV_UNSAFE_AUTH` unset, mounts the key, and generates a stable artefact
+signing key at `.devdata/artefact.secret`. `/healthz` will report
+`auth_required: true`, and the script says so rather than warning.
+
+The two scripts pass an identical set of container settings and share the one
+`.devdata/artefact.secret`, so a machine can move between Git Bash and
+PowerShell without invalidating outstanding download links.
 
 ### How artefacts are served without a bucket
 

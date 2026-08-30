@@ -155,6 +155,12 @@ try {
   Develop with hot reload instead (two processes, no container):
       powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 
+  Both of those leave authentication OFF - anyone with the URL can use it. To
+  require real sign-in without a Cloud Billing account, set FBC_PROJECT_ID and
+  FBC_ALLOWED_EMAILS, run scripts\setup-auth.sh once, then add -Authenticated
+  (or tick "Require sign-in" in the console). See section 0d of
+  docs/DEPLOYMENT.md.
+
   PUBLISHING FROM A SECOND MACHINE — read this before running tunnel.ps1.
   fbc.omniflexfitness.com is served by one machine at a time. The named tunnel
   belongs to the Cloudflare account, but its credentials file sits on whichever
