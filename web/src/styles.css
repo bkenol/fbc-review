@@ -1796,3 +1796,601 @@ td.sev .chip.conflict {
   border-style: dashed;
   font-weight: var(--weight-regular);
 }
+
+/* ══ TRAINING MODE ═════════════════════════════════════════════════════════
+ * The viewer, the feedback form and the owner's queue.
+ *
+ * Nothing here introduces a colour. The severity ramp defined above is reused
+ * through --sev, the two accents stay where the system put them, and the one
+ * new visual idea is that a drawing is a drawing: the sheet sits on paper with
+ * a hairline and a shadow, and everything drawn over it is a hairline too,
+ * because that is what annotation on a permit set looks like.
+ */
+
+/* The severity ramp again, for elements that carry it as an attribute rather
+ * than a class. Same six values, same one place — an SVG group cannot take a
+ * class list from the engine's own severity string as cleanly as an attribute,
+ * and re-stating a hue here would be the drift the block above exists to stop. */
+[data-severity='CRITICAL'] {
+  --sev: var(--sev-critical);
+}
+[data-severity='HIGH'] {
+  --sev: var(--sev-high);
+}
+[data-severity='MEDIUM'] {
+  --sev: var(--sev-medium);
+}
+[data-severity='LOW'] {
+  --sev: var(--sev-low);
+}
+[data-severity='MEASURED'] {
+  --sev: var(--sev-measured);
+}
+[data-severity='VERIFIED'] {
+  --sev: var(--sev-verified);
+}
+
+/* ── the workspace ─────────────────────────────────────────────────────── */
+.workspace-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.25rem;
+  align-items: baseline;
+}
+
+/* The sheet takes what it needs and the panel is fixed: a drawing gets wider
+ * usefully, a column of prose does not. Below the breakpoint they stack, sheet
+ * first — on a narrow screen you are looking at the drawing, not filing. */
+.workspace-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24rem;
+  gap: var(--space-4, 1.5rem);
+  align-items: start;
+}
+
+@media (max-width: 60rem) {
+  .workspace-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.workspace-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 1rem);
+  min-width: 0;
+}
+
+/* ── the viewer ────────────────────────────────────────────────────────── */
+.viewer {
+  min-width: 0;
+}
+
+.viewer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  align-items: center;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.viewer-nav,
+.viewer-zoom,
+.viewer-tools {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.viewer-tools {
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.viewer-count {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.tool {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.6rem;
+  background: none;
+  color: var(--text-muted);
+  border: 1px solid var(--border-hairline);
+  cursor: pointer;
+}
+
+.tool:hover {
+  color: var(--text-strong);
+  border-color: var(--border-input);
+}
+
+.tool.on {
+  color: var(--primary-ink);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.viewer-stage {
+  overflow: auto;
+  max-height: 78vh;
+  padding: var(--space-3, 1rem);
+  background: var(--surface-sunk);
+}
+
+.viewer-error,
+.viewer-note {
+  margin-top: 0.5rem;
+}
+
+/* The canvas and the overlay are the same box. The overlay must not intercept
+ * the pointer unless a tool is active, or the sheet cannot be scrolled or
+ * text-selected while reading. */
+.sheet {
+  position: relative;
+  margin: 0 auto;
+  background: var(--paper-white);
+  border: 1px solid var(--border-hairline);
+  box-shadow: 0 1px 3px rgb(22 25 28 / 12%);
+}
+
+.sheet-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.sheet-canvas.busy {
+  opacity: 0.55;
+}
+
+.sheet-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.sheet-overlay.drawing {
+  pointer-events: all;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* Finding pins. The box sits on the anchor text the engine cites, in that
+ * finding's own severity colour, so the drawing and the register agree without
+ * a legend. */
+.pin {
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.pin rect {
+  fill: none;
+  stroke: var(--sev, var(--annotation));
+}
+
+.pin text {
+  fill: var(--sev, var(--annotation));
+  font-family: var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: var(--paper-white);
+  stroke-width: 2.5px;
+}
+
+.pin:hover rect,
+.pin.selected rect {
+  fill: var(--sev, var(--annotation));
+  fill-opacity: 0.12;
+}
+
+.pin.selected rect {
+  stroke-dasharray: none;
+}
+
+/* Reviewer markup is drafting blue throughout — the system's annotation
+ * colour. It is deliberately not on the severity ramp: what a person drew is
+ * not a finding, and colouring it like one would put two different kinds of
+ * claim in the same visual language. */
+.markup {
+  pointer-events: all;
+  cursor: pointer;
+  fill: none;
+  stroke: var(--annotation);
+}
+
+.markup rect,
+.markup line,
+.markup path,
+.markup circle {
+  stroke: var(--annotation);
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.markup rect.wash {
+  fill: var(--wash);
+  fill-opacity: 0.3;
+  stroke: none;
+}
+
+.markup circle {
+  fill: var(--paper-white);
+}
+
+.markup.has-comment circle {
+  fill: var(--wash);
+}
+
+.markup:hover rect,
+.markup:hover line,
+.markup:hover path {
+  stroke: var(--accent-dimension);
+}
+
+.markup.draft {
+  opacity: 0.75;
+}
+
+.arrowhead {
+  fill: var(--annotation);
+  stroke: none;
+}
+
+/* ── the side panel ────────────────────────────────────────────────────── */
+.side-card {
+  padding: var(--space-3, 1rem);
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+}
+
+.side-card h3 {
+  margin: 0.2rem 0 0.6rem;
+  font-size: 1rem;
+}
+
+.side-line {
+  margin: 0.25rem 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.side-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.side-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Register rows. The left rule carries the severity, exactly as the findings
+ * table does, so scanning the panel and scanning the table are the same act. */
+.side-row {
+  display: grid;
+  grid-template-columns: 4.6rem 3.2rem 2.6rem 1fr auto;
+  gap: 0.5rem;
+  align-items: baseline;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  background: var(--surface-card);
+  border: 0;
+  border-left: 2px solid var(--sev, var(--border-hairline));
+  cursor: pointer;
+}
+
+.side-row:hover {
+  background: var(--surface-sunk);
+}
+
+.side-row.on {
+  background: var(--surface-sunk);
+  border-left-color: var(--primary);
+}
+
+.side-sev,
+.side-fid {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+}
+
+.side-sheet {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-faint);
+  font-size: 0.7rem;
+}
+
+.side-title {
+  color: var(--text-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-flag {
+  color: var(--sev-verified, var(--annotation));
+}
+
+/* ── the feedback form ─────────────────────────────────────────────────── */
+.feedback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 1rem);
+  padding: var(--space-3, 1rem);
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+}
+
+.aspect {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.aspect legend {
+  padding: 0;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.aspect legend .dim {
+  font-weight: 400;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.verdicts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+/* One button per answer rather than a select. Every option is readable without
+ * opening anything, which is the difference between a form somebody answers
+ * accurately and one they answer with whatever was already showing. */
+.verdict {
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 0.28rem 0.55rem;
+  text-align: left;
+  background: none;
+  color: var(--text-body);
+  border: 1px solid var(--border-hairline);
+  cursor: pointer;
+}
+
+.verdict:hover {
+  border-color: var(--border-input);
+}
+
+/* The "this was right" answer is drawn in survey green and the rest in the
+ * ordinary ink. Praise is a real answer here, not an escape from the question,
+ * and it needs to look like one. */
+.verdict[data-polarity='good'] {
+  color: var(--sev-verified, var(--text-body));
+  border-color: color-mix(in srgb, var(--sev-verified, var(--border-hairline)) 45%, transparent);
+}
+
+.verdict.on {
+  color: var(--primary-ink);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.verdict[data-polarity='good'].on {
+  background: var(--sev-verified, var(--primary));
+  border-color: var(--sev-verified, var(--primary));
+}
+
+.chosen-help {
+  margin-top: 0.35rem;
+}
+
+.comment {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+}
+
+.comment textarea {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.5rem;
+  color: var(--text-body);
+  background: var(--surface-card);
+  border: 1px solid var(--border-input);
+  resize: vertical;
+}
+
+/* What the triage decided, shown back to the person who submitted. The left
+ * rule says how far it got: green when it was recorded as agreement, blue when
+ * it became a knob, red when it needs a person. */
+.feedback-result {
+  border-left: 2px solid var(--border-hairline);
+  padding-left: 0.75rem;
+}
+
+.feedback-result[data-disposition='confirmation'] {
+  border-left-color: var(--sev-verified, var(--annotation));
+}
+
+.feedback-result[data-disposition='auto_tunable'] {
+  border-left-color: var(--annotation);
+}
+
+.feedback-result[data-disposition='needs_component'],
+.feedback-result[data-disposition='escalate'] {
+  border-left-color: var(--accent-dimension);
+}
+
+.feedback-message {
+  margin: 0.3rem 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.feedback-changes {
+  margin: 0.4rem 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.74rem;
+}
+
+.feedback-changes li {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+}
+
+/* ── the owner's queue ─────────────────────────────────────────────────── */
+.admin-tally {
+  margin-bottom: 1rem;
+}
+
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 1rem 0;
+}
+
+.queue-row {
+  background: var(--surface-card);
+  border-left: 2px solid var(--border-hairline);
+}
+
+.queue-row[data-disposition='auto_tunable'] {
+  border-left-color: var(--annotation);
+}
+
+.queue-row[data-disposition='needs_component'],
+.queue-row[data-disposition='escalate'] {
+  border-left-color: var(--accent-dimension);
+}
+
+.queue-row[data-disposition='confirmation'] {
+  border-left-color: var(--sev-verified, var(--border-hairline));
+}
+
+.queue-head {
+  display: grid;
+  grid-template-columns: 14rem 12rem 1fr auto;
+  gap: 0.75rem;
+  align-items: baseline;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.queue-head:hover {
+  background: var(--surface-sunk);
+}
+
+@media (max-width: 52rem) {
+  .queue-head {
+    grid-template-columns: 1fr;
+  }
+}
+
+.queue-verdict {
+  font-weight: 600;
+}
+
+.queue-what {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.queue-why {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-body {
+  padding: 0.25rem 0.75rem 1rem;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.queue-answers {
+  margin: 0.5rem 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.78rem;
+}
+
+.queue-answers li {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.1rem 0;
+}
+
+/* A quote, because it is one — the reviewer's own words, not our paraphrase. */
+.queue-comment {
+  margin: 0.6rem 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--wash);
+  font-size: 0.85rem;
+  color: var(--text-body);
+}
+
+.prompt-export {
+  margin-top: 1.5rem;
+}
+
+.prompt-body {
+  max-height: 26rem;
+  overflow: auto;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  background: var(--surface-sunk);
+  border: 1px solid var(--border-hairline);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.calibration {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.calibration th,
+.calibration td {
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.calibration th {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}

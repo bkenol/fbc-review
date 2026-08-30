@@ -134,6 +134,160 @@ class FakeStorage:
         return dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=ttl_seconds or 3600)
 
 
+class FakeFeedbackStore:
+    """Mirrors webapp.feedback_store.FeedbackStore, backed by dicts.
+
+    Same reasoning as FakeJobStore: the code under test is the real handler, and
+    the store is the only thing swapped out. Profile promotion in particular is
+    exercised for real here — it is the one operation that changes what every
+    future review reports.
+    """
+
+    def __init__(self) -> None:
+        self.feedback: Dict[str, Dict[str, Any]] = {}
+        self.markups: Dict[str, Dict[str, Any]] = {}
+        self.profiles: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    # -- feedback --
+    def add_feedback(self, record):
+        from webapp import feedback_store as fs
+
+        record = dict(record)
+        record.setdefault("id", fs.new_id())
+        record.setdefault("state", fs.NEW)
+        record.setdefault("created_at", fs.utcnow())
+        record.setdefault("decided_at", None)
+        for key in ("decided_by", "decision_note", "issue_url"):
+            record.setdefault(key, "")
+        record.setdefault("notified", False)
+        with self._lock:
+            self.feedback[record["id"]] = record
+        return dict(record)
+
+    def get_feedback(self, feedback_id):
+        record = self.feedback.get(feedback_id)
+        return dict(record) if record else None
+
+    def update_feedback(self, feedback_id, **fields):
+        with self._lock:
+            if feedback_id in self.feedback:
+                self.feedback[feedback_id].update(fields)
+
+    def list_feedback_for_job(self, job_id, uid, limit=200):
+        rows = [dict(r) for r in self.feedback.values()
+                if r.get("job_id") == job_id and r.get("uid") == uid]
+        rows.sort(key=lambda r: r["created_at"])
+        return rows[:limit]
+
+    def list_feedback(self, *, state=None, disposition=None, limit=100):
+        rows = [dict(r) for r in self.feedback.values()]
+        if state:
+            rows = [r for r in rows if r.get("state") == state]
+        if disposition:
+            rows = [r for r in rows if r.get("disposition") == disposition]
+        rows.sort(key=lambda r: r["created_at"], reverse=True)
+        return rows[:limit]
+
+    def count_open(self):
+        from webapp import feedback_store as fs
+
+        return sum(1 for r in self.feedback.values() if r.get("state") == fs.NEW)
+
+    # -- markups --
+    def add_markup(self, record):
+        from webapp import feedback_store as fs
+
+        record = dict(record)
+        record.setdefault("id", fs.new_id())
+        record.setdefault("created_at", fs.utcnow())
+        with self._lock:
+            self.markups[record["id"]] = record
+        return dict(record)
+
+    def get_markup(self, markup_id):
+        record = self.markups.get(markup_id)
+        return dict(record) if record else None
+
+    def update_markup(self, markup_id, **fields):
+        with self._lock:
+            if markup_id in self.markups:
+                self.markups[markup_id].update(fields)
+
+    def delete_markup(self, markup_id):
+        self.markups.pop(markup_id, None)
+
+    def list_markups(self, job_id, uid, limit=500):
+        rows = [dict(r) for r in self.markups.values()
+                if r.get("job_id") == job_id and r.get("uid") == uid]
+        rows.sort(key=lambda r: r["created_at"])
+        return rows[:limit]
+
+    # -- calibration --
+    def active_profile(self):
+        from webapp.calibration import ACTIVE_ID, CalibrationProfile
+
+        return CalibrationProfile.from_dict(self.profiles.get(ACTIVE_ID))
+
+    def candidate_profile(self, uid):
+        from webapp import feedback_store as fs
+        from webapp.calibration import CANDIDATE, CalibrationProfile
+
+        stored = self.profiles.get(fs.candidate_key(uid))
+        if stored:
+            return CalibrationProfile.from_dict(stored)
+        base = self.active_profile()
+        seeded = CalibrationProfile.from_dict(base.to_dict())
+        seeded.profile_id = fs.candidate_key(uid)
+        seeded.scope = CANDIDATE
+        seeded.owner_uid = uid
+        seeded.label = "Training candidate"
+        seeded.derived_from = base.version
+        return seeded
+
+    def save_profile(self, profile):
+        with self._lock:
+            self.profiles[profile.profile_id] = profile.to_dict()
+        return profile
+
+    def promote(self, profile, *, by, label="", note=""):
+        from webapp import feedback_store as fs
+        from webapp.calibration import ACTIVE_ID, GLOBAL, CalibrationProfile
+
+        promoted = CalibrationProfile.from_dict(profile.to_dict())
+        promoted.profile_id = ACTIVE_ID
+        promoted.scope = GLOBAL
+        promoted.owner_uid = ""
+        promoted.created_by = by
+        promoted.created_at = fs.utcnow()
+        if label:
+            promoted.label = label
+        if note:
+            promoted.note = note
+
+        archived = CalibrationProfile.from_dict(promoted.to_dict())
+        archived.profile_id = fs.version_key(promoted.version)
+        with self._lock:
+            self.profiles[archived.profile_id] = archived.to_dict()
+            self.profiles[ACTIVE_ID] = promoted.to_dict()
+        return promoted
+
+    def profile_versions(self, limit=25):
+        from webapp.calibration import ACTIVE_ID, GLOBAL
+
+        rows = [dict(r) for r in self.profiles.values()
+                if r.get("scope") == GLOBAL and r.get("profile_id") != ACTIVE_ID]
+        rows.sort(key=lambda r: int(r.get("version") or 0), reverse=True)
+        return rows[:limit]
+
+    def profile_version(self, version):
+        from webapp import feedback_store as fs
+        from webapp.calibration import CalibrationProfile
+
+        stored = self.profiles.get(fs.version_key(version))
+        return CalibrationProfile.from_dict(stored) if stored else None
+
+
 # ── pdf builders ──────────────────────────────────────────────────────────
 def make_pdf(pages: int = 1, text: str = "SHEET G-0") -> bytes:
     """A plausible plotted sheet: vector linework plus live text.
@@ -243,12 +397,17 @@ def files() -> FakeStorage:
 
 
 @pytest.fixture
+def feedback() -> FakeFeedbackStore:
+    return FakeFeedbackStore()
+
+
+@pytest.fixture
 def user() -> User:
     return User(uid="uid-alice", email="allowed@example.com")
 
 
 @pytest.fixture
-def client(monkeypatch, store, files, user):
+def client(monkeypatch, store, files, feedback, user):
     """A TestClient with cloud dependencies replaced and auth satisfied."""
     from fastapi.testclient import TestClient
 
@@ -259,11 +418,13 @@ def client(monkeypatch, store, files, user):
 
     server.app.dependency_overrides[server.job_store] = lambda: store
     server.app.dependency_overrides[server.file_store] = lambda: files
+    server.app.dependency_overrides[server.feedback_store] = lambda: feedback
     server.app.dependency_overrides[server.current_user] = lambda: user
 
     with TestClient(server.app) as c:
-        c.fake_store = store       # type: ignore[attr-defined]
-        c.fake_files = files       # type: ignore[attr-defined]
+        c.fake_store = store          # type: ignore[attr-defined]
+        c.fake_files = files          # type: ignore[attr-defined]
+        c.fake_feedback = feedback    # type: ignore[attr-defined]
         yield c
 
     server.app.dependency_overrides.clear()
@@ -271,7 +432,41 @@ def client(monkeypatch, store, files, user):
 
 
 @pytest.fixture
-def anon_client(monkeypatch, store, files):
+def training_client(monkeypatch, store, files, feedback, user):
+    """The same client, on a deployment that has opted into training mode.
+
+    Separate from `client` rather than a flag on it: training mode is off by
+    default and every existing test asserts the behaviour of a deployment that
+    has not enabled it. That distinction is the point — the feature has to be
+    inert until somebody turns it on.
+    """
+    from fastapi.testclient import TestClient
+
+    from webapp import server
+
+    settings.cache_clear()
+    monkeypatch.setenv("FBC_TRAINING_MODE", "1")
+    monkeypatch.setenv("FBC_OWNER_EMAILS", "owner@example.com")
+    settings.cache_clear()
+
+    monkeypatch.setattr(server, "get_job_store", lambda: store)
+    server.app.dependency_overrides[server.job_store] = lambda: store
+    server.app.dependency_overrides[server.file_store] = lambda: files
+    server.app.dependency_overrides[server.feedback_store] = lambda: feedback
+    server.app.dependency_overrides[server.current_user] = lambda: user
+
+    with TestClient(server.app) as c:
+        c.fake_store = store          # type: ignore[attr-defined]
+        c.fake_files = files          # type: ignore[attr-defined]
+        c.fake_feedback = feedback    # type: ignore[attr-defined]
+        yield c
+
+    server.app.dependency_overrides.clear()
+    settings.cache_clear()
+
+
+@pytest.fixture
+def anon_client(monkeypatch, store, files, feedback):
     """A TestClient with the real auth dependency left in place."""
     from fastapi.testclient import TestClient
 
@@ -281,6 +476,7 @@ def anon_client(monkeypatch, store, files):
     monkeypatch.setattr(server, "get_job_store", lambda: store)
     server.app.dependency_overrides[server.job_store] = lambda: store
     server.app.dependency_overrides[server.file_store] = lambda: files
+    server.app.dependency_overrides[server.feedback_store] = lambda: feedback
 
     with TestClient(server.app) as c:
         yield c

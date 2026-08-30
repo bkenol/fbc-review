@@ -8,8 +8,15 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, OnDestroy, computed, inject, signal, viewChild } from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 
-import { Finding, HistoryEntry, ReviewOptions, ReviewOptionsMinSeverityEnum } from '../api';
+import {
+  Finding,
+  HistoryEntry,
+  ReviewOptions,
+  ReviewOptionsMinSeverityEnum,
+  ReviewOptionsModeEnum,
+} from '../api';
 import { AuthService } from '../core/auth';
 import { DeclarationForm } from './declaration/declaration-form';
 import { ReviewService } from './review-service';
@@ -82,11 +89,12 @@ interface OptionsForm {
   include_verified: FormControl<boolean>;
   include_measured: FormControl<boolean>;
   convert_raster: FormControl<boolean>;
+  training_mode: FormControl<boolean>;
 }
 
 @Component({
   selector: 'app-review',
-  imports: [ReactiveFormsModule, DatePipe, DecimalPipe, DeclarationForm],
+  imports: [ReactiveFormsModule, DatePipe, DecimalPipe, DeclarationForm, RouterLink],
   templateUrl: './review.html',
 })
 export class Review implements OnDestroy {
@@ -121,7 +129,13 @@ export class Review implements OnDestroy {
     include_verified: new FormControl(true, { nonNullable: true }),
     include_measured: new FormControl(true, { nonNullable: true }),
     convert_raster: new FormControl(false, { nonNullable: true }),
+    training_mode: new FormControl(false, { nonNullable: true }),
   });
+
+  /** Whether this deployment collects feedback at all. */
+  protected readonly trainingAvailable = computed(
+    () => this.config()?.training?.enabled ?? false,
+  );
 
   /** Shown while the job is queued or running, and after it finishes. */
   protected readonly stageIndex = computed(() => this.job()?.stage ?? 0);
@@ -334,6 +348,12 @@ export class Review implements OnDestroy {
       include_measured: value.include_measured,
       convert_raster: value.convert_raster,
       project_name: value.project_name,
+      // Sent explicitly either way. Unlike `occupancy_group`, this is a choice
+      // about how the review runs rather than a fact about the building, so
+      // the form's default is a real answer.
+      mode: value.training_mode
+        ? ReviewOptionsModeEnum.Training
+        : ReviewOptionsModeEnum.Standard,
     };
     this.reviews.submit(file, options, this.declarationForm()?.value() ?? {});
   }

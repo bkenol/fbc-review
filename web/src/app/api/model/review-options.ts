@@ -25,6 +25,10 @@ export interface ReviewOptions {
     include_measured?: boolean;
     include_verified?: boolean;
     min_severity?: ReviewOptionsMinSeverityEnum;
+    /**
+     * `standard` reviews against the approved calibration profile, which is what every applicant sees. `training` reviews against the caller\'s own candidate profile and opens the feedback surface, so a reviewer can see the effect of their own accepted feedback without it reaching anyone else. Rejected with a 400 when training mode is off on this deployment.
+     */
+    mode?: ReviewOptionsModeEnum;
     notes?: string;
     /**
      * Deprecated. Occupancy group is a fact about the building, not a review setting, and belongs in the project declaration. Sent explicitly, it seeds `declaration.occupancy_group` when the declaration does not state one; left at its default it is ignored and nothing is assumed.
@@ -41,6 +45,10 @@ export enum ReviewOptionsMinSeverityEnum {
     High = 'HIGH',
     Medium = 'MEDIUM',
     Low = 'LOW'
+};
+export enum ReviewOptionsModeEnum {
+    Standard = 'standard',
+    Training = 'training'
 };
 
 

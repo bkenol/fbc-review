@@ -322,12 +322,11 @@ What limits the damage:
 `tunnel.sh` prints a warning naming this every run, read from `/healthz`'s
 `auth_required`, so it cannot be forgotten quietly.
 
-If it should be closed later, the cheapest fix is a Cloudflare Access policy on
-the hostname — Zero Trust, allowlist by email, free to 50 users, enforced at the
-edge with no change to the app. The alternative is decoupling
-`FBC_DEV_UNSAFE_AUTH` so real Firebase sign-in can run against the filesystem
-backend; Firebase Authentication itself is free-tier and needs no open billing
-account. Neither is done.
+Both remedies named here are now available, and section 0d is how to use them.
+`FBC_DEV_UNSAFE_AUTH` has been split from the backend selection, so
+`bash scripts/share.sh --authenticated` runs the same filesystem stores with
+real Firebase sign-in and the server-side allowlist. A Cloudflare Access policy
+on the hostname remains the zero-code option and composes with it.
 
 ### Persistence
 
@@ -392,6 +391,181 @@ records it holds are what changes. The Firebase records must be **DNS-only
 record puts Cloudflare's certificate in front of a host that is not expecting
 it. That is the mirror image of the tunnel's requirement above, and mixing the
 two up is the single easiest way to break either.
+
+---
+
+## 0d. Running it with no Cloud Billing account at all
+
+Cloud Storage and Cloud Run are the only two pieces of this stack that require
+an open billing account. Firebase **Authentication**, **Hosting** and
+**Firestore** are all free on the Spark plan with no card attached — so the
+absence of billing costs you the bucket and the managed container, and nothing
+else. Since 3 Feb 2026 Cloud Storage for Firebase follows the standard Cloud
+Storage rules and needs a linked billing account even inside the Always Free
+tier, so there is no way around the bucket other than not using one.
+
+This section is what to run instead. Two layers; use either or both.
+
+### Layer 1 — Cloudflare Access, no code change
+
+The tunnel from section 0c publishes the app at a hostname. Access puts an
+identity check in front of that hostname at Cloudflare's edge, before anything
+reaches the machine. Free to 50 users.
+
+1. Cloudflare dashboard → **Zero Trust** → Access → Applications → **Add an
+   application** → **Self-hosted**.
+2. Application domain: `fbc.omniflexfitness.com` (the tunnel hostname; leave
+   the path empty so it covers everything).
+3. Add a policy: Action **Allow**, Include → **Emails** → the addresses that
+   may in. Or **Emails ending in** `@omniflexfitness.com` for the whole domain.
+4. Identity provider: the built-in **One-time PIN** needs no setup and emails a
+   code. Google is a few more clicks and is nicer to use.
+
+That is the whole change, and the app never learns it happened. What it does
+**not** do is give the app per-user identity: with `FBC_DEV_UNSAFE_AUTH=1`
+every request still arrives as the same `dev-local` user, so the rate limits
+stay global and **everyone signed in through Access shares one review
+history**. For a single operator that is fine. For clients it is not, which is
+what layer 2 is for.
+
+### Layer 2 — real sign-in on the filesystem backend
+
+`FBC_BACKEND` and `FBC_DEV_UNSAFE_AUTH` are separate settings. The first
+chooses Firestore + Cloud Storage or the filesystem stand-ins in
+`webapp/devbackend.py`; the second turns authentication off. Choosing the
+filesystem no longer means giving up sign-in.
+
+**One-time setup.** One script, and none of it needs billing.
+
+```bash
+cd /path/to/fbc-review          # the script resolves its own paths, but
+bash scripts/setup-auth.sh      # `firebase` writes into the working directory
+```
+
+It adds Firebase to the project, creates a web app, writes the real config into
+`web/src/app/core/firebase-config.ts`, and creates the token-verifying service
+account and its key under `secrets/`. Every step checks for what it creates and
+skips if it is already there, so a half-finished run is fixed by running it
+again.
+
+`FBC_PROJECT_ID` defaults to **`fbc-reviewer`** — the project that already
+exists, and the same default `provision.sh` uses. Override it only if you are
+deliberately standing up a second project.
+
+It stops and tells you about the two steps that have no CLI: enabling the Google
+sign-in provider, and adding your tunnel hostname under **Authentication →
+Settings → Authorised domains**. `localhost` is authorised out of the box, so
+local testing passes before you do the second one and Google sign-in then fails
+on the tunnel hostname and nowhere else. Do it while you are in the console.
+
+<details>
+<summary>What the script is doing, if you would rather run it by hand</summary>
+
+Three things went wrong the first time these were run loose, and all three are
+worth knowing about because they fail in unhelpful ways:
+
+1. **Run it from the repository.** `python scripts/write_firebase_config.py`
+   from a home directory is `No such file or directory`. The script resolves
+   every path against the repository root, so it works from anywhere.
+2. **`FBC_PROJECT_ID` must be set before it is interpolated.** Unset, the
+   service account address becomes `fbc-auth@.iam.gserviceaccount.com` and
+   `gcloud` answers `INVALID_ARGUMENT: Unknown error`, which names nothing. The
+   script defaults it instead of requiring it.
+3. **The service account may already exist**, in which case `create` fails with
+   a conflict and stops a `&&` chain dead. The script checks with `describe`
+   first.
+
+```bash
+PROJECT_ID=fbc-reviewer
+APP_ID="$(firebase apps:list WEB --project "$PROJECT_ID" | grep -oE '1:[0-9]+:web:[a-z0-9]+' | head -1)"
+firebase apps:sdkconfig WEB "$APP_ID" --project "$PROJECT_ID" --json > sdk.json
+python scripts/write_firebase_config.py sdk.json && rm sdk.json
+
+gcloud iam service-accounts describe "fbc-auth@${PROJECT_ID}.iam.gserviceaccount.com" \
+  || gcloud iam service-accounts create fbc-auth --display-name="FBC token verifier"
+mkdir -p secrets
+gcloud iam service-accounts keys create secrets/firebase-sa.json \
+  --iam-account="fbc-auth@${PROJECT_ID}.iam.gserviceaccount.com"
+```
+
+</details>
+
+**If key creation is refused.** `constraints/iam.disableServiceAccountKeyCreation`
+blocks it outright at the organisation level, and the error does not say so:
+
+```bash
+gcloud resource-manager org-policies describe \
+  constraints/iam.disableServiceAccountKeyCreation --project=fbc-reviewer --effective
+```
+
+Enforced and unliftable, the options are to run the service somewhere with a
+Google identity of its own, or to accept `check_revoked=False` — a revoked
+session then keeps working until its token expires, which is at most an hour.
+
+**Why a key here, when `CLAUDE.md` says never to download one.** That rule is
+about CI, where Workload Identity Federation is the right answer and a key is
+laziness. This is different: `webapp/auth.py` verifies tokens with
+`check_revoked=True`, and that check calls the Firebase Auth backend to ask
+whether the session has been revoked or the user disabled. Signature
+verification alone needs only Google's public certificates, but the revocation
+check needs credentials — and a container on your own hardware has no ambient
+identity and no OIDC issuer to federate from. The alternatives are worse:
+dropping to `check_revoked=False` means a revoked session keeps working until
+the token expires. Keep the key out of the repository (`secrets/` is ignored),
+mount it read-only, and rotate it if the machine is ever shared.
+
+**Running it.**
+
+```bash
+export FBC_PROJECT_ID=fbc-reviewer
+export FBC_ALLOWED_EMAILS=you@example.com,someone@example.com
+bash scripts/share.sh --authenticated --persistent
+bash scripts/tunnel.sh          # in a second shell
+```
+
+`--authenticated` sets `FBC_BACKEND=local` and leaves `FBC_DEV_UNSAFE_AUTH`
+unset, mounts the key, and generates a stable artefact signing key at
+`.devdata/artefact.secret`. `/healthz` will report `auth_required: true`, and
+the script says so rather than warning.
+
+### How artefacts are served without a bucket
+
+Cloud Storage hands the browser a V4 signed URL and the download never touches
+the app. The filesystem backend needs the same shape for a reason worth stating,
+because it is the thing that makes this mode possible at all: **a download is a
+navigation, and a navigation carries no `Authorization` header.** The Angular
+interceptor attaches the Firebase token to XHR, which covers `findings.json`;
+it cannot cover the click that downloads a 17 MB marked-up set.
+
+So `webapp/storage_urls.py` mints the local equivalent — a path, an expiry and
+an HMAC over both, served by `GET /api/artefacts/{blob}`. The signature is the
+authorisation, exactly as it is for GCS, and it is only minted after ownership
+of the job has been checked. This replaced the old `/_dev/blob` route, which
+served any blob under the root to anyone who asked and existed only when
+authentication was off.
+
+The signing key comes from `FBC_ARTEFACT_SECRET`. Unset, the service generates
+one per process: safe, but every outstanding link stops working when the
+container restarts, and links minted by one uvicorn worker are not valid at
+another. `share.sh` writes a stable one for you.
+
+### What this mode costs you
+
+Stated plainly, because it is not free of trade-offs:
+
+| | Cloud Run + GCS | This |
+| --- | --- | --- |
+| Artefact download | direct from GCS | streamed through the app |
+| Availability | Google's | your machine's |
+| Scale to zero | yes | the container runs continuously |
+| Retention | bucket lifecycle rule | `.devdata` until you delete it |
+| Jobs survive a restart | yes | yes, they are files |
+| Cost | pennies a month, needs billing | nothing |
+
+The download path is the one real regression: a 17 MB PDF now occupies a worker
+thread for the length of the transfer. On Cloud Run that was worth avoiding
+because it pins a billable instance. On a machine you already own it is a
+streaming file read, and `FBC_WORKERS` is the knob if it ever matters.
 
 ---
 
@@ -908,12 +1082,22 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_RATE_CONCURRENT` | 3 | Concurrent reviews per user |
 | `FBC_STALE_RUNNING_MINUTES` | 15 | A `running` job older than this is failed at startup |
 | `FBC_WORKERS` | 2 | Worker threads per instance |
+| `FBC_BACKEND` | `gcp` | `gcp` for Firestore + Cloud Storage, `local` for the filesystem stand-ins. Independent of `FBC_DEV_UNSAFE_AUTH` — see section 0d. Forced to `gcp` whenever `K_SERVICE` is set, because Cloud Run's disk is ephemeral. |
+| `FBC_ARTEFACT_SECRET` | generated per process | Signs local artefact URLs. Only read on the `local` backend. Unset means outstanding links break on restart; set it for a service that restarts often or runs more than one uvicorn worker. |
 | `FBC_COLLECTION` | `reviews` | Firestore collection |
 | `FBC_LOG_LEVEL` | `INFO` | |
 | `FBC_VERSION` | stamped from `VERSION` | The version reported on `/healthz` and shown in the client. Set by CI; wins over anything computed locally. See §5a. |
 | `FBC_BUILD` | unset | Build number, when handing one in without a full `FBC_VERSION`. |
 | `FBC_DEV_UNSAFE_AUTH` | unset | **Local only.** Ignored whenever `K_SERVICE` is set. |
 | `FBC_SMTP_*`, `FBC_MAIL_FROM` | unset | Email stays inert unless all are set |
+| `FBC_TRAINING_MODE` | unset | `1` turns training mode on. Unset, no feedback collection exists and no Firestore collection beyond `reviews` is touched — see §8. |
+| `FBC_OWNER_EMAILS` | empty | Who may read the feedback queue and promote a calibration profile. A second, independent list: **empty means nobody**, and being on `FBC_ALLOWED_EMAILS` does not put you on this one. |
+| `FBC_FEEDBACK_COLLECTION` | `feedback` | Firestore collection for submitted feedback |
+| `FBC_MARKUP_COLLECTION` | `markups` | Firestore collection for sheet markup |
+| `FBC_CALIBRATION_COLLECTION` | `calibration` | Firestore collection for calibration profile versions |
+| `ANTHROPIC_API_KEY` | unset | Summarising free-text feedback comments (`webapp/assist.py`). **Feedback path only** — never the review path, and `tests/test_training.py` walks the import graph to keep that true. Unset, comments route to a person unread. |
+| `FBC_GITHUB_REPO` | unset | `owner/repo` to open issues in from escalated feedback |
+| `FBC_GITHUB_TOKEN` | unset | Token for the above. Issues stay unavailable unless both are set. |
 
 ---
 
@@ -1247,3 +1431,86 @@ geometric rule needs a semantic layer name that tracing cannot recover.
 **No model call was added anywhere.** OCR is Tesseract and vectorisation is a
 Hough transform; both are deterministic. The review path still makes zero LLM
 calls.
+
+---
+
+## 8. Training mode
+
+Off by default and off in the deployment described above. With
+`FBC_TRAINING_MODE` unset, `webapp/feedback_store.py` never constructs a
+Firestore client, `calibration.apply` runs as the identity function, and the
+review a user gets is byte-for-byte the one this service produced before the
+feature existed. `docs/TRAINING-MODE.md` explains what it does and why it is
+shaped the way it is; this section is what to run.
+
+### Turn it on
+
+```bash
+gcloud run services update fbc-review --region=us-east1 \
+  --update-env-vars="FBC_TRAINING_MODE=1,FBC_OWNER_EMAILS=you@example.com"
+```
+
+`FBC_OWNER_EMAILS` is what makes `/admin` reachable and what gates every
+`/api/admin/*` route. It is deliberately not derived from
+`FBC_ALLOWED_EMAILS`: running a review and re-levelling a rule for every future
+applicant are different privileges, and an unset variable must not grant the
+second one. Leave it empty and training mode still collects and triages
+feedback — nobody can approve anything, which is the safe direction to fail in.
+
+### Firestore indexes
+
+Three new collections and six composite indexes, already in
+`firestore.indexes.json`. Deploy them before turning the feature on, or the
+first queue query fails with a link to create one by hand:
+
+```bash
+firebase deploy --only firestore:indexes
+```
+
+`firestore.rules` still denies everything, and that now covers the new
+collections too. A calibration profile decides what every future review
+reports, so a client-writable path to one would be a way to change other
+people's plan reviews from a browser console. There is no such path: promotion
+happens in the API, behind `FBC_OWNER_EMAILS`.
+
+### Optional channels
+
+Each is inert unless configured and each says so on `/api/admin/overview`.
+
+| Channel | Needs | Without it |
+| --- | --- | --- |
+| Immediate mail on an escalation, and the digest | `FBC_SMTP_*`, `FBC_MAIL_FROM`, `FBC_OWNER_EMAILS` | Feedback still queues; you read `/admin` |
+| A GitHub issue from a report | `FBC_GITHUB_REPO`, `FBC_GITHUB_TOKEN` | The prompt export still works; copy it by hand |
+| Free-text comments summarised before they reach you | `ANTHROPIC_API_KEY` | Any comment routes to you unread, which is what it did before |
+
+Store the two secrets in Secret Manager and mount them, rather than setting
+them as plain environment variables:
+
+```bash
+printf '%s' "$TOKEN" | gcloud secrets create fbc-github-token --data-file=-
+gcloud run services update fbc-review --region=us-east1 \
+  --update-secrets="FBC_GITHUB_TOKEN=fbc-github-token:latest"
+```
+
+The GitHub token needs `issues: write` on that repository and nothing else. The
+Anthropic key is billed per comment summarised, which is a handful of calls a
+day rather than one per review — the review path makes no model calls at all,
+and that is a property the test suite enforces rather than a claim.
+
+### Turning it off again
+
+```bash
+gcloud run services update fbc-review --region=us-east1 \
+  --remove-env-vars="FBC_TRAINING_MODE"
+```
+
+Reviews immediately go back to running uncalibrated. Nothing is deleted: the
+collected feedback and every promoted profile version stay in Firestore, and
+turning the flag back on resumes from the same active version.
+
+**Note what this does not do.** Reviews run against the *active* profile while
+training is on, so if you have promoted anything, switching training off also
+switches those calibrations off. That is usually not what you want in an
+incident — to back out one bad promotion while keeping the rest, promote a
+correction instead. Versions are immutable and `/api/admin/calibration` lists
+them, so you can always see what changed and when.

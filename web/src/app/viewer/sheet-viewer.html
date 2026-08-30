@@ -1,0 +1,232 @@
+<div class="viewer">
+  <!-- One bar. Sheet navigation on the left because that is what you reach for
+       most, drawing tools on the right because most sessions never touch them. -->
+  <div class="viewer-bar">
+    <div class="viewer-nav">
+      <button type="button" class="inline" (click)="go(page() - 1)" [disabled]="page() <= 1">
+        ‹ Previous
+      </button>
+      <span class="viewer-count">
+        Sheet <strong>{{ page() }}</strong> of {{ pages() || '—' }}
+      </span>
+      <button
+        type="button"
+        class="inline"
+        (click)="go(page() + 1)"
+        [disabled]="page() >= pages()"
+      >
+        Next ›
+      </button>
+    </div>
+
+    <div class="viewer-zoom">
+      <button type="button" class="inline" (click)="zoomBy(1 / 1.25)" aria-label="Zoom out">
+        −
+      </button>
+      <button type="button" class="inline" (click)="fit()">{{ (zoom() * 100).toFixed(0) }}%</button>
+      <button type="button" class="inline" (click)="zoomBy(1.25)" aria-label="Zoom in">+</button>
+    </div>
+
+    @if (canDraw()) {
+      <div class="viewer-tools" role="group" aria-label="Markup tools">
+        <button
+          type="button"
+          class="tool"
+          [class.on]="tool() === select"
+          (click)="pickTool(select)"
+          title="Click findings and markup without drawing"
+        >
+          Select
+        </button>
+        @for (kind of markupKinds(); track kind.key) {
+          <button
+            type="button"
+            class="tool"
+            [class.on]="tool() === kind.key"
+            (click)="pickTool(kind.key)"
+            [title]="kind.help"
+          >
+            {{ kind.label }}
+          </button>
+        }
+      </div>
+    }
+  </div>
+
+  @if (error(); as message) {
+    <p class="hint viewer-error" role="alert">{{ message }}</p>
+  }
+
+  <div class="viewer-stage">
+    @if (loading()) {
+      <p class="hint" aria-live="polite">Opening the set…</p>
+    }
+
+    <div class="sheet" [style.width.px]="cssWidth()" [style.height.px]="cssHeight()">
+      <canvas #canvas class="sheet-canvas" [class.busy]="rendering()"></canvas>
+
+      <!-- The overlay's user space is the page's own, so everything below is in
+           PDF points and the browser does the scaling. preserveAspectRatio is
+           off because the box is set from the same viewport the canvas is
+           rendered at — they cannot disagree, and letting SVG letterbox it
+           would put the drawing and its annotations out of register. -->
+      <svg
+        #overlay
+        class="sheet-overlay"
+        [attr.viewBox]="viewBox()"
+        preserveAspectRatio="none"
+        [class.drawing]="canDraw() && tool() !== select"
+        (pointerdown)="onPointerDown($event)"
+        (pointermove)="onPointerMove($event)"
+        (pointerup)="onPointerUp()"
+        (pointercancel)="onPointerUp()"
+      >
+        <defs>
+          <marker
+            id="markup-arrow"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="6"
+            markerHeight="6"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" class="arrowhead" />
+          </marker>
+        </defs>
+
+        <!-- Findings, boxed where their anchor text actually is. -->
+        @for (item of placed(); track item.finding.fid) {
+          @if (item.box; as box) {
+            <g
+              class="pin"
+              [class.selected]="item.finding.fid === selectedFid()"
+              [attr.data-severity]="item.finding.severity"
+              (click)="showFinding(item.finding)"
+            >
+              <rect
+                [attr.x]="box.x0 - 3"
+                [attr.y]="box.y0 - 3"
+                [attr.width]="box.x1 - box.x0 + 6"
+                [attr.height]="box.y1 - box.y0 + 6"
+                [attr.stroke-width]="hairline() * 1.6"
+              />
+              <text [attr.x]="box.x0 - 4" [attr.y]="box.y0 - 6" [attr.font-size]="9 / zoom()">
+                {{ item.finding.fid }}
+              </text>
+            </g>
+          }
+        }
+
+        <!-- What the reviewer drew. -->
+        @for (markup of pageMarkups(); track markup.id) {
+          <g
+            class="markup"
+            [attr.data-kind]="markup.kind"
+            [class.has-comment]="!!markup.comment"
+            (click)="markupPicked.emit(markup)"
+          >
+            @switch (markup.kind) {
+              @case ('highlight') {
+                <rect
+                  [attr.x]="markup.geometry.x0"
+                  [attr.y]="markup.geometry.y0"
+                  [attr.width]="(markup.geometry.x1 ?? 0) - (markup.geometry.x0 ?? 0)"
+                  [attr.height]="(markup.geometry.y1 ?? 0) - (markup.geometry.y0 ?? 0)"
+                  class="wash"
+                />
+              }
+              @case ('box') {
+                <rect
+                  [attr.x]="markup.geometry.x0"
+                  [attr.y]="markup.geometry.y0"
+                  [attr.width]="(markup.geometry.x1 ?? 0) - (markup.geometry.x0 ?? 0)"
+                  [attr.height]="(markup.geometry.y1 ?? 0) - (markup.geometry.y0 ?? 0)"
+                  [attr.stroke-width]="hairline() * 1.6"
+                />
+              }
+              @case ('strikeout') {
+                <line
+                  [attr.x1]="markup.geometry.x0"
+                  [attr.y1]="midY({ y0: markup.geometry.y0 ?? 0, y1: markup.geometry.y1 ?? 0 })"
+                  [attr.x2]="markup.geometry.x1"
+                  [attr.y2]="midY({ y0: markup.geometry.y0 ?? 0, y1: markup.geometry.y1 ?? 0 })"
+                  [attr.stroke-width]="hairline() * 1.6"
+                />
+              }
+              @case ('arrow') {
+                <line
+                  [attr.x1]="markup.geometry.x0"
+                  [attr.y1]="markup.geometry.y0"
+                  [attr.x2]="markup.geometry.x1"
+                  [attr.y2]="markup.geometry.y1"
+                  [attr.stroke-width]="hairline() * 1.6"
+                  marker-end="url(#markup-arrow)"
+                />
+              }
+              @case ('freehand') {
+                <path
+                  [attr.d]="path(markup.geometry.points ?? [])"
+                  fill="none"
+                  [attr.stroke-width]="hairline() * 1.6"
+                />
+              }
+              @default {
+                <circle
+                  [attr.cx]="markup.geometry.x0"
+                  [attr.cy]="markup.geometry.y0"
+                  [attr.r]="6 / zoom()"
+                  [attr.stroke-width]="hairline()"
+                />
+              }
+            }
+          </g>
+        }
+
+        <!-- The shape under the cursor right now. -->
+        @if (draft(); as shape) {
+          <g class="markup draft" [attr.data-kind]="shape.kind">
+            @if (shape.kind === 'freehand') {
+              <path
+                [attr.d]="path(shape.points)"
+                fill="none"
+                [attr.stroke-width]="hairline() * 1.6"
+              />
+            } @else if (shape.kind === 'arrow') {
+              <line
+                [attr.x1]="shape.x0"
+                [attr.y1]="shape.y0"
+                [attr.x2]="shape.x1"
+                [attr.y2]="shape.y1"
+                [attr.stroke-width]="hairline() * 1.6"
+                marker-end="url(#markup-arrow)"
+              />
+            } @else {
+              <rect
+                [attr.x]="shape.x0 < shape.x1 ? shape.x0 : shape.x1"
+                [attr.y]="shape.y0 < shape.y1 ? shape.y0 : shape.y1"
+                [attr.width]="(shape.x1 > shape.x0 ? shape.x1 - shape.x0 : shape.x0 - shape.x1)"
+                [attr.height]="(shape.y1 > shape.y0 ? shape.y1 - shape.y0 : shape.y0 - shape.y1)"
+                [attr.stroke-width]="hairline() * 1.6"
+              />
+            }
+          </g>
+        }
+      </svg>
+    </div>
+  </div>
+
+  <!-- Said rather than hidden. A finding whose anchor text is not on the page —
+       because the sheet pastes its code table in as a picture, most often — is
+       still a finding, and drawing it at a guessed position would put a marker
+       on the wrong part of somebody's drawing. -->
+  @if (unplaced(); as count) {
+    @if (count) {
+      <p class="hint viewer-note">
+        {{ count }} finding{{ count === 1 ? '' : 's' }} on this sheet could not be placed on
+        the drawing — the text they cite is not in this page's text layer. They are listed
+        beside it.
+      </p>
+    }
+  }
+</div>

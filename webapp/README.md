@@ -54,6 +54,23 @@ verified off, measured off     ->  7 findings {CRITICAL 1, HIGH 2, MEDIUM 4}   (
 | `GET` | `/healthz` | Liveness, and the version this build reports. Cloud Run's startup probe. |
 | `GET` | `/api/healthz` | The same answer, on the path the browser can reach. Off the published schema. |
 
+Training mode adds a second set, all of which return `400` unless
+`FBC_TRAINING_MODE=1`. See `../docs/TRAINING-MODE.md`.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `GET`/`POST` | `/api/jobs/{id}/markups` | The caller's own markup on a set. Geometry is in PDF points, not pixels. |
+| `PATCH`/`DELETE` | `/api/jobs/{id}/markups/{markup_id}` | Edit or remove one. Delete answers with what is left. |
+| `GET`/`POST` | `/api/jobs/{id}/feedback` | Structured feedback on a finding, or on something the review missed. The triage verdict comes back in the response. |
+| `GET` | `/api/admin/overview` | What is waiting, and which channels are live. |
+| `GET`/`POST` | `/api/admin/feedback[/{id}[/decision\|prompt\|issue]]` | The queue, and the three ways out of it. |
+| `GET` | `/api/admin/calibration` | The active profile, its history, and every lever there is. |
+| `POST` | `/api/admin/digest` | Mail everything still waiting. |
+
+Every `/api/admin/*` path is gated on `FBC_OWNER_EMAILS` and answers **404**,
+not 403, to anyone else — the existence of an admin surface is not something to
+confirm to somebody who is not on it.
+
 ## Email
 
 Off unless SMTP is configured, and the UI says so rather than pretending. Set:
