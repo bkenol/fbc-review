@@ -249,7 +249,14 @@ try {
     Write-Host "  Upload limit: $MaxUploadMb MB" -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  Publish it at fbc.omniflexfitness.com with:' -ForegroundColor Cyan
-    Write-Host '      powershell -ExecutionPolicy Bypass -File scripts\tunnel.ps1'
+    # Absolute, and quoted. Printed relative, this line only worked if you
+    # happened to be sitting in the repository - and nobody is, because the
+    # console and the Desktop shortcut both start elsewhere. Pasted from
+    # C:\WINDOWS\system32 it fails with "the argument to the -File parameter
+    # does not exist", which reads as a missing file rather than a wrong path.
+    # Built by concatenation so the embedded quotes need no escaping.
+    $tunnelPs1 = Join-Path $repo 'scripts\tunnel.ps1'
+    Write-Host ('      powershell -ExecutionPolicy Bypass -File "' + $tunnelPs1 + '"')
     Write-Host ''
     Write-Host '  Or, for a throwaway unlisted URL:' -ForegroundColor Cyan
     Write-Host "      tailscale funnel $Port"

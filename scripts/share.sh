@@ -235,7 +235,10 @@ info ''
 info "Upload limit: ${MAX_UPLOAD_MB} MB"
 info ''
 info 'Publish it at fbc.omniflexfitness.com with:'
-info '    bash scripts/tunnel.sh'
+# Absolute, and quoted, for the same reason share.ps1 does it: this line is
+# read after the script has printed a URL, from whatever directory the shell
+# happened to start in, which is rarely the repository.
+info "    bash \"$ROOT/scripts/tunnel.sh\""
 info ''
 info 'Or, for a throwaway unlisted URL:'
 info "    tailscale funnel ${PORT}"
