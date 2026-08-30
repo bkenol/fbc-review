@@ -408,23 +408,72 @@ chooses Firestore + Cloud Storage or the filesystem stand-ins in
 `webapp/devbackend.py`; the second turns authentication off. Choosing the
 filesystem no longer means giving up sign-in.
 
-**One-time setup.** None of it needs billing.
+**One-time setup.** One script, and none of it needs billing.
 
 ```bash
-# 1. A Firebase project on the free Spark plan, if there is not one already,
-#    with Google sign-in enabled (Console → Authentication → Sign-in method).
+cd /path/to/fbc-review          # the script resolves its own paths, but
+bash scripts/setup-auth.sh      # `firebase` writes into the working directory
+```
 
-# 2. The web config, into the Angular client. These values are public by
-#    design — they identify the project and authorise nothing.
-firebase apps:sdkconfig web > sdk.json
+It adds Firebase to the project, creates a web app, writes the real config into
+`web/src/app/core/firebase-config.ts`, and creates the token-verifying service
+account and its key under `secrets/`. Every step checks for what it creates and
+skips if it is already there, so a half-finished run is fixed by running it
+again.
+
+`FBC_PROJECT_ID` defaults to **`fbc-reviewer`** — the project that already
+exists, and the same default `provision.sh` uses. Override it only if you are
+deliberately standing up a second project.
+
+It stops and tells you about the two steps that have no CLI: enabling the Google
+sign-in provider, and adding your tunnel hostname under **Authentication →
+Settings → Authorised domains**. `localhost` is authorised out of the box, so
+local testing passes before you do the second one and Google sign-in then fails
+on the tunnel hostname and nowhere else. Do it while you are in the console.
+
+<details>
+<summary>What the script is doing, if you would rather run it by hand</summary>
+
+Three things went wrong the first time these were run loose, and all three are
+worth knowing about because they fail in unhelpful ways:
+
+1. **Run it from the repository.** `python scripts/write_firebase_config.py`
+   from a home directory is `No such file or directory`. The script resolves
+   every path against the repository root, so it works from anywhere.
+2. **`FBC_PROJECT_ID` must be set before it is interpolated.** Unset, the
+   service account address becomes `fbc-auth@.iam.gserviceaccount.com` and
+   `gcloud` answers `INVALID_ARGUMENT: Unknown error`, which names nothing. The
+   script defaults it instead of requiring it.
+3. **The service account may already exist**, in which case `create` fails with
+   a conflict and stops a `&&` chain dead. The script checks with `describe`
+   first.
+
+```bash
+PROJECT_ID=fbc-reviewer
+APP_ID="$(firebase apps:list WEB --project "$PROJECT_ID" | grep -oE '1:[0-9]+:web:[a-z0-9]+' | head -1)"
+firebase apps:sdkconfig WEB "$APP_ID" --project "$PROJECT_ID" --json > sdk.json
 python scripts/write_firebase_config.py sdk.json && rm sdk.json
 
-# 3. A service account key for the server side.
-mkdir -p secrets                       # already in .gitignore
-gcloud iam service-accounts create fbc-auth --display-name="FBC token verifier"
+gcloud iam service-accounts describe "fbc-auth@${PROJECT_ID}.iam.gserviceaccount.com" \
+  || gcloud iam service-accounts create fbc-auth --display-name="FBC token verifier"
+mkdir -p secrets
 gcloud iam service-accounts keys create secrets/firebase-sa.json \
-  --iam-account="fbc-auth@${FBC_PROJECT_ID}.iam.gserviceaccount.com"
+  --iam-account="fbc-auth@${PROJECT_ID}.iam.gserviceaccount.com"
 ```
+
+</details>
+
+**If key creation is refused.** `constraints/iam.disableServiceAccountKeyCreation`
+blocks it outright at the organisation level, and the error does not say so:
+
+```bash
+gcloud resource-manager org-policies describe \
+  constraints/iam.disableServiceAccountKeyCreation --project=fbc-reviewer --effective
+```
+
+Enforced and unliftable, the options are to run the service somewhere with a
+Google identity of its own, or to accept `check_revoked=False` — a revoked
+session then keeps working until its token expires, which is at most an hour.
 
 **Why a key here, when `CLAUDE.md` says never to download one.** That rule is
 about CI, where Workload Identity Federation is the right answer and a key is
@@ -441,7 +490,7 @@ mount it read-only, and rotate it if the machine is ever shared.
 **Running it.**
 
 ```bash
-export FBC_PROJECT_ID=your-firebase-project
+export FBC_PROJECT_ID=fbc-reviewer
 export FBC_ALLOWED_EMAILS=you@example.com,someone@example.com
 bash scripts/share.sh --authenticated --persistent
 bash scripts/tunnel.sh          # in a second shell
