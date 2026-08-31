@@ -12,6 +12,7 @@ import { Finding } from './finding';
 import { Disposition } from './disposition';
 import { Markup } from './markup';
 import { FeedbackSubject } from './feedback-subject';
+import { MarkupExport } from './markup-export';
 
 
 export interface Feedback { 
@@ -41,6 +42,7 @@ export interface Feedback {
     sheet?: string;
     state: FeedbackStateEnum;
     subject: FeedbackSubject;
+    sweep?: MarkupExport | null;
     triage: TriageResult;
 }
 export enum FeedbackStateEnum {

@@ -11,6 +11,8 @@ import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 
 import {
+  Abstention,
+  AbstentionKindInfo,
   Finding,
   HistoryEntry,
   ReviewOptions,
@@ -171,6 +173,31 @@ export class Review implements OnDestroy {
   );
 
   protected readonly abstentions = computed(() => this.job()?.summary?.abstentions ?? []);
+
+  /**
+   * Root causes that would account for several abstentions at once.
+   *
+   * Computed server-side from the abstentions and the source profile — see
+   * `webapp/abstentions.py`. Rendered above the register rather than below it:
+   * twenty-five rules standing down usually has one cause, and reading the list
+   * before being told the cause is reading the same sentence twenty-five times.
+   */
+  protected readonly diagnosis = computed(() => this.job()?.diagnosis ?? []);
+
+  /** Abstentions worth arguing with, as opposed to ones that were simply right. */
+  protected readonly proposable = computed(() =>
+    this.abstentions().filter((a) => a.proposable),
+  );
+
+  private readonly abstentionKinds = computed(() => {
+    const index = new Map<string, AbstentionKindInfo>();
+    for (const kind of this.config()?.abstention_kinds ?? []) index.set(kind.key, kind);
+    return index;
+  });
+
+  protected kindOf(abstention: Abstention): AbstentionKindInfo | null {
+    return this.abstentionKinds().get(abstention.kind ?? '') ?? null;
+  }
 
   /** Fields where the declaration and the drawings disagree. */
   protected readonly conflicts = computed(

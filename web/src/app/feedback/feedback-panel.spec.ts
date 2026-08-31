@@ -117,4 +117,54 @@ describe('FeedbackPanel', () => {
 
     expect(sent).toEqual([]);
   });
+
+  // ── the pre-filled answer ───────────────────────────────────────────────
+  it('opens on the suggested answer where something knows what it probably is', () => {
+    ref.setInput('initial', { severity: 'overstated' });
+    fixture.detectChanges();
+
+    expect(call('chosen', 'severity')).toBe('overstated');
+    expect(read('ready')).toBe(true);
+  });
+
+  it('lets the suggestion be taken back like any other answer', () => {
+    // Pre-selecting is a starting position, not a decision. If it could not be
+    // cleared it would be the form answering on the reviewer's behalf.
+    ref.setInput('initial', { severity: 'overstated' });
+    fixture.detectChanges();
+
+    call('choose', 'severity', 'overstated');
+    expect(call('chosen', 'severity')).toBe('');
+  });
+
+  it('re-seeds on a change of identity, which is the contract hosts must meet', () => {
+    // Stated as a contract because a host can break it from the outside, and
+    // one did: computing `initial` in the template hands this input a new
+    // object on every change detection, so the re-seed fires each time and
+    // wipes what the reviewer chose. The component cannot tell that apart from
+    // a genuinely new question — so the obligation is the host's, and it is met
+    // by a `computed` keyed on the selection (see `Workspace.prefill`).
+    const seed = { severity: 'overstated' };
+    ref.setInput('initial', seed);
+    fixture.detectChanges();
+
+    call('choose', 'severity', 'overstated');
+    expect(call('chosen', 'severity')).toBe('');
+
+    // Same object, another pass: nothing about the question has changed.
+    ref.setInput('initial', seed);
+    fixture.detectChanges();
+    expect(call('chosen', 'severity')).toBe('');
+  });
+
+  it('re-seeds when the thing being asked about changes', () => {
+    ref.setInput('initial', { severity: 'overstated' });
+    fixture.detectChanges();
+    call('choose', 'severity', 'overstated');
+    expect(call('chosen', 'severity')).toBe('');
+
+    ref.setInput('initial', { severity: 'right' });
+    fixture.detectChanges();
+    expect(call('chosen', 'severity')).toBe('right');
+  });
 });

@@ -9,18 +9,24 @@
  */
 import { MarkupKindInfo } from './markup-kind-info';
 import { ReviewOptions } from './review-options';
-import { OccupancyGroup } from './occupancy-group';
 import { DeclarationField } from './declaration-field';
+import { FeedbackAspect } from './feedback-aspect';
+import { Edition } from './edition';
+import { MarkupColourInfo } from './markup-colour-info';
+import { OccupancyGroup } from './occupancy-group';
 import { CalibrationKnob } from './calibration-knob';
 import { DispositionInfo } from './disposition-info';
-import { FeedbackAspect } from './feedback-aspect';
+import { AbstentionKindInfo } from './abstention-kind-info';
 import { MailStatus } from './mail-status';
 import { DeclarationGroup } from './declaration-group';
-import { Edition } from './edition';
 import { TrainingStatus } from './training-status';
 
 
 export interface ConfigResponse { 
+    /**
+     * How `webapp.abstentions` classifies a rule that declined to run, and what it says should be done about each class.
+     */
+    abstention_kinds?: Array<AbstentionKindInfo>;
     /**
      * Every lever the overlay has. The closed list this publishes is what makes the triage split decidable rather than a judgement.
      */
@@ -45,6 +51,10 @@ export interface ConfigResponse {
      */
     feedback_aspects: Array<FeedbackAspect>;
     mail: MailStatus;
+    /**
+     * What each markup colour means. Semantic categories a reader sorts a submitted pass by, not a paint box.
+     */
+    markup_colours?: Array<MarkupColourInfo>;
     markup_kinds: Array<MarkupKindInfo>;
     max_pages: number;
     max_upload_mb: number;

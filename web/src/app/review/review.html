@@ -626,9 +626,37 @@
         <p class="hint" aria-live="polite">Loading the findings register…</p>
       }
 
+      <!-- ── why so much was not checked ────────────────────────────────────
+           Above the register rather than below it. Twenty-five rules standing
+           down usually has one cause, not twenty-five, and reading the list
+           before being told the cause is reading the same sentence twenty-five
+           times. Every claim here is drawn from the abstentions and the source
+           profile and names the sheets, so it can be checked rather than
+           believed. -->
+      @for (finding of diagnosis(); track finding.key) {
+        <div class="note warn" style="margin-top: 24px">
+          <b>{{ finding.headline }}</b>
+          {{ finding.detail }}
+          <span class="do">{{ finding.action }}</span>
+          @if (finding.rerun && file()) {
+            <div class="row">
+              <button type="button" class="ghost" (click)="retryWithConversion()">
+                Rebuild those sheets and review again
+              </button>
+            </div>
+          }
+        </div>
+      }
+
       <!-- ── the abstention register ────────────────────────────────────────
            A rule that declined to run is a callout on the drawing, not an error
-           message. "Not checked" must never look like "checked and passed". -->
+           message. "Not checked" must never look like "checked and passed".
+
+           Each row now also says which *kind* of not-checked it is. That
+           distinction is the whole difference between "the set does not state
+           this" — where the rule was right and there is nothing to fix — and
+           "we could not read the part of the set that states it", which is a
+           defect. The register used to render both in the same grey. -->
       @if (abstentions().length) {
         <div class="note warn" style="margin-top: 24px">
           <b>
@@ -636,15 +664,28 @@
             declined to run.
           </b>
           These were not evaluated. That is not the same as passing.
+          @if (proposable().length) {
+            {{ proposable().length }} of them look worth arguing with.
+          }
           <ul class="annotations">
             @for (abstention of abstentions(); track abstention.rule) {
-              <li>
+              <li [class.quiet]="!abstention.proposable">
                 <span class="xtick" aria-hidden="true"></span>
                 <span class="annot-name">{{ abstention.rule }}</span>
                 — {{ abstention.reason }}
+                @if (kindOf(abstention); as kind) {
+                  <span class="annot-kind" [title]="kind.guidance">{{ kind.label }}</span>
+                }
               </li>
             }
           </ul>
+          @if (trainingAvailable() && job(); as finished) {
+            <div class="row">
+              <a class="btn" [routerLink]="['/review', finished.id]">
+                Open the set and say what it should have seen
+              </a>
+            </div>
+          }
         </div>
       }
 

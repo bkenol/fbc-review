@@ -2,12 +2,24 @@
   "components": {
     "schemas": {
       "Abstention": {
-        "description": "A rule that declined to run. Never the same thing as a rule that passed.",
+        "description": "A rule that declined to run. Never the same thing as a rule that passed.\n\n`rule`, `reason` and `detail` are what the engine recorded and are never\nrewritten. `kind` and `proposable` are `webapp.abstentions`' reading of that\nreason, added on the way out \u2014 so the register still shows what the rule\nsaid, and the classification sits beside it rather than in place of it.",
         "properties": {
           "detail": {
             "default": "",
             "title": "Detail",
             "type": "string"
+          },
+          "kind": {
+            "default": "unknown",
+            "description": "Which class of abstention this is. See `AbstentionKindInfo`.",
+            "title": "Kind",
+            "type": "string"
+          },
+          "proposable": {
+            "default": false,
+            "description": "Whether this one is worth offering a proposal for. False on an abstention that was correct \u2014 most 'the set does not state it' abstentions are.",
+            "title": "Proposable",
+            "type": "boolean"
           },
           "reason": {
             "title": "Reason",
@@ -23,6 +35,94 @@
           "reason"
         ],
         "title": "Abstention",
+        "type": "object"
+      },
+      "AbstentionDiagnosis": {
+        "description": "A root cause that would account for several abstentions at once.\n\nDrawn entirely from two things already on the job record \u2014 what the rules\nsaid, and what `webapp.pdfkind` found in the file. Never a certainty, and\nthe text never phrases it as one: the sheets it names are the reader's way\nof checking the claim rather than taking it on trust.",
+        "properties": {
+          "action": {
+            "description": "What to do about it, in the imperative.",
+            "title": "Action",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "rerun": {
+            "description": "Whether re-running the review would test the theory. The client offers the re-run only where this is true.",
+            "title": "Rerun",
+            "type": "boolean"
+          },
+          "rules": {
+            "description": "Rule ids this would account for.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "sheets": {
+            "description": "Sheets to look at, numbered from 1 as the viewer numbers them.",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Sheets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "headline",
+          "detail",
+          "action",
+          "rerun"
+        ],
+        "title": "AbstentionDiagnosis",
+        "type": "object"
+      },
+      "AbstentionKindInfo": {
+        "description": "One class of abstention, and what to do about it.\n\nSee `webapp.abstentions`. The client renders what it is handed: it carries\nno copy of a reason string and makes no judgement of its own about whether\na rule was right to stand down.",
+        "properties": {
+          "guidance": {
+            "description": "What would fix it, written for whoever is reading the review.",
+            "title": "Guidance",
+            "type": "string"
+          },
+          "help": {
+            "title": "Help",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "proposable": {
+            "description": "Whether offering to propose a fix makes sense for this class. False where the abstention was correct, or the operator asked for it.",
+            "title": "Proposable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "help",
+          "guidance",
+          "proposable"
+        ],
+        "title": "AbstentionKindInfo",
         "type": "object"
       },
       "AdminOverview": {
@@ -447,6 +547,14 @@
       },
       "ConfigResponse": {
         "properties": {
+          "abstention_kinds": {
+            "description": "How `webapp.abstentions` classifies a rule that declined to run, and what it says should be done about each class.",
+            "items": {
+              "$ref": "#/components/schemas/AbstentionKindInfo"
+            },
+            "title": "Abstention Kinds",
+            "type": "array"
+          },
           "calibration_knobs": {
             "description": "Every lever the overlay has. The closed list this publishes is what makes the triage split decidable rather than a judgement.",
             "items": {
@@ -506,6 +614,14 @@
           },
           "mail": {
             "$ref": "#/components/schemas/MailStatus"
+          },
+          "markup_colours": {
+            "description": "What each markup colour means. Semantic categories a reader sorts a submitted pass by, not a paint box.",
+            "items": {
+              "$ref": "#/components/schemas/MarkupColourInfo"
+            },
+            "title": "Markup Colours",
+            "type": "array"
           },
           "markup_kinds": {
             "items": {
@@ -1120,6 +1236,16 @@
           "subject": {
             "$ref": "#/components/schemas/FeedbackSubject"
           },
+          "sweep": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarkupExport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "triage": {
             "$ref": "#/components/schemas/TriageResult"
           }
@@ -1256,6 +1382,13 @@
             "title": "Markup Id",
             "type": "string"
           },
+          "rule_id": {
+            "default": "",
+            "description": "The rule an abstention-subject submission is about. Checked against the abstentions this review actually recorded \u2014 a rule id the review did not stand down on is a 404, so the anchor cannot be invented by the client any more than a finding id can.",
+            "maxLength": 64,
+            "title": "Rule Id",
+            "type": "string"
+          },
           "subject": {
             "$ref": "#/components/schemas/FeedbackSubject",
             "default": "finding"
@@ -1267,7 +1400,9 @@
       "FeedbackSubject": {
         "enum": [
           "finding",
-          "coverage"
+          "coverage",
+          "abstention",
+          "sweep"
         ],
         "title": "FeedbackSubject",
         "type": "string"
@@ -1687,6 +1822,14 @@
             ],
             "description": "What was submitted with the review, if anything."
           },
+          "diagnosis": {
+            "description": "Root causes that would account for several of this review's abstentions at once. Computed on read from the abstentions and the source profile, so an old review gets one too. Empty when nothing in the record supports a claim.",
+            "items": {
+              "$ref": "#/components/schemas/AbstentionDiagnosis"
+            },
+            "title": "Diagnosis",
+            "type": "array"
+          },
           "downloads": {
             "anyOf": [
               {
@@ -1910,6 +2053,107 @@
         "title": "Markup",
         "type": "object"
       },
+      "MarkupColourInfo": {
+        "description": "What a markup colour means.\n\nServed rather than hard-coded in the client for the same reason the\ntaxonomy is: these are semantic categories a reader sorts by, not\ndecoration, and there must be one definition of what purple means.",
+        "properties": {
+          "help": {
+            "title": "Help",
+            "type": "string"
+          },
+          "hex": {
+            "description": "The swatch, for the palette and the overlay.",
+            "title": "Hex",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "hex",
+          "help"
+        ],
+        "title": "MarkupColourInfo",
+        "type": "object"
+      },
+      "MarkupExport": {
+        "description": "A whole annotated pass, in one document.\n\nWhat a reviewer takes away at the end of a session and what the owner reads\nwhen one is submitted. Deliberately the same payload for both: an export\nsomebody can inspect before they send it is an export they will trust, and\ntwo different shapes would drift.\n\nGeometry is carried per markup because it is what makes an annotation\ncheckable \u2014 \"sheet 12, this box, this comment\" can be found again. It is in\nPDF points, the same space the viewer draws in.",
+        "properties": {
+          "commented": {
+            "default": 0,
+            "description": "How many carry a written comment.",
+            "title": "Commented",
+            "type": "integer"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "How many of each kind, for the summary line.",
+            "title": "Counts",
+            "type": "object"
+          },
+          "exported_at": {
+            "format": "date-time",
+            "title": "Exported At",
+            "type": "string"
+          },
+          "exported_by": {
+            "default": "",
+            "description": "Empty on an open-access deployment.",
+            "title": "Exported By",
+            "type": "string"
+          },
+          "filename": {
+            "default": "",
+            "title": "Filename",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "markups": {
+            "items": {
+              "$ref": "#/components/schemas/Markup"
+            },
+            "title": "Markups",
+            "type": "array"
+          },
+          "project_name": {
+            "default": "",
+            "title": "Project Name",
+            "type": "string"
+          },
+          "sheets": {
+            "description": "Sheets carrying at least one annotation.",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Sheets",
+            "type": "array"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "exported_at",
+          "markups"
+        ],
+        "title": "MarkupExport",
+        "type": "object"
+      },
       "MarkupGeometry": {
         "additionalProperties": false,
         "description": "Where a markup sits, in PDF user space.\n\nPDF points, not screen pixels, and not a fraction of the page. The viewer\nzooms and the window resizes; the drawing does not. Storing device\ncoordinates would make every markup wrong at a different zoom level, and\nstoring fractions would lose precision on a 24x36 sheet where a door tag is\na few points across.",
@@ -1954,9 +2198,11 @@
         "enum": [
           "highlight",
           "box",
+          "cloud",
           "arrow",
           "strikeout",
           "freehand",
+          "text",
           "note"
         ],
         "title": "MarkupKind",
@@ -2860,6 +3106,27 @@
           "findings_count"
         ],
         "title": "Summary",
+        "type": "object"
+      },
+      "SweepRequest": {
+        "additionalProperties": false,
+        "description": "Hand a marked-up pass over for review.\n\nCarries no markup: the server already holds every annotation on this job for\nthis user, and letting the client post its own list would let it submit a\npass that never existed. `answers` and `comment` are the same shape every\nother submission uses, validated against the `sweep` aspect.",
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Answers",
+            "type": "object"
+          },
+          "comment": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Comment",
+            "type": "string"
+          }
+        },
+        "title": "SweepRequest",
         "type": "object"
       },
       "TrainingStatus": {
@@ -4937,6 +5204,262 @@
           }
         },
         "summary": "Draw on a sheet.",
+        "tags": [
+          "training"
+        ]
+      }
+    },
+    "/api/jobs/{job_id}/markups/export": {
+      "get": {
+        "description": "What a reviewer takes away at the end of a session \u2014 every annotation with its comment, its sheet and its geometry, plus a plain-text rendering of the same thing. The identical payload is what the owner reads when a pass is submitted, so nobody submits something they could not inspect first.",
+        "operationId": "exportMarkups",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkupExport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "The whole annotated pass, in one document.",
+        "tags": [
+          "training"
+        ]
+      }
+    },
+    "/api/jobs/{job_id}/markups/submit": {
+      "post": {
+        "description": "Submits every annotation the caller has made on this review as one piece of feedback, with the whole bundle attached as a snapshot. The bundle is read from the server's own store rather than from the request, so a pass that was never drawn cannot be submitted, and editing a markup afterwards does not change what the owner was handed.",
+        "operationId": "submitMarkupPass",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SweepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Hand a marked-up pass over for review.",
         "tags": [
           "training"
         ]

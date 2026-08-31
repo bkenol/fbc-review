@@ -47,6 +47,8 @@ FeedbackState = Literal["new", "accepted", "rejected", "actioned"]
 class FeedbackSubject(StrEnum):
     FINDING = "finding"
     COVERAGE = "coverage"
+    ABSTENTION = "abstention"
+    SWEEP = "sweep"
 
 
 class Disposition(StrEnum):
@@ -59,9 +61,11 @@ class Disposition(StrEnum):
 class MarkupKind(StrEnum):
     HIGHLIGHT = "highlight"
     BOX = "box"
+    CLOUD = "cloud"
     ARROW = "arrow"
     STRIKEOUT = "strikeout"
     FREEHAND = "freehand"
+    TEXT = "text"
     NOTE = "note"
 
 
@@ -310,6 +314,41 @@ class MarkupKindInfo(BaseModel):
     help: str
 
 
+class MarkupColourInfo(BaseModel):
+    """What a markup colour means.
+
+    Served rather than hard-coded in the client for the same reason the
+    taxonomy is: these are semantic categories a reader sorts by, not
+    decoration, and there must be one definition of what purple means.
+    """
+
+    key: str
+    label: str
+    hex: str = Field(description="The swatch, for the palette and the overlay.")
+    help: str
+
+
+class AbstentionKindInfo(BaseModel):
+    """One class of abstention, and what to do about it.
+
+    See `webapp.abstentions`. The client renders what it is handed: it carries
+    no copy of a reason string and makes no judgement of its own about whether
+    a rule was right to stand down.
+    """
+
+    key: str
+    label: str
+    help: str
+    guidance: str = Field(
+        description="What would fix it, written for whoever is reading the review."
+    )
+    proposable: bool = Field(
+        description="Whether offering to propose a fix makes sense for this class. "
+                    "False where the abstention was correct, or the operator asked "
+                    "for it."
+    )
+
+
 class DispositionInfo(BaseModel):
     key: Disposition
     label: str
@@ -499,6 +538,53 @@ class MarkupList(BaseModel):
     markups: List[Markup]
 
 
+class MarkupExport(BaseModel):
+    """A whole annotated pass, in one document.
+
+    What a reviewer takes away at the end of a session and what the owner reads
+    when one is submitted. Deliberately the same payload for both: an export
+    somebody can inspect before they send it is an export they will trust, and
+    two different shapes would drift.
+
+    Geometry is carried per markup because it is what makes an annotation
+    checkable — "sheet 12, this box, this comment" can be found again. It is in
+    PDF points, the same space the viewer draws in.
+    """
+
+    job_id: str
+    filename: str = ""
+    project_name: str = ""
+    exported_at: dt.datetime
+    exported_by: str = Field(default="", description="Empty on an open-access deployment.")
+    markups: List[Markup]
+    counts: Dict[str, int] = Field(
+        default_factory=dict, description="How many of each kind, for the summary line."
+    )
+    commented: int = Field(default=0, description="How many carry a written comment.")
+    sheets: List[int] = Field(
+        default_factory=list, description="Sheets carrying at least one annotation."
+    )
+    #: Plain text, generated server-side. A markup pass is read by a person, and
+    #: a person handed 40 JSON objects reads none of them. Same content as
+    #: `markups`, ordered by sheet.
+    text: str = ""
+
+
+class SweepRequest(BaseModel):
+    """Hand a marked-up pass over for review.
+
+    Carries no markup: the server already holds every annotation on this job for
+    this user, and letting the client post its own list would let it submit a
+    pass that never existed. `answers` and `comment` are the same shape every
+    other submission uses, validated against the `sweep` aspect.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    answers: Dict[str, str] = Field(default_factory=dict)
+    comment: str = Field(default="", max_length=4000)
+
+
 # ── feedback ──────────────────────────────────────────────────────────────
 class FeedbackRequest(BaseModel):
     """One piece of feedback about one thing.
@@ -520,6 +606,15 @@ class FeedbackRequest(BaseModel):
     )
     comment: str = Field(default="", max_length=4000)
     markup_id: str = Field(default="", max_length=64)
+    rule_id: str = Field(
+        default="", max_length=64,
+        description=(
+            "The rule an abstention-subject submission is about. Checked against "
+            "the abstentions this review actually recorded — a rule id the review "
+            "did not stand down on is a 404, so the anchor cannot be invented by "
+            "the client any more than a finding id can."
+        ),
+    )
 
 
 class AssistOpinion(BaseModel):
@@ -584,6 +679,10 @@ class Feedback(BaseModel):
     #: from a re-run review is not the finding the person was looking at.
     finding: Optional[Finding] = None
     markup: Optional[Markup] = None
+    #: The whole annotated pass, on a `sweep` submission. A snapshot for the same
+    #: reason the other two are: the markup can be edited or deleted afterwards,
+    #: and what the owner has to read is what was handed over.
+    sweep: Optional[MarkupExport] = None
     applied_to_candidate: bool = Field(
         default=False,
         description="Whether this landed in the submitter's own training profile. "
@@ -678,6 +777,16 @@ class ConfigResponse(BaseModel):
         )
     )
     markup_kinds: List[MarkupKindInfo]
+    markup_colours: List[MarkupColourInfo] = Field(
+        default_factory=list,
+        description="What each markup colour means. Semantic categories a reader "
+                    "sorts a submitted pass by, not a paint box.",
+    )
+    abstention_kinds: List[AbstentionKindInfo] = Field(
+        default_factory=list,
+        description="How `webapp.abstentions` classifies a rule that declined to "
+                    "run, and what it says should be done about each class.",
+    )
     dispositions: List[DispositionInfo]
     calibration_knobs: List[CalibrationKnob] = Field(
         description="Every lever the overlay has. The closed list this publishes is "
@@ -724,11 +833,53 @@ class Finding(BaseModel):
 
 
 class Abstention(BaseModel):
-    """A rule that declined to run. Never the same thing as a rule that passed."""
+    """A rule that declined to run. Never the same thing as a rule that passed.
+
+    `rule`, `reason` and `detail` are what the engine recorded and are never
+    rewritten. `kind` and `proposable` are `webapp.abstentions`' reading of that
+    reason, added on the way out — so the register still shows what the rule
+    said, and the classification sits beside it rather than in place of it.
+    """
 
     rule: str
     reason: str
     detail: str = ""
+    kind: str = Field(
+        default="unknown",
+        description="Which class of abstention this is. See `AbstentionKindInfo`.",
+    )
+    proposable: bool = Field(
+        default=False,
+        description="Whether this one is worth offering a proposal for. False on an "
+                    "abstention that was correct — most 'the set does not state it' "
+                    "abstentions are.",
+    )
+
+
+class AbstentionDiagnosis(BaseModel):
+    """A root cause that would account for several abstentions at once.
+
+    Drawn entirely from two things already on the job record — what the rules
+    said, and what `webapp.pdfkind` found in the file. Never a certainty, and
+    the text never phrases it as one: the sheets it names are the reader's way
+    of checking the claim rather than taking it on trust.
+    """
+
+    key: str
+    headline: str
+    detail: str
+    action: str = Field(description="What to do about it, in the imperative.")
+    rerun: bool = Field(
+        description="Whether re-running the review would test the theory. The client "
+                    "offers the re-run only where this is true."
+    )
+    rules: List[str] = Field(
+        default_factory=list, description="Rule ids this would account for."
+    )
+    sheets: List[int] = Field(
+        default_factory=list,
+        description="Sheets to look at, numbered from 1 as the viewer numbers them.",
+    )
 
 
 class Summary(BaseModel):
@@ -956,6 +1107,15 @@ class Job(BaseModel):
     )
     downloads: Optional[Downloads] = Field(
         default=None, description="Present only while state is `done`."
+    )
+    diagnosis: List[AbstentionDiagnosis] = Field(
+        default_factory=list,
+        description=(
+            "Root causes that would account for several of this review's "
+            "abstentions at once. Computed on read from the abstentions and the "
+            "source profile, so an old review gets one too. Empty when nothing "
+            "in the record supports a claim."
+        ),
     )
     error: Optional[str] = None
     error_code: Optional[str] = None

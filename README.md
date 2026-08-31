@@ -48,3 +48,8 @@ Design rules, in order of importance:
    finished findings list; it cannot conjure a check, re-read a table or change a citation.
    Silencing a rule records an abstention, so rule 1 still holds. See
    `docs/TRAINING-MODE.md`.
+6. **An abstention is classified, never re-written.** `webapp/abstentions.py` reads the
+   reason a rule gave and says which class of failure it is — so "the set does not state
+   this", where the rule was right, stops looking identical to "we could not read the part
+   of the set that states it", which is a defect. It classifies the reason and never the
+   drawing: it has not seen the sheet and never claims a value is printed on one.

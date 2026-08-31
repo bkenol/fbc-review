@@ -13,6 +13,10 @@ export enum FeedbackSubject {
 
     Finding = 'finding',
 
-    Coverage = 'coverage'
+    Coverage = 'coverage',
+
+    Abstention = 'abstention',
+
+    Sweep = 'sweep'
 }
 

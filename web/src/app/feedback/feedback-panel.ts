@@ -19,7 +19,7 @@
  * no dropdown captures goes. But a submission carrying one always reaches a
  * person, so the form says so rather than implying the box is optional detail.
  */
-import { Component, computed, input, output, signal } from '@angular/core';
+import { Component, computed, effect, input, output, signal } from '@angular/core';
 
 import { FeedbackAccepted, FeedbackAspect, FeedbackSubject } from '../api';
 
@@ -40,12 +40,37 @@ export class FeedbackPanel {
   /** What came back from the last submission, shown in place of the form. */
   readonly accepted = input<FeedbackAccepted | null>(null);
   readonly headline = input('');
+  /**
+   * The answer to open on, where something already knows what it probably is.
+   *
+   * Used by the abstention form, which arrives from a register where every row
+   * has already been classified. Opening on an empty list of seven verdicts
+   * when the server has a good reading of six of them wastes the reader's time
+   * — but it is a starting position and never an answer: the value submitted is
+   * whatever is selected when they press send, and clicking a chosen verdict
+   * clears it exactly as it always did.
+   *
+   * Deliberately keyed on the whole draft rather than a single verdict, so a
+   * multi-aspect subject can be pre-filled the same way if one ever needs it.
+   */
+  readonly initial = input<Record<string, string>>({});
 
   readonly submitted = output<FeedbackDraft>();
   readonly dismissed = output<void>();
 
   private readonly answers = signal<Record<string, string>>({});
   protected readonly comment = signal('');
+
+  constructor() {
+    // Re-seed when the thing being asked about changes, and not otherwise: an
+    // effect that also fired on every keystroke would put the suggestion back
+    // after somebody had cleared it.
+    effect(() => {
+      const seed = this.initial();
+      this.answers.set({ ...seed });
+      this.comment.set('');
+    });
+  }
 
   protected readonly asked = computed(() =>
     this.aspects().filter((a) => a.subject === this.subject()),

@@ -364,6 +364,60 @@ def make_pdf_with_pasted_table(pages: int = 1) -> bytes:
     return buf
 
 
+def make_pdf_with_sliced_table(pages: int = 1, bands: int = 6) -> bytes:
+    """The same pasted table, sliced into bands the way a plot driver emits it.
+
+    AutoCAD's PDF driver cuts one plotted raster into horizontal strips and
+    writes each as its own image. Measured on the ITEC set, the G-002 code table
+    arrives as three of them. The strips abut exactly and share the full width,
+    which is what makes them recognisable as one region — and what makes two
+    genuinely separate tables, which do neither, stay separate.
+
+    Deliberately sliced finely enough that no single band clears the size
+    floors: before coalescing this sheet reports *no* regions at all, which is
+    the quiet version of the bug — the pasted table is not merely OCR'd badly,
+    it is never noticed.
+    """
+    table = pymupdf.open()
+    tp = table.new_page(width=760, height=340)
+    rows = [
+        "USE AND OCCUPANCY CLASSIFICATION",
+        "OCCUPANCY: BUSINESS",
+        "MIXED OCCUPANCY? NO",
+        "OCCUPANCY SEPARATION RATING PROVIDED:",
+        "MULTIPLE - SEPARATED PER TABLE 508.4",
+        "CONSTRUCTION TYPE: II-B",
+    ]
+    y = 46
+    for row in rows:
+        tp.insert_text((30, y), row, fontsize=21)
+        y += 48
+
+    # One pixmap per band, clipped out of the same rendered table.
+    step = 340 / bands
+    slices = [
+        tp.get_pixmap(dpi=200, clip=pymupdf.Rect(0, i * step, 760, (i + 1) * step))
+        for i in range(bands)
+    ]
+    table.close()
+
+    doc = pymupdf.open()
+    placed_step = 160 / bands
+    for i in range(pages):
+        page = doc.new_page(width=1224, height=792)
+        for n in range(200):
+            page.draw_line((20 + n * 6, 40), (20 + n * 6, 560))
+        page.insert_text((40, 600), f"SHEET G-{i} GENERAL NOTES " * 6, fontsize=8)
+        for k, band in enumerate(slices):
+            page.insert_image(
+                pymupdf.Rect(430, 620 + k * placed_step, 1190, 620 + (k + 1) * placed_step),
+                pixmap=band,
+            )
+    buf = doc.tobytes()
+    doc.close()
+    return buf
+
+
 def make_blank_pdf(pages: int = 1) -> bytes:
     doc = pymupdf.open()
     for _ in range(pages):

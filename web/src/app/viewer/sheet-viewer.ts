@@ -56,8 +56,18 @@ type Viewport = ReturnType<PDFPageProxy['getViewport']>;
 type ContentItem = Awaited<ReturnType<PDFPageProxy['getTextContent']>>['items'][number];
 type TextItem = Extract<ContentItem, { str: string }>;
 
-import { Finding, Markup, MarkupKind, MarkupKindInfo, MarkupRequest } from '../api';
+import {
+  Finding,
+  Markup,
+  MarkupColourInfo,
+  MarkupKind,
+  MarkupKindInfo,
+  MarkupRequest,
+} from '../api';
 import { AnchorItem, Box, locateAnchor } from './anchor';
+import { FitMode, MAX_ZOOM, MIN_ZOOM, fitZoom } from './fit';
+
+export type { FitMode } from './fit';
 
 // Same origin, copied out of the package by the build (see angular.json). The
 // Hosting CSP is `default-src 'self'` with no CDN, so a worker from anywhere
@@ -99,6 +109,7 @@ export class SheetViewer {
   readonly findings = input<Finding[]>([]);
   readonly markups = input<Markup[]>([]);
   readonly markupKinds = input<MarkupKindInfo[]>([]);
+  readonly markupColours = input<MarkupColourInfo[]>([]);
   /** Training mode. Without it the viewer reads and does not draw. */
   readonly canDraw = input(false);
   readonly selectedFid = input<string>('');
@@ -109,6 +120,7 @@ export class SheetViewer {
 
   private readonly canvasRef = viewChild<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly overlayRef = viewChild<ElementRef<SVGSVGElement>>('overlay');
+  private readonly stageRef = viewChild<ElementRef<HTMLElement>>('stage');
 
   protected readonly page = signal(1);
   protected readonly pages = signal(0);
@@ -119,6 +131,14 @@ export class SheetViewer {
   protected readonly tool = signal<Tool>(SELECT);
   protected readonly draft = signal<Draft | null>(null);
   protected readonly select = SELECT;
+  /** Which colour new markup is drawn in. Empty means unclassified. */
+  protected readonly colour = signal('');
+  protected readonly fitMode = signal<FitMode>('page');
+  /** The stage box, in CSS pixels. Fed by a ResizeObserver. */
+  private readonly stageBox = signal<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
 
   /** The page box in PDF points, which is also the overlay's viewBox. */
   protected readonly extent = signal<{ width: number; height: number }>({
@@ -175,6 +195,33 @@ export class SheetViewer {
       this.canvasRef();
       void this.draw();
     });
+
+    // Follow the stage's size. A workspace whose side panel collapses at a
+    // breakpoint changes the stage width without the window resizing, so a
+    // window listener would miss it — and a sheet that stays at the old zoom
+    // after the pane it sits in has halved is the exact thing this is for.
+    effect((onCleanup) => {
+      const stage = this.stageRef()?.nativeElement;
+      if (!stage || typeof ResizeObserver === 'undefined') return;
+      const observer = new ResizeObserver(([entry]) => {
+        const box = entry.contentRect;
+        this.stageBox.set({ width: box.width, height: box.height });
+      });
+      observer.observe(stage);
+      this.stageBox.set({ width: stage.clientWidth, height: stage.clientHeight });
+      onCleanup(() => observer.disconnect());
+    });
+
+    // Re-fit when the stage or the page geometry changes, but never when the
+    // reviewer has taken the zoom into their own hands.
+    effect(() => {
+      const box = this.stageBox();
+      const extent = this.extent();
+      const mode = this.fitMode();
+      if (mode === 'manual' || !box.width || !box.height) return;
+      const target = fitZoom(mode, extent, box);
+      if (target && Math.abs(target - this.zoom()) > 0.001) this.zoom.set(target);
+    });
   }
 
   // ── loading ─────────────────────────────────────────────────────────────
@@ -222,6 +269,17 @@ export class SheetViewer {
 
       const base = page.getViewport({ scale: 1 });
       this.extent.set({ width: base.width, height: base.height });
+
+      // A sheet whose extent has just changed has not been fitted yet: the fit
+      // effect runs after this and will set the zoom, which re-enters here.
+      // Rendering now would paint a 36-inch sheet at 100% for one frame and
+      // throw it away — on a large set that is a visible flash of the title
+      // block at full size. Bail and let the second pass do the work.
+      if (this.fitMode() !== 'manual') {
+        const box = this.stageBox();
+        const target = fitZoom(this.fitMode(), { width: base.width, height: base.height }, box);
+        if (target && Math.abs(target - this.zoom()) > 0.001) return;
+      }
 
       // Render at device resolution and let CSS size it down, or a sheet at
       // 200% on a retina display is a blurred photograph of a drawing.
@@ -296,10 +354,24 @@ export class SheetViewer {
   }
 
   protected zoomBy(factor: number): void {
-    this.zoom.update((z) => Math.min(4, Math.max(0.25, Math.round(z * factor * 20) / 20)));
+    // Zooming by hand is how you say "stop fitting this for me".
+    this.fitMode.set('manual');
+    this.zoom.update((z) =>
+      Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z * factor * 100) / 100)),
+    );
   }
 
-  protected fit(): void {
+  /** Hand the zoom back to the viewer. The effect does the arithmetic. */
+  protected fitTo(mode: FitMode): void {
+    this.fitMode.set(mode);
+    if (mode === 'manual') return;
+    const target = fitZoom(mode, this.extent(), this.stageBox());
+    if (target) this.zoom.set(target);
+  }
+
+  /** 100%, and hold it there. Occasionally what you want to check a hairline. */
+  protected actualSize(): void {
+    this.fitMode.set('manual');
     this.zoom.set(1);
   }
 
@@ -312,6 +384,16 @@ export class SheetViewer {
   protected pickTool(tool: Tool): void {
     this.tool.set(tool);
     this.draft.set(null);
+  }
+
+  /** Clicking the active colour again clears it back to unclassified. */
+  protected pickColour(key: string): void {
+    this.colour.update((current) => (current === key ? '' : key));
+  }
+
+  /** The swatch for a colour key, or the default annotation ink. */
+  protected swatch(key: string): string {
+    return this.markupColours().find((c) => c.key === key)?.hex ?? '';
   }
 
   // ── drawing ─────────────────────────────────────────────────────────────
@@ -369,7 +451,10 @@ export class SheetViewer {
 
     const width = Math.abs(current.x1 - current.x0);
     const height = Math.abs(current.y1 - current.y0);
-    if (current.kind !== 'note' && width < MIN_DRAG && height < MIN_DRAG) return;
+    // A pin and a text label are placed by clicking; everything else is a
+    // shape, and a shape with no extent is a slip of the mouse.
+    const placed = current.kind === 'note' || current.kind === 'text';
+    if (!placed && width < MIN_DRAG && height < MIN_DRAG) return;
 
     const x0 = Math.min(current.x0, current.x1);
     const y0 = Math.min(current.y0, current.y1);
@@ -388,7 +473,7 @@ export class SheetViewer {
             ? { x0, y0, x1, y1, points: current.points }
             : { x0, y0, x1, y1, points: [] },
       comment: '',
-      colour: '',
+      colour: this.colour(),
       sheet: this.sheetLabel(),
       finding_fid: this.selectedFid(),
     });
@@ -406,6 +491,56 @@ export class SheetViewer {
 
   protected midY(box: { y0: number; y1: number }): number {
     return (box.y0 + box.y1) / 2;
+  }
+
+  /**
+   * A revision cloud around a rectangle.
+   *
+   * Scallops of a fixed arc length walked round the perimeter, so a cloud round
+   * a door tag and one round half a floor plan both read as clouds rather than
+   * one reading as a circle. The radius is clamped so a very small rectangle
+   * still gets a few bumps instead of one.
+   */
+  protected cloud(box: {
+    x0?: number;
+    y0?: number;
+    x1?: number;
+    y1?: number;
+  }): string {
+    // Optional on the wire, because the geometry model carries defaults. A
+    // missing coordinate makes a zero-extent box, which returns no path rather
+    // than a cloud in the corner of the sheet.
+    const [ax, ay, bx, by] = [box.x0 ?? 0, box.y0 ?? 0, box.x1 ?? 0, box.y1 ?? 0];
+    const x0 = Math.min(ax, bx);
+    const y0 = Math.min(ay, by);
+    const x1 = Math.max(ax, bx);
+    const y1 = Math.max(ay, by);
+    const width = x1 - x0;
+    const height = y1 - y0;
+    if (width <= 0 || height <= 0) return '';
+
+    const radius = Math.max(3, Math.min(9, Math.min(width, height) / 4));
+    const parts: string[] = [`M${x0} ${y0}`];
+
+    // One side at a time, each divided into a whole number of scallops so the
+    // corners land on a bump rather than mid-arc.
+    const side = (
+      length: number,
+      step: (i: number) => [number, number],
+      sweep: number,
+    ): void => {
+      const bumps = Math.max(1, Math.round(length / (radius * 2)));
+      for (let i = 1; i <= bumps; i++) {
+        const [x, y] = step(i / bumps);
+        parts.push(`A${radius} ${radius} 0 0 ${sweep} ${x} ${y}`);
+      }
+    };
+
+    side(width, (t) => [x0 + width * t, y0], 1);
+    side(height, (t) => [x1, y0 + height * t], 1);
+    side(width, (t) => [x1 - width * t, y1], 1);
+    side(height, (t) => [x0, y1 - height * t], 1);
+    return parts.join(' ') + ' Z';
   }
 
   /** Stroke widths are in PDF points, so they must not thin out as you zoom in. */

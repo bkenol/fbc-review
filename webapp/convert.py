@@ -4,10 +4,17 @@ Two independent recoveries, both deterministic and both model-free:
 
 **Text (OCR).** Schedules, code-analysis blocks and the printed `1/4" = 1'-0"`
 scale label are all *text*. Recovering them is what unlocks the rule corpus —
-eleven of the twelve rules key on text, not geometry. PyMuPDF's
-`Pixmap.pdfocr_tobytes()` runs Tesseract and returns a real PDF page carrying
-the image plus a positioned text layer, which is exactly the shape the
-extractors already expect.
+eleven of the twelve rules key on text, not geometry. Tesseract is driven
+directly and its per-word boxes are laid back over the sheet as invisible text,
+which is the shape the extractors already expect.
+
+Deliberately *not* `Pixmap.pdfocr_tobytes()`, which was the first
+implementation. It builds a searchable-text overlay for full-text search, where
+line geometry does not matter — measured on this project's own reference set,
+every recovered line came back at `y0 = 0` inside a region 655 pt tall. The x
+positions survived and the y positions were gone, so row clustering downstream
+found no rows and 27,826 recovered characters produced zero usable table rows.
+See `_tesseract_words`.
 
 **Linework (vectorisation).** The rendered sheet is thresholded and its straight
 runs recovered with a probabilistic Hough transform, then drawn back as real

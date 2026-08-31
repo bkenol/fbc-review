@@ -21,6 +21,10 @@ export interface FeedbackRequest {
     comment?: string;
     finding_fid?: string;
     markup_id?: string;
+    /**
+     * The rule an abstention-subject submission is about. Checked against the abstentions this review actually recorded — a rule id the review did not stand down on is a 404, so the anchor cannot be invented by the client any more than a finding id can.
+     */
+    rule_id?: string;
     subject?: FeedbackSubject;
 }
 

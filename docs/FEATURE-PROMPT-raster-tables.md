@@ -20,6 +20,47 @@ Reference implementations are in `docs/reference/ocr/` — read them before writ
 
 ---
 
+## Status — two of the four root causes are fixed
+
+Recorded here rather than in a commit message, because the next person to pick
+this up needs to know which half is left.
+
+| Root cause | Where it lives | State |
+| --- | --- | --- |
+| 1 — `pdfocr_tobytes()` loses line geometry | `webapp/convert.py` | **Fixed.** Tesseract is driven directly for TSV per-word boxes (`_tesseract_words`), confidence-gated, laid back cell by cell at true origins. |
+| 3 — the classifier hands over tiles, not tables | `webapp/pdfkind.py` | **Fixed.** `_coalesce()` merges bands of one plotted region before the size floors. See below. |
+| 2 — one region OCR'd as two side-by-side tables | `fbcreview/extract/blocks.py` | **Open.** Not fixable in `webapp/` — see below. |
+| 4 — parsers expect a table shape this office does not draw | `fbcreview/extract/` | **Open.** |
+
+### What root cause 3 actually cost, measured
+
+Coalescing was worse than the prompt's original description of it. The size
+floors (`MIN_REGION_COVERAGE`, `MIN_REGION_MEGAPIXELS`) were applied per *band*,
+and a finely sliced table has bands that individually clear neither. On the
+synthetic six-band fixture in `tests/conftest.py::make_pdf_with_sliced_table`,
+`pdfkind` reported **no pasted regions at all** — so the table was not merely
+OCR'd badly, it was never noticed and never OCR'd. Coalescing now happens before
+the floors, and the question they answer is "is this region worth reading",
+asked of the region as it was plotted.
+
+The merge is strict on purpose: bands must abut within 2 pt *and* share ≥80% of
+the perpendicular extent, measured against the larger of the two. Merging two
+genuinely separate tables would cluster the left one's labels against the right
+one's values, which is a worse failure than leaving a seam in.
+
+### Why root cause 2 cannot be fixed in `webapp/`
+
+`convert.py::_ocr_region` writes each recovered cell back at its own true
+origin as invisible text. There is nowhere in a PDF text layer to put a strip
+index, and the downstream clustering in `fbcreview/extract/blocks.py::_rows()`
+re-derives rows from geometry alone. So adding column-strip detection to
+`_ocr_cells` would change the grouping inside one function and change nothing at
+all downstream — the fix has to be `_rows()` clustering on `(strip, y)`, which
+is engine work and is Phase 3 below.
+
+`CLAUDE.md` puts `fbcreview/` off limits to this service, which is why this is
+written down rather than done.
+
 ## The problem, measured
 
 The deployed engine was run against the ITEC Alico Park set (`docs/reference/ITEC Alico

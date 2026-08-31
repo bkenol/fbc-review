@@ -19,7 +19,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
@@ -29,7 +29,7 @@ from fbcreview.declaration import ProjectDeclaration
 from fbcreview.options import (AVAILABLE_EDITIONS, EDITIONS, OCCUPANCY_GROUPS,
                                SEVERITY_ORDER, ReviewOptions)
 from fbcreview.rules import registered
-from webapp import (assist, calibration, errors, feedback_schema,
+from webapp import (abstentions, assist, calibration, errors, feedback_schema,
                     logging_config, mailer, models, notify, prefill, storage,
                     storage_urls, triage, upload, version)
 from webapp.auth import User, current_user
@@ -347,6 +347,12 @@ def config(
         ],
         markup_kinds=[
             models.MarkupKindInfo(**k) for k in feedback_schema.markup_kinds()
+        ],
+        markup_colours=[
+            models.MarkupColourInfo(**c) for c in feedback_schema.markup_colours()
+        ],
+        abstention_kinds=[
+            models.AbstentionKindInfo(**k) for k in abstentions.catalogue()
         ],
         dispositions=[
             models.DispositionInfo(key=d, label=triage.DISPOSITION_LABELS[d])
@@ -719,10 +725,37 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
     created = record.get("created_at") or utcnow()
     finished = record.get("finished_at")
 
+    source = record.get("source") or {}
+    region_pages = list(source.get("region_pages") or [])
+    raster_pages = list(source.get("raster_pages") or [])
+    converted = bool(record.get("conversion"))
+    measured_off = (record.get("options") or {}).get("include_measured") is False
+
     summary = None
     downloads = None
+    diagnosis: List[models.AbstentionDiagnosis] = []
     if state == DONE and record.get("summary"):
-        summary = models.Summary.model_validate(record["summary"])
+        raw_summary = dict(record["summary"])
+        # Classified on the way out rather than at review time, so a review that
+        # finished before this module existed is classified too, and so a
+        # reclassification here reaches every stored review without a re-run.
+        # The engine's own reason string is never touched.
+        raw_summary["abstentions"] = abstentions.classify_all(
+            raw_summary.get("abstentions") or [],
+            unread_pasted_tables=bool(region_pages) and not converted,
+        )
+        summary = models.Summary.model_validate(raw_summary)
+        diagnosis = [
+            models.AbstentionDiagnosis.model_validate(d)
+            for d in abstentions.diagnose(
+                raw_summary.get("abstentions") or [],
+                region_pages=region_pages,
+                raster_pages=raster_pages,
+                converted=converted,
+                cad_layers=int(source.get("cad_layers") or 0),
+                measured_off=measured_off,
+            )
+        ]
         job_id = record["id"]
         pdf_name = summary.pdf_name or "markup.pdf"
         downloads = models.Downloads(
@@ -775,6 +808,7 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
             else None
         ),
         downloads=downloads,
+        diagnosis=diagnosis,
         error=record.get("error"),
         error_code=record.get("error_code"),
         created_at=created,
@@ -839,6 +873,22 @@ def _findings_index(job_id: str, files: Storage) -> Dict[str, Dict[str, Any]]:
     }
 
 
+def _abstentions_index(job: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """The rules this review stood down on, keyed by rule id.
+
+    Read from the job's own summary for the same reason `_findings_index` reads
+    the artefact: an abstention-subject submission names the rule a proposal
+    would be about, and a rule id the review never stood down on must not
+    become an anchor because a browser said it should.
+    """
+    summary = job.get("summary") or {}
+    return {
+        str(a.get("rule")): a
+        for a in (summary.get("abstentions") or [])
+        if isinstance(a, dict) and a.get("rule")
+    }
+
+
 def _markup_model(record: Dict[str, Any]) -> models.Markup:
     return models.Markup(
         id=record.get("id", ""),
@@ -886,6 +936,10 @@ def _feedback_model(record: Dict[str, Any], *, include_email: bool) -> models.Fe
         applied_to_candidate=bool(record.get("applied_to_candidate")),
         finding=models.Finding.model_validate(finding) if finding else None,
         markup=_markup_model(markup) if markup else None,
+        sweep=(
+            models.MarkupExport.model_validate(record["sweep"])
+            if record.get("sweep") else None
+        ),
     )
 
 
@@ -1026,6 +1080,91 @@ def delete_markup(
     )
 
 
+def _build_export(
+    job_id: str,
+    job: Dict[str, Any],
+    user: User,
+    records: List[Dict[str, Any]],
+) -> models.MarkupExport:
+    """One annotated pass, as a document.
+
+    Sorted by sheet and then by how far down the page the annotation sits, which
+    is the order somebody reads a drawing in. `text` is generated here rather
+    than in the browser so the copy the owner reads and the copy the reviewer
+    downloaded are the same bytes.
+    """
+    markups = [_markup_model(r) for r in records]
+    markups.sort(key=lambda m: (m.page, m.geometry.y0, m.geometry.x0))
+
+    counts: Dict[str, int] = {}
+    for markup in markups:
+        counts[str(markup.kind)] = counts.get(str(markup.kind), 0) + 1
+
+    project = (job.get("options") or {}).get("project_name") or ""
+    filename = job.get("filename", "")
+
+    lines: List[str] = [
+        f"Markup pass — {project or filename}",
+        f"Review {job_id} · {len(markups)} annotation"
+        f"{'' if len(markups) == 1 else 's'}"
+        f" on {len({m.page for m in markups})} sheet"
+        f"{'' if len({m.page for m in markups}) == 1 else 's'}",
+        "",
+    ]
+    current = None
+    for markup in markups:
+        if markup.page != current:
+            current = markup.page
+            label = f"Sheet {markup.sheet}" if markup.sheet else f"Page {markup.page}"
+            lines.append(f"── {label} (page {markup.page}) " + "─" * 20)
+        # The colour is a category, so it belongs in the line rather than being
+        # lost the moment this leaves the screen.
+        tag = f"[{markup.colour}] " if markup.colour else ""
+        anchor = f" (about {markup.finding_fid})" if markup.finding_fid else ""
+        body = markup.comment.strip() or "— no comment —"
+        lines.append(f"  {tag}{markup.kind}{anchor}: {body}")
+    if not markups:
+        lines.append("Nothing was marked up on this review.")
+
+    return models.MarkupExport(
+        job_id=job_id,
+        filename=filename,
+        project_name=project,
+        exported_at=utcnow(),
+        exported_by=user.email or "",
+        markups=markups,
+        counts=counts,
+        commented=sum(1 for m in markups if m.comment.strip()),
+        sheets=sorted({m.page for m in markups}),
+        text="\n".join(lines),
+    )
+
+
+@app.get(
+    "/api/jobs/{job_id}/markups/export",
+    response_model=models.MarkupExport,
+    tags=["training"],
+    operation_id="exportMarkups",
+    summary="The whole annotated pass, in one document.",
+    description=(
+        "What a reviewer takes away at the end of a session — every annotation "
+        "with its comment, its sheet and its geometry, plus a plain-text rendering "
+        "of the same thing. The identical payload is what the owner reads when a "
+        "pass is submitted, so nobody submits something they could not inspect "
+        "first."
+    ),
+)
+def export_markups(
+    job_id: str,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.MarkupExport:
+    _require_training()
+    job = _owned_job(job_id, user, store)
+    return _build_export(job_id, job, user, feedback.list_markups(job_id, user.uid))
+
+
 # -- feedback --------------------------------------------------------------
 @app.get(
     "/api/jobs/{job_id}/feedback",
@@ -1083,10 +1222,25 @@ def submit_feedback(
     if problems:
         raise ApiError(400, errors.INVALID_REQUEST, " ".join(problems))
 
+    if body.subject == feedback_schema.SUBJECT_SWEEP:
+        # A sweep is the markup bundle, and this endpoint carries no bundle.
+        # Routing it here would record a submission with nothing in it.
+        raise ApiError(
+            400, errors.INVALID_REQUEST,
+            "A marked-up pass is submitted through POST "
+            f"/api/jobs/{job_id}/markups/submit, which attaches the markup.",
+        )
+
     if body.subject == feedback_schema.SUBJECT_FINDING and not body.finding_fid:
         raise ApiError(
             400, errors.INVALID_REQUEST,
             "Feedback about a finding has to say which finding.",
+        )
+
+    if body.subject == feedback_schema.SUBJECT_ABSTENTION and not body.rule_id:
+        raise ApiError(
+            400, errors.INVALID_REQUEST,
+            "Feedback about a rule that stood down has to say which rule.",
         )
 
     finding: Dict[str, Any] = {}
@@ -1094,6 +1248,16 @@ def submit_feedback(
         finding = _findings_index(job_id, files).get(body.finding_fid, {})
         if not finding:
             raise ApiError(404, errors.NOT_FOUND, "No such finding in this review.")
+
+    abstention: Dict[str, Any] = {}
+    if body.rule_id:
+        abstention = _abstentions_index(job).get(body.rule_id, {})
+        if not abstention:
+            raise ApiError(
+                404, errors.NOT_FOUND,
+                "This review did not stand down on that rule, so there is nothing "
+                "to report about it.",
+            )
 
     markup: Dict[str, Any] = {}
     if body.markup_id:
@@ -1114,10 +1278,15 @@ def submit_feedback(
     mode = (job.get("options") or {}).get("mode", "standard")
     candidate = feedback.candidate_profile(user.uid)
 
+    # An abstention names its own rule; a finding carries one. Either way the
+    # value comes from what the service produced, never from the request body
+    # alone — it decides which rule a calibration proposal would move.
+    rule_id = finding.get("rule_id", "") or str(abstention.get("rule", ""))
+
     verdict = triage.triage(
         subject=str(body.subject),
         answers=body.answers,
-        rule_id=finding.get("rule_id", ""),
+        rule_id=rule_id,
         comment=body.comment,
         occupancy_group=declared.get("occupancy_group") or "",
         finding=finding or None,
@@ -1147,7 +1316,8 @@ def submit_feedback(
         "mode": mode,
         "subject": str(body.subject),
         "finding_fid": body.finding_fid,
-        "rule_id": finding.get("rule_id", ""),
+        "rule_id": rule_id,
+        "abstention": abstention or None,
         "sheet": finding.get("sheet") or markup.get("sheet", ""),
         "page": int(finding.get("page") or markup.get("page") or 0),
         "answers": dict(body.answers),
@@ -1186,6 +1356,113 @@ def submit_feedback(
         applied_to_candidate=applied,
         candidate_version=candidate.version,
         message=_feedback_message(verdict, applied),
+    )
+
+
+@app.post(
+    "/api/jobs/{job_id}/markups/submit",
+    response_model=models.FeedbackAccepted,
+    tags=["training"],
+    operation_id="submitMarkupPass",
+    summary="Hand a marked-up pass over for review.",
+    description=(
+        "Submits every annotation the caller has made on this review as one piece "
+        "of feedback, with the whole bundle attached as a snapshot. The bundle is "
+        "read from the server's own store rather than from the request, so a pass "
+        "that was never drawn cannot be submitted, and editing a markup afterwards "
+        "does not change what the owner was handed."
+    ),
+)
+def submit_markup_pass(
+    job_id: str,
+    body: models.SweepRequest,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> models.FeedbackAccepted:
+    _require_training()
+    job = _owned_job(job_id, user, store)
+
+    if job.get("state") != DONE:
+        raise ApiError(
+            409, errors.NOT_READY,
+            "This review has not finished, so there is nothing to mark up.",
+        )
+
+    problems = feedback_schema.validate(feedback_schema.SUBJECT_SWEEP, body.answers)
+    if problems:
+        raise ApiError(400, errors.INVALID_REQUEST, " ".join(problems))
+
+    records = feedback.list_markups(job_id, user.uid)
+    if not records:
+        raise ApiError(
+            400, errors.INVALID_REQUEST,
+            "There is no markup on this review to submit. Draw on the sheets first.",
+        )
+
+    export = _build_export(job_id, job, user, records)
+    declared = job.get("declaration") or {}
+    candidate = feedback.candidate_profile(user.uid)
+
+    # No `rule_id`: a sweep is about the review, not about one rule, so there is
+    # no lever it could argue for and nothing for the overlay to move. Every
+    # defect verdict on this aspect is COMPONENT or JUDGEMENT, so it routes to a
+    # person by construction rather than by a special case here.
+    verdict = triage.triage(
+        subject=feedback_schema.SUBJECT_SWEEP,
+        answers=body.answers,
+        comment=body.comment,
+        occupancy_group=declared.get("occupancy_group") or "",
+        profile=candidate,
+    )
+
+    stored = feedback.add_feedback({
+        "job_id": job_id,
+        "uid": user.uid,
+        "email": user.email,
+        "filename": job.get("filename", ""),
+        "mode": (job.get("options") or {}).get("mode", "standard"),
+        "subject": feedback_schema.SUBJECT_SWEEP,
+        "finding_fid": "",
+        "rule_id": "",
+        "sheet": "",
+        "page": export.sheets[0] if export.sheets else 0,
+        "answers": dict(body.answers),
+        "comment": body.comment,
+        "markup_id": "",
+        "sweep": export.model_dump(mode="json"),
+        "disposition": verdict.disposition,
+        "rationale": verdict.rationale,
+        "triage": verdict.to_dict(),
+        "applied_to_candidate": False,
+    })
+
+    log.info(
+        "markup pass submitted",
+        extra={
+            "job_id": job_id,
+            "uid": user.uid,
+            "feedback_id": stored["id"],
+            "markups": len(export.markups),
+            "sheets": len(export.sheets),
+            "disposition": verdict.disposition,
+        },
+    )
+
+    if verdict.disposition in notify.URGENT and _pool is not None:
+        _pool.submit(_notify_owner, dict(stored), dict(job), feedback)
+
+    return models.FeedbackAccepted(
+        id=stored["id"],
+        triage=models.TriageResult.model_validate(verdict.to_dict()),
+        applied_to_candidate=False,
+        candidate_version=candidate.version,
+        message=(
+            f"{len(export.markups)} annotation"
+            f"{'' if len(export.markups) == 1 else 's'} on "
+            f"{len(export.sheets)} sheet{'' if len(export.sheets) == 1 else 's'} "
+            "handed over. " + _feedback_message(verdict, False)
+        ),
     )
 
 

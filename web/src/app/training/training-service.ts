@@ -21,8 +21,10 @@ import {
   FeedbackAccepted,
   FeedbackRequest,
   Markup,
+  MarkupExport,
   MarkupRequest,
   PromptExport,
+  SweepRequest,
   TrainingApi,
 } from '../api';
 import { ApiFailure, toFailure } from '../review/review-service';
@@ -37,6 +39,7 @@ export class TrainingService {
   private readonly _saving = signal(false);
   private readonly _failure = signal<ApiFailure | null>(null);
   private readonly _lastAccepted = signal<FeedbackAccepted | null>(null);
+  private readonly _export = signal<MarkupExport | null>(null);
 
   private readonly _queue = signal<Feedback[]>([]);
   private readonly _overview = signal<AdminOverview | null>(null);
@@ -50,6 +53,8 @@ export class TrainingService {
   readonly failure = this._failure.asReadonly();
   /** The triage verdict from the last submission, shown back to the submitter. */
   readonly lastAccepted = this._lastAccepted.asReadonly();
+  /** The annotated pass, once it has been asked for. */
+  readonly markupExport = this._export.asReadonly();
 
   readonly queue = this._queue.asReadonly();
   readonly overview = this._overview.asReadonly();
@@ -72,13 +77,55 @@ export class TrainingService {
     });
   }
 
-  createMarkup(jobId: string, body: MarkupRequest): void {
+  createMarkup(jobId: string, body: MarkupRequest, done?: (markup: Markup) => void): void {
     this._saving.set(true);
     this.training.createMarkup(jobId, body).subscribe({
       next: (markup) => {
         this._markups.update((all) => [...all, markup]);
         this._saving.set(false);
         this._failure.set(null);
+        // The caller gets the server's copy, not its own optimistic one: the
+        // id is assigned here, and selecting a shape you cannot address is
+        // the same as not selecting it.
+        done?.(markup);
+      },
+      error: (error) => this.fail(error),
+    });
+  }
+
+  // ── the annotated pass ──────────────────────────────────────────────────
+  /** Fetch the whole pass so it can be read, kept, or handed over. */
+  loadExport(jobId: string): void {
+    this._busy.set(true);
+    this.training.exportMarkups(jobId).subscribe({
+      next: (bundle) => {
+        this._export.set(bundle);
+        this._busy.set(false);
+        this._failure.set(null);
+      },
+      error: (error) => this.fail(error),
+    });
+  }
+
+  clearExport(): void {
+    this._export.set(null);
+  }
+
+  /**
+   * Hand the pass over.
+   *
+   * Sends no markup: the server reads its own store, so what the owner is
+   * handed is what was actually drawn rather than what a browser claims was.
+   */
+  submitPass(jobId: string, body: SweepRequest): void {
+    this._saving.set(true);
+    this._lastAccepted.set(null);
+    this.training.submitMarkupPass(jobId, body).subscribe({
+      next: (accepted) => {
+        this._saving.set(false);
+        this._failure.set(null);
+        this._lastAccepted.set(accepted);
+        this.loadFeedback(jobId);
       },
       error: (error) => this.fail(error),
     });
