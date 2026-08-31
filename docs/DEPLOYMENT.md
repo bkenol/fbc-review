@@ -196,6 +196,27 @@ tailscale funnel reset         # clear the configuration
 docker rm -f fbc-test          # stop the app itself
 ```
 
+**`listener already exists for port 443`.** The node already has a Serve or
+Funnel configuration holding that port. Serve (tailnet-only) and Funnel
+(public) cannot both hold one port, so an existing Serve on 443 blocks Funnel
+there — and a machine that has been used for anything else over Tailscale may
+well have one. Look before clearing, because whatever is there is presumably
+wanted by something:
+
+```bash
+tailscale serve status         # everything on this node, Serve and Funnel
+tailscale serve reset          # clear all of it
+```
+
+Or leave it alone and take one of the other two ports Funnel allows:
+
+```bash
+tailscale funnel --https=8443 8060
+```
+
+The hostname then carries the port — `https://<machine>.<tailnet>.ts.net:8443`
+— which is fine for a test URL and avoids disturbing whatever already owns 443.
+
 For the real hostname rather than a throwaway one, see **0c** below. Both modes
 run the same container and both have authentication off — see **Exposure**. A
 `.ts.net` hostname is unlisted rather than secret, so the same caveat applies:
