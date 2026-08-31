@@ -488,6 +488,93 @@ def verdict(tree: Optional[str], live: Optional[str]) -> Dict[str, str]:
     return {"state": "bad", "text": "STALE - container is on another commit. Rebuild."}
 
 
+# ── what to do next ───────────────────────────────────────────────────────
+# The console could already tell you what was wrong; it could not tell you what
+# to do about it. Every hint below is derived from what is actually true on this
+# machine right now rather than written as general advice, because the two
+# machines need different answers to the same question and picking the wrong one
+# is what cost the time.
+def guidance(port: int, funnelport: int, publishing: str) -> List[Dict[str, object]]:
+    hints: List[Dict[str, object]] = []
+    live = container_version(port)
+    occupied = port_open(port)
+    cf = cloudflared_ready()
+    ts = tailscale_ready()
+
+    # 1. Something else is on the port. Detected as "the port answers but not
+    #    with our health payload" - the one state where Rebuild fails with
+    #    `port is already allocated` and the reason is invisible.
+    if occupied and live is None:
+        hints.append({"tone": "bad", "title":
+            "Port {} is taken by something that is not this app".format(port),
+            "lines": [
+                "Rebuild will fail with \"port is already allocated\" until it is freed.",
+                "Find what holds it:",
+                ("  netstat -ano | findstr :{}" if WINDOWS else "  lsof -i :{}").format(port),
+                "Then either stop that process, or change Port above and Rebuild.",
+            ]})
+        return hints
+
+    # 2. Nothing running.
+    if live is None:
+        hints.append({"tone": "idle", "title": "Nothing is running",
+            "lines": ["Press Pull + Rebuild. It installs client dependencies if the",
+                      "branch changed them, builds, and replaces the container."]})
+        return hints
+
+    # 3. Running. Rebuilding is safe - said explicitly, because "will this kill
+    #    what is already up?" is the question that stops people rebuilding.
+    hints.append({"tone": "ok", "title": "Rebuilding while it runs is fine",
+        "lines": ["Rebuild removes the old container and starts a new one; you do",
+                  "not have to stop anything first. Requests fail for the few",
+                  "seconds in between, and a publish stays up across it."]})
+
+    if publishing:
+        hints.append({"tone": "ok", "title": "Published", "lines": [
+            "Press Stop publishing when you are done. Stopping a Tailscale",
+            "funnel also clears its rule, so the port is free next time."]})
+        return hints
+
+    # 4. Not published yet - and this is where the two machines diverge.
+    if cf["ok"]:
+        hints.append({"tone": "idle", "title": "To publish",
+            "lines": ["Press Publish - Cloudflare for fbc.omniflexfitness.com.",
+                      "Only one machine can serve that hostname at a time."]})
+    elif ts["ok"]:
+        hints.append({"tone": "warn",
+            "title": "Publish - Cloudflare will not work on this machine",
+            "lines": [
+                "cloudflared: {}.".format(cf["why"]),
+                "The named tunnel belongs to the Cloudflare account, but its",
+                "credentials file lives on whichever machine created it - so this",
+                "one cannot serve fbc.omniflexfitness.com. That is the guard, not",
+                "a fault.",
+                "",
+                "Use Publish - Tailscale instead. It gives this machine a hostname",
+                "of its own. By hand that is:",
+                "  tailscale funnel --https={} {}".format(funnelport, port),
+                "",
+                "If it answers \"listener already exists for port {}\", a Serve rule".format(funnelport),
+                "already holds it. Look, then clear or move:",
+                "  tailscale serve status",
+                "  tailscale serve reset          # clears every rule on this node",
+                "or pick another Funnel port above - 443, 8443 and 10000 are the",
+                "only three allowed.",
+            ]})
+    else:
+        hints.append({"tone": "warn", "title": "No publish path is set up here",
+            "lines": [
+                "cloudflared: {}. tailscale: {}.".format(cf["why"], ts["why"]),
+                "Either is fine to add:",
+                "  winget install --id Tailscale.Tailscale       # own hostname",
+                "  winget install --id Cloudflare.cloudflared    # the shared one",
+                "Open a new terminal afterwards - winget only updates PATH for",
+                "new processes. docs/DEPLOYMENT.md section 0b covers Tailscale",
+                "and 0c covers Cloudflare.",
+            ]})
+    return hints
+
+
 # ── the page ──────────────────────────────────────────────────────────────
 # Meridian's own ink ramp and accents, from web/src/styles/meridian/tokens. A
 # system font stack rather than the brand faces: this page is served from
@@ -532,6 +619,13 @@ button:hover:not(:disabled){filter:brightness(1.08)}
   display:flex;flex-wrap:wrap;gap:6px 28px;font:11px/1.6 var(--mono);color:var(--muted)}
 #verdict{margin-top:10px;font:12px/1.5 var(--mono)}
 .ok{color:var(--green)} .warn{color:var(--ochre)} .bad{color:var(--red)} .idle{color:var(--faint)}
+#hints{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.hint{border-left:3px solid var(--hairline);padding:8px 0 8px 12px}
+.hint.ok{border-left-color:var(--green)}
+.hint.warn{border-left-color:var(--ochre)}
+.hint.bad{border-left-color:var(--red)}
+.hint h2{margin:0 0 4px;font:600 13px/1.4 var(--sans);color:var(--strong)}
+.hint pre{margin:0;white-space:pre-wrap;font:12px/1.6 var(--mono);color:var(--muted)}
 #log{margin-top:14px;background:var(--sunk);color:var(--text);border:1px solid var(--hairline);
   padding:12px 14px;height:52vh;min-height:260px;overflow:auto;white-space:pre;
   font:12px/1.55 var(--mono)}
@@ -584,6 +678,7 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
   <span id="paths">Publish paths &mdash; ?</span>
 </div>
 <div id="verdict" class="idle"></div>
+<div id="hints"></div>
 
 <div id="log"></div>
 
@@ -595,6 +690,9 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
 <script>
 var TOKEN = new URLSearchParams(location.search).get("token") || "";
 var offset = 0, logBox = document.getElementById("log"), pinned = true;
+// Hints are rebuilt only when they change; at 800ms a blind rebuild would
+// fight the cursor over any text being selected inside one.
+var lastHints = "";
 
 logBox.addEventListener("scroll", function () {
   pinned = logBox.scrollTop + logBox.clientHeight >= logBox.scrollHeight - 24;
@@ -641,7 +739,10 @@ document.getElementById("quit").onclick = function (e) {
 };
 
 function poll() {
-  api("/api/status?offset=" + offset).then(function (s) {
+  var fp = document.getElementById("funnelport");
+  api("/api/status?offset=" + offset + "&port=" +
+      (parseInt(document.getElementById("port").value, 10) || 8060) +
+      "&funnelport=" + (fp ? fp.value : 8443)).then(function (s) {
     if (s.lines && s.lines.length) {
       logBox.textContent += s.lines.join("\\n") + "\\n";
       offset = s.offset;
@@ -672,6 +773,22 @@ function poll() {
     // greyed-out control does.
     cf.title = s.cloudflare.ok ? "Serves fbc.omniflexfitness.com" : "cloudflared: " + s.cloudflare.why;
     ts.title = s.tailscale.ok ? "Serves this machine's own .ts.net hostname" : "tailscale: " + s.tailscale.why;
+
+    var key = JSON.stringify(s.hints || []);
+    if (key !== lastHints) {
+      lastHints = key;
+      var box = document.getElementById("hints");
+      box.textContent = "";
+      (s.hints || []).forEach(function (h) {
+        var card = document.createElement("div");
+        card.className = "hint " + (h.tone || "idle");
+        var head = document.createElement("h2");
+        head.textContent = h.title;
+        var body = document.createElement("pre");
+        body.textContent = (h.lines || []).join("\\n");
+        card.appendChild(head); card.appendChild(body); box.appendChild(card);
+      });
+    }
 
     ["all", "pull", "rebuild", "stop", "logs", "doctor"].forEach(function (id) {
       document.getElementById(id).disabled = s.task_running;
@@ -806,6 +923,21 @@ class Console(http.server.BaseHTTPRequestHandler):
                     # already exists". Cleared explicitly.
                     self._funnel_off(commands["funnel_off"])
                 return {"ok": True, "stopped": True}
+            if kind == "cloudflare":
+                ready = cloudflared_ready()
+                if not ready["ok"]:
+                    # Explained before it is attempted. The script's own
+                    # preflight says "cloudflared is not on PATH", which is true
+                    # and does not say that installing it would not help either.
+                    rule("cloudflare")
+                    log_write("cloudflared: {}.".format(ready["why"]))
+                    log_write("")
+                    log_write("The named tunnel belongs to the Cloudflare account, but its")
+                    log_write("credentials file lives on whichever machine created it, so this")
+                    log_write("machine cannot serve fbc.omniflexfitness.com.")
+                    log_write("")
+                    log_write("Publish - Tailscale gives this machine a hostname of its own.")
+                    log_write("Running the script anyway, so its own preflight is on record:")
             if TUNNEL.start(kind, commands[action], self.repo):
                 TUNNEL_KIND = kind
                 return {"ok": True}
@@ -893,6 +1025,10 @@ class Console(http.server.BaseHTTPRequestHandler):
             port = int((query.get("port") or ["8060"])[0])
         except ValueError:
             port = 8060
+        try:
+            funnelport = int((query.get("funnelport") or ["8443"])[0])
+        except ValueError:
+            funnelport = 8443
         tree = tree_state(self.repo)
         live = container_version(port)
         payload = log_since(offset)
@@ -909,6 +1045,8 @@ class Console(http.server.BaseHTTPRequestHandler):
             "tunnel_kind": TUNNEL_KIND if TUNNEL.running else "",
             "cloudflare": cloudflared_ready(),
             "tailscale": tailscale_ready(),
+            "hints": guidance(port, funnelport,
+                              TUNNEL_KIND if TUNNEL.running else ""),
         })
         return payload
 
