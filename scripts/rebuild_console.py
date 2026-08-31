@@ -227,6 +227,11 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
     # account key; both scripts refuse with a named reason rather than starting
     # a container that will not verify a token.
     authenticated = bool(opts.get("authenticated"))
+    # Inverted on the wire: the scripts take an opt-out flag, the checkbox
+    # reads as the positive, and the default when the key is absent is on -
+    # which is what an older page or a hand-made request should get.
+    training = opts.get("training")
+    training = True if training is None else bool(training)
     # Funnel's public port. Tailscale allows only 443, 8443 and 10000, and a
     # machine that already has a Serve rule on 443 rejects a second listener
     # there - which is why this is a choice rather than a constant.
@@ -267,6 +272,8 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
             rebuild += ["-SkipBuild"]
         if authenticated:
             rebuild += ["-Authenticated"]
+        if not training:
+            rebuild += ["-NoTraining"]
         tunnel = ps + [str(repo / "scripts" / "tunnel.ps1")]
     else:
         rebuild = ["bash", str(repo / "scripts" / "share.sh")]
@@ -280,6 +287,8 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
             rebuild += ["--skip-build"]
         if authenticated:
             rebuild += ["--authenticated"]
+        if not training:
+            rebuild += ["--no-training"]
         tunnel = ["bash", str(repo / "scripts" / "tunnel.sh")]
 
     return {
@@ -662,6 +671,7 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
   <label><input type="checkbox" id="persistent"> Persistent</label>
   <label><input type="checkbox" id="skipbuild"> Skip client build</label>
   <label><input type="checkbox" id="authenticated"> Require sign-in</label>
+  <label><input type="checkbox" id="training" checked> Training mode</label>
   <label>Funnel port
     <select id="funnelport">
       <option value="8443" selected>8443</option>
@@ -712,7 +722,8 @@ function opts() {
     persistent: document.getElementById("persistent").checked,
     skipbuild: document.getElementById("skipbuild").checked,
     authenticated: document.getElementById("authenticated").checked,
-    funnelport: parseInt(document.getElementById("funnelport").value, 10) || 8443
+    funnelport: parseInt(document.getElementById("funnelport").value, 10) || 8443,
+    training: document.getElementById("training").checked
   };
 }
 

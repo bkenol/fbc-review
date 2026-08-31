@@ -58,7 +58,15 @@ param(
     [switch]$Persistent,
     # Real Firebase sign-in over the same filesystem stores. See the header and
     # docs/DEPLOYMENT.md section 0d.
-    [switch]$Authenticated
+    [switch]$Authenticated,
+    # Training mode is ON by default for a local run. It writes feedback,
+    # markups and calibration profiles, which on this backend are JSON files
+    # under .devdata - throwaway and git-ignored. It does not change what a
+    # review reports until someone promotes a calibration profile: with none
+    # promoted, active_profile() is the same default CalibrationProfile() the
+    # untrained path uses. This switch is the way back to the deployed
+    # service's behaviour.
+    [switch]$NoTraining
 )
 
 $ErrorActionPreference = 'Stop'
@@ -221,6 +229,20 @@ try {
             '-e', 'FBC_PROJECT_ID=fbc-dev-local'
         )
     }
+    # ── training mode ─────────────────────────────────────────────────────
+    # The owner list is separate from the allowlist on purpose - being allowed
+    # to run a review is not being allowed to re-level a rule for everyone -
+    # and an unset FBC_OWNER_EMAILS means nobody, so the owner's queue would
+    # 404 with training otherwise on. With the dev bypass every request signs
+    # in as dev@localhost, so that is who gets it locally. Anything already in
+    # the environment wins, and authenticated mode never invents an owner.
+    if (-not $NoTraining) {
+        $runArgs += @('-e', 'FBC_TRAINING_MODE=1')
+        $owners = $env:FBC_OWNER_EMAILS
+        if (-not $owners -and -not $Authenticated) { $owners = 'dev@localhost' }
+        if ($owners) { $runArgs += @('-e', "FBC_OWNER_EMAILS=$owners") }
+    }
+
     if ($version) { $runArgs += @('-e', "FBC_VERSION=$version") }
     $runArgs += 'fbc-review:dev'
 
@@ -244,6 +266,11 @@ try {
         Write-Host '  Sign-in required: false - anyone with the URL can use this' -ForegroundColor Yellow
         Write-Host '  Close it with -Authenticated, or a Cloudflare Access policy' -ForegroundColor Yellow
         Write-Host '  on the hostname (docs/DEPLOYMENT.md section 0d).' -ForegroundColor Yellow
+    }
+    if ($NoTraining) {
+        Write-Host '  Training mode: off' -ForegroundColor DarkGray
+    } else {
+        Write-Host '  Training mode: on (-NoTraining turns it off)' -ForegroundColor Green
     }
     Write-Host ''
     Write-Host "  Upload limit: $MaxUploadMb MB" -ForegroundColor DarkGray
