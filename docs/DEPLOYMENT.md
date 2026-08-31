@@ -108,9 +108,36 @@ It checks prerequisites first and names what is missing rather than failing
 halfway through, then creates the virtualenv, installs both dependency trees,
 builds the client and runs the tests.
 
+Then put the console on the Desktop and use that from here on:
+
+```powershell
+& ".\Rebuild Console.cmd" shortcut
+```
+
+Pull, Rebuild and Publish become buttons, their output streams into the page,
+and a line says whether the running container is on the commit in your working
+tree. `bash scripts/rebuild-console.sh` is the same thing from Git Bash.
+
 To confirm a machine is running what you think it is, read the version in the
 masthead and the footer of the page itself — locally it carries the commit and
 says `.dirty` when the tree has uncommitted changes. §5a explains the scheme.
+
+### One hostname, one machine
+
+Every machine can run the app locally on `127.0.0.1:8060`; only one can serve
+`fbc.omniflexfitness.com`. The named tunnel belongs to the Cloudflare account,
+but the credentials file it needs sits on whichever machine created it, so
+`tunnel.sh` on a second machine stops with
+
+> The tunnel exists in the account but this machine holds no credentials for it.
+
+which is the intended behaviour, not a fault — it refuses rather than quietly
+competing with the machine already serving the hostname. Two connectors on one
+tunnel would have Cloudflare hand requests to whichever answered, so the same
+URL would sometimes reach the laptop and sometimes the desktop.
+
+For a second machine that needs a public URL, give it one of its own with
+`tailscale funnel 8060`; each machine gets its own hostname.
 
 Deliberately not in git, and what to do about each:
 
@@ -128,23 +155,72 @@ no deployed service, no cloud credentials in the repo, and job records live in
 ### Sharing it over a throwaway URL
 
 `scripts/share.ps1` runs the whole app as one container on one port, with the
-API serving the client so there is a single origin and no CORS. For an unlisted
-URL that needs no DNS at all:
+API serving the client so there is a single origin and no CORS. Tailscale Funnel
+puts that on a public HTTPS URL with no DNS record to create, no certificate to
+install and nothing opened on the router — which makes it the right answer for a
+**second** machine, since only one machine can serve `fbc.omniflexfitness.com`
+(§0c).
+
+**First run on a machine.** Four things have to be true before Funnel works, and
+three of them are tailnet-wide, so a machine joining an already-configured
+tailnet only has to do the first:
+
+| Requirement | Where |
+| --- | --- |
+| Tailscale ≥ 1.38.3, signed in (`tailscale up`) | this machine |
+| **MagicDNS** enabled | admin console → DNS |
+| **HTTPS certificates** enabled | admin console → DNS → HTTPS Certificates |
+| `funnel` node attribute in the tailnet policy | granted automatically the first time you enable Funnel from the CLI |
+
+On Windows: `winget install --id Tailscale.Tailscale`, then open a **new**
+terminal — winget updates PATH for new processes only.
+
+**Running it.** Start the app first, then:
 
 ```bash
-tailscale funnel 8060
+tailscale funnel 8060          # foreground, Ctrl-C to stop
+tailscale funnel --bg 8060     # background; survives reboots and `tailscale up`
 ```
 
-Funnel is enabled once per tailnet; the CLI prints the approval link if it is
-not. Each machine gets its own hostname, so the desktop's URL differs from the
-laptop's, and only one machine serves a given hostname.
+The number is the **local** port to proxy to, not the public one. Funnel itself
+can only listen on 443, 8443 and 10000, and defaults to 443 — so the URL has no
+port in it. The first run opens a browser to approve enabling Funnel for the
+tailnet; after that it prints the hostname, which is
+`<machine-name>.<tailnet-name>.ts.net`. Each machine gets its own, which is
+exactly why this composes where the named tunnel does not.
 
 ```bash
-tailscale funnel reset; docker rm -f fbc-test
+tailscale funnel status        # what is being served
+tailscale funnel off           # stop a --bg funnel
+tailscale funnel reset         # clear the configuration
+docker rm -f fbc-test          # stop the app itself
 ```
+
+**`listener already exists for port 443`.** The node already has a Serve or
+Funnel configuration holding that port. Serve (tailnet-only) and Funnel
+(public) cannot both hold one port, so an existing Serve on 443 blocks Funnel
+there — and a machine that has been used for anything else over Tailscale may
+well have one. Look before clearing, because whatever is there is presumably
+wanted by something:
+
+```bash
+tailscale serve status         # everything on this node, Serve and Funnel
+tailscale serve reset          # clear all of it
+```
+
+Or leave it alone and take one of the other two ports Funnel allows:
+
+```bash
+tailscale funnel --https=8443 8060
+```
+
+The hostname then carries the port — `https://<machine>.<tailnet>.ts.net:8443`
+— which is fine for a test URL and avoids disturbing whatever already owns 443.
 
 For the real hostname rather than a throwaway one, see **0c** below. Both modes
-run the same container and both have authentication off — see **Exposure**.
+run the same container and both have authentication off — see **Exposure**. A
+`.ts.net` hostname is unlisted rather than secret, so the same caveat applies:
+close it with `share.ps1 -Authenticated` (§0d) if it will be up for long.
 
 ## 0c. Publishing it at `fbc.omniflexfitness.com` — Cloudflare Tunnel
 
@@ -297,9 +373,12 @@ What limits the damage:
 
 Both remedies named here are now available, and section 0d is how to use them.
 `FBC_DEV_UNSAFE_AUTH` has been split from the backend selection, so
-`bash scripts/share.sh --authenticated` runs the same filesystem stores with
-real Firebase sign-in and the server-side allowlist. A Cloudflare Access policy
-on the hostname remains the zero-code option and composes with it.
+`bash scripts/share.sh --authenticated` — or `share.ps1 -Authenticated`, which
+takes the same environment and passes the same container settings — runs the
+same filesystem stores with real Firebase sign-in and the server-side
+allowlist. The Rebuild Console exposes it as the **Require sign-in** checkbox.
+A Cloudflare Access policy on the hostname remains the zero-code option and
+composes with it.
 
 ### Persistence
 
@@ -496,10 +575,26 @@ bash scripts/share.sh --authenticated --persistent
 bash scripts/tunnel.sh          # in a second shell
 ```
 
-`--authenticated` sets `FBC_BACKEND=local` and leaves `FBC_DEV_UNSAFE_AUTH`
-unset, mounts the key, and generates a stable artefact signing key at
-`.devdata/artefact.secret`. `/healthz` will report `auth_required: true`, and
-the script says so rather than warning.
+Or, from PowerShell:
+
+```powershell
+$env:FBC_PROJECT_ID = 'fbc-reviewer'
+$env:FBC_ALLOWED_EMAILS = 'you@example.com,someone@example.com'
+powershell -ExecutionPolicy Bypass -File scripts\share.ps1 -Authenticated -Persistent
+powershell -ExecutionPolicy Bypass -File scripts\tunnel.ps1   # in a second shell
+```
+
+Or tick **Require sign-in** in the Rebuild Console, having set those two
+variables in the environment it was launched from.
+
+`--authenticated` / `-Authenticated` sets `FBC_BACKEND=local` and leaves
+`FBC_DEV_UNSAFE_AUTH` unset, mounts the key, and generates a stable artefact
+signing key at `.devdata/artefact.secret`. `/healthz` will report
+`auth_required: true`, and the script says so rather than warning.
+
+The two scripts pass an identical set of container settings and share the one
+`.devdata/artefact.secret`, so a machine can move between Git Bash and
+PowerShell without invalidating outstanding download links.
 
 ### How artefacts are served without a bucket
 

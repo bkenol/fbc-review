@@ -117,6 +117,17 @@ if [ -n "$VERSION" ]; then info "Version $VERSION"; fi
 # ── client ────────────────────────────────────────────────────────────────
 BUNDLE="$ROOT/web/dist/fbc-review/browser"
 if [ "$SKIP_BUILD" -eq 0 ] || [ ! -d "$BUNDLE" ]; then
+  # Install the client dependencies when they are missing or stale. Going
+  # straight to `ng build` fails on a machine that has never been set up and —
+  # far more often — the first time you build a branch that added a dependency:
+  # "Cannot find module 'pdfjs-dist'". npm writes
+  # node_modules/.package-lock.json when it installs, so comparing that against
+  # the real lockfile catches both cases without an npm ci on every run.
+  NPM_STAMP="$ROOT/web/node_modules/.package-lock.json"
+  if [ ! -f "$NPM_STAMP" ] || [ "$ROOT/web/package-lock.json" -nt "$NPM_STAMP" ]; then
+    bold 'Installing client dependencies...'
+    ( cd "$ROOT/web" && npm ci --no-audit --no-fund )
+  fi
   bold 'Building the client...'
   ( cd "$ROOT/web" && npx ng build )
 fi
@@ -224,7 +235,10 @@ info ''
 info "Upload limit: ${MAX_UPLOAD_MB} MB"
 info ''
 info 'Publish it at fbc.omniflexfitness.com with:'
-info '    bash scripts/tunnel.sh'
+# Absolute, and quoted, for the same reason share.ps1 does it: this line is
+# read after the script has printed a URL, from whatever directory the shell
+# happened to start in, which is rarely the repository.
+info "    bash \"$ROOT/scripts/tunnel.sh\""
 info ''
 info 'Or, for a throwaway unlisted URL:'
 info "    tailscale funnel ${PORT}"
