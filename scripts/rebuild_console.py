@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
-"""Rebuild Console — a local page with buttons for the desktop deployment.
+"""Rebuild Console — a local page with buttons for the local deployment.
 
     python scripts/rebuild_console.py
 
-Starts a small server on 127.0.0.1, opens a browser at it, and gives you Pull,
-Rebuild and Publish as buttons with their output streaming into the page. The
-status strip says whether the container is running the commit in your working
-tree, so "did my rebuild take?" is answered on screen.
+Starts a small server on 127.0.0.1, opens a browser at it, and gives you the
+whole local deployment as buttons with their output streaming into the page:
+Pull, Rebuild, Stop, Container logs, two Publish paths, and Doctor. The status
+strip says whether the container is running the commit in your working tree,
+so "did my rebuild take?" is answered on screen.
+
+TWO MACHINES, TWO PUBLISH PATHS
+A named Cloudflare tunnel serves fbc.omniflexfitness.com, but its credentials
+file lives on whichever machine created it — so exactly one machine can use it,
+and on any other it refuses. Tailscale Funnel gives every machine a hostname of
+its own, which makes it the answer for the second machine rather than a lesser
+substitute. Both are buttons here, Doctor says which of them this machine is
+set up for, and the status strip carries that answer without being asked.
 
 WHY PYTHON AND A BROWSER, RATHER THAN A NATIVE WINDOW
 The two WinForms attempts before this one both shipped with runtime faults —
@@ -55,6 +64,10 @@ from urllib.parse import parse_qs, urlparse
 
 WINDOWS = os.name == "nt"
 ROOT = Path(__file__).resolve().parent.parent
+
+#: What share.ps1 and share.sh both name the container. Kept in one place so
+#: Stop and Logs cannot drift from what Rebuild actually starts.
+CONTAINER = "fbc-test"
 
 # ── the shared output log ─────────────────────────────────────────────────
 # One list, appended by the reader threads and read by the browser at an
@@ -189,6 +202,12 @@ class Slot:
 TASK = Slot("task")
 TUNNEL = Slot("tunnel")
 
+#: Which publish path the tunnel slot is currently running - "cloudflare",
+#: "tailscale" or "". Stopping a Tailscale funnel needs a follow-up `funnel
+#: off`, and stopping a Cloudflare one does not, so the slot alone is not
+#: enough to know what to do.
+TUNNEL_KIND = ""
+
 
 # ── what each button runs ─────────────────────────────────────────────────
 def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
@@ -208,8 +227,32 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
     # account key; both scripts refuse with a named reason rather than starting
     # a container that will not verify a token.
     authenticated = bool(opts.get("authenticated"))
+    # Funnel's public port. Tailscale allows only 443, 8443 and 10000, and a
+    # machine that already has a Serve rule on 443 rejects a second listener
+    # there - which is why this is a choice rather than a constant.
+    try:
+        funnelport = int(opts.get("funnelport") or 8443)
+    except (TypeError, ValueError):
+        funnelport = 8443
+    if funnelport not in (443, 8443, 10000):
+        funnelport = 8443
 
     pull = ["git", "-C", str(repo), "pull"]
+
+    # Container lifecycle. Named once here rather than in each branch: the
+    # docker CLI is the same command on every platform, unlike the scripts.
+    stop = ["docker", "rm", "-f", CONTAINER]
+    logs = ["docker", "logs", "--tail", "200", CONTAINER]
+
+    # The two publish paths, and why there are two. A named Cloudflare tunnel
+    # serves fbc.omniflexfitness.com, but its credentials file lives on the one
+    # machine that created it, so a second machine cannot use it. Tailscale
+    # Funnel gives every machine a hostname of its own, which is what makes it
+    # the answer for the second machine rather than a lesser alternative.
+    funnel = ["tailscale", "funnel", "--https={}".format(funnelport), str(port)]
+    # Off takes every flag the on command took - a bare `funnel off` does not
+    # match a rule created with --https.
+    funnel_off = ["tailscale", "funnel", "--https={}".format(funnelport), "off"]
 
     if WINDOWS:
         ps = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
@@ -239,7 +282,131 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
             rebuild += ["--authenticated"]
         tunnel = ["bash", str(repo / "scripts" / "tunnel.sh")]
 
-    return {"pull": pull, "rebuild": rebuild, "tunnel": tunnel}
+    return {
+        "pull": pull,
+        "rebuild": rebuild,
+        "tunnel": tunnel,
+        "funnel": funnel,
+        "funnel_off": funnel_off,
+        "stop": stop,
+        "logs": logs,
+    }
+
+
+# ── what this machine can actually do ─────────────────────────────────────
+# The question this answers is the one that cost the most time setting up the
+# second machine: "which of these buttons work here?" A named Cloudflare tunnel
+# belongs to the account but its credentials file belongs to one machine, so
+# Publish · Cloudflare works on exactly one of them and fails on every other in
+# a way that reads like a broken script rather than a deliberate refusal.
+def _probe(argv: List[str], timeout: float = 8.0) -> Optional[str]:
+    """Run something read-only and return its first line, or None."""
+    exe = shutil.which(argv[0])
+    if not exe:
+        return None
+    try:
+        out = subprocess.run(
+            [exe] + argv[1:], capture_output=True, text=True,
+            timeout=timeout, check=False, errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    for line in (out.stdout or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def cloudflared_ready() -> Dict[str, object]:
+    """Present, authorised, and holding credentials for some tunnel.
+
+    All three are needed. cloudflared installed but with no `<uuid>.json` is
+    exactly the second machine's situation: the tunnel is real and visible in
+    the account, and this machine still cannot serve it.
+    """
+    if shutil.which("cloudflared") is None:
+        return {"ok": False, "why": "not installed"}
+    cf = Path.home() / ".cloudflared"
+    if not (cf / "cert.pem").exists():
+        return {"ok": False, "why": "installed, not logged in (no cert.pem)"}
+    creds = [f for f in cf.glob("*.json") if len(f.stem) == 36]
+    if not creds:
+        return {"ok": False,
+                "why": "logged in, but no tunnel credentials on this machine"}
+    return {"ok": True, "why": "{} tunnel credential(s)".format(len(creds))}
+
+
+def tailscale_ready() -> Dict[str, object]:
+    if shutil.which("tailscale") is None:
+        return {"ok": False, "why": "not installed"}
+    if _probe(["tailscale", "status"]) is None:
+        return {"ok": False, "why": "installed, not signed in"}
+    return {"ok": True, "why": "signed in"}
+
+
+def doctor(repo: Path, port: int) -> None:
+    """Write a prerequisites report into the shared log."""
+    def line(state: str, label: str, detail: str = "") -> None:
+        mark = {"ok": "  ok  ", "warn": "  !   ", "bad": "  X   "}.get(state, "      ")
+        log_write("{}{}{}".format(mark, label.ljust(26), detail))
+
+    rule("doctor")
+    log_write("Repository: {}".format(repo))
+    log_write("")
+    log_write("Build")
+
+    git = _probe(["git", "--version"])
+    line("ok" if git else "bad", "git", git or "not installed")
+
+    if shutil.which("docker") is None:
+        line("bad", "docker", "not installed - Docker Desktop")
+    else:
+        info = _probe(["docker", "info", "--format", "{{.ServerVersion}}"], 20.0)
+        if info is None:
+            line("bad", "docker", "installed but not running - start Docker Desktop")
+        else:
+            line("ok", "docker", "server {}".format(info))
+
+    node = _probe(["node", "--version"])
+    line("ok" if node else "warn", "node", node or "not on PATH (share.* may find nvm's)")
+
+    venv = repo / (".venv/Scripts/python.exe" if WINDOWS else ".venv/bin/python")
+    line("ok" if venv.exists() else "warn", "python venv",
+         str(venv) if venv.exists() else "absent - run scripts/setup.ps1")
+
+    modules = repo / "web" / "node_modules"
+    line("ok" if modules.exists() else "warn", "client dependencies",
+         "installed" if modules.exists() else "absent - Rebuild installs them")
+
+    log_write("")
+    log_write("Serving")
+    live = container_version(port)
+    line("ok" if live else "warn", "container",
+         live or "nothing on 127.0.0.1:{}".format(port))
+
+    log_write("")
+    log_write("Publish")
+    cf = cloudflared_ready()
+    line("ok" if cf["ok"] else "warn", "Cloudflare tunnel", str(cf["why"]))
+    ts = tailscale_ready()
+    line("ok" if ts["ok"] else "warn", "Tailscale Funnel", str(ts["why"]))
+
+    log_write("")
+    if cf["ok"]:
+        log_write("  This machine can serve fbc.omniflexfitness.com.")
+        log_write("  Only one machine can, so do not publish from another at")
+        log_write("  the same time.")
+    elif ts["ok"]:
+        log_write("  Publish with Tailscale. This machine holds no Cloudflare")
+        log_write("  tunnel credentials, so Publish - Cloudflare will refuse:")
+        log_write("  that is the guard, not a fault.")
+    else:
+        log_write("  No publish path is set up here. Either is fine to add;")
+        log_write("  docs/DEPLOYMENT.md section 0b covers Tailscale and 0c")
+        log_write("  covers Cloudflare.")
+    log_write("[doctor finished]")
 
 
 # ── status ────────────────────────────────────────────────────────────────
@@ -266,6 +433,26 @@ def port_open(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.25)
         return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def container_exists() -> bool:
+    """Whether a container by that name is present, running or not.
+
+    `docker ps -aq --filter` prints nothing and exits 0 when there is no
+    match, so absence is not an error - which is the whole point of asking
+    before removing.
+    """
+    docker = shutil.which("docker")
+    if not docker:
+        return False
+    try:
+        out = subprocess.run(
+            [docker, "ps", "-aq", "--filter", "name=^{}$".format(CONTAINER)],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(out.stdout.strip())
 
 
 def container_version(port: int) -> Optional[str]:
@@ -349,7 +536,7 @@ button:hover:not(:disabled){filter:brightness(1.08)}
   padding:12px 14px;height:52vh;min-height:260px;overflow:auto;white-space:pre;
   font:12px/1.55 var(--mono)}
 .opts{margin-top:16px;font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center}
-.opts input[type=number]{width:88px;font:12px var(--mono);padding:5px 7px;
+.opts input[type=number],.opts select{width:88px;font:12px var(--mono);padding:5px 7px;
   background:var(--sunk);color:var(--strong);border:1px solid var(--faint)}
 .opts label{display:flex;align-items:center;gap:6px}
 a{color:var(--primary)}
@@ -363,7 +550,14 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
   <button id="all" class="filled">Pull + Rebuild</button>
   <button id="pull">Pull only</button>
   <button id="rebuild">Rebuild only</button>
-  <button id="tunnel">Publish tunnel</button>
+  <button id="stop">Stop app</button>
+  <button id="logs">Container logs</button>
+</div>
+
+<div class="row">
+  <button id="tunnel">Publish &middot; Cloudflare</button>
+  <button id="funnel">Publish &middot; Tailscale</button>
+  <button id="doctor" class="quiet">Doctor</button>
   <button id="cancel" class="quiet">Cancel</button>
   <button id="clear" class="quiet">Clear log</button>
 </div>
@@ -374,12 +568,20 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
   <label><input type="checkbox" id="persistent"> Persistent</label>
   <label><input type="checkbox" id="skipbuild"> Skip client build</label>
   <label><input type="checkbox" id="authenticated"> Require sign-in</label>
+  <label>Funnel port
+    <select id="funnelport">
+      <option value="8443" selected>8443</option>
+      <option value="443">443</option>
+      <option value="10000">10000</option>
+    </select>
+  </label>
 </div>
 
 <div class="strip">
   <span id="tree">Working tree &mdash; ?</span>
   <span id="live">Container &mdash; ?</span>
-  <span id="tun">Tunnel &mdash; ?</span>
+  <span id="tun">Publishing &mdash; ?</span>
+  <span id="paths">Publish paths &mdash; ?</span>
 </div>
 <div id="verdict" class="idle"></div>
 
@@ -411,7 +613,8 @@ function opts() {
     upload: parseInt(document.getElementById("upload").value, 10) || 95,
     persistent: document.getElementById("persistent").checked,
     skipbuild: document.getElementById("skipbuild").checked,
-    authenticated: document.getElementById("authenticated").checked
+    authenticated: document.getElementById("authenticated").checked,
+    funnelport: parseInt(document.getElementById("funnelport").value, 10) || 8443
   };
 }
 
@@ -420,7 +623,11 @@ function run(action) { api("/api/run", { action: action, opts: opts() }).then(po
 document.getElementById("all").onclick = function () { run("all"); };
 document.getElementById("pull").onclick = function () { run("pull"); };
 document.getElementById("rebuild").onclick = function () { run("rebuild"); };
+document.getElementById("stop").onclick = function () { run("stop"); };
+document.getElementById("logs").onclick = function () { run("logs"); };
 document.getElementById("tunnel").onclick = function () { run("tunnel"); };
+document.getElementById("funnel").onclick = function () { run("funnel"); };
+document.getElementById("doctor").onclick = function () { run("doctor"); };
 document.getElementById("cancel").onclick = function () { run("cancel"); };
 document.getElementById("clear").onclick = function () {
   api("/api/clear", {}).then(function () { logBox.textContent = ""; offset = 0; });
@@ -443,12 +650,30 @@ function poll() {
     document.getElementById("repo").textContent = s.repo;
     document.getElementById("tree").textContent = "Working tree — " + (s.tree || "git unavailable");
     document.getElementById("live").textContent = "Container — " + (s.live || "nothing on 127.0.0.1:" + s.port);
-    document.getElementById("tun").textContent = "Tunnel — " + (s.tunnel_running ? "running (pid " + s.tunnel_pid + ")" : "not running");
+    var kind = s.tunnel_kind === "cloudflare" ? "Cloudflare"
+             : s.tunnel_kind === "tailscale" ? "Tailscale" : "";
+    document.getElementById("tun").textContent = "Publishing — " +
+      (s.tunnel_running ? kind + " (pid " + s.tunnel_pid + ")" : "no");
+    document.getElementById("paths").textContent = "Publish paths — Cloudflare " +
+      (s.cloudflare.ok ? "yes" : "no") + ", Tailscale " + (s.tailscale.ok ? "yes" : "no");
     var v = document.getElementById("verdict");
     v.textContent = s.verdict.text;
     v.className = s.verdict.state;
-    document.getElementById("tunnel").textContent = s.tunnel_running ? "Stop tunnel" : "Publish tunnel";
-    ["all", "pull", "rebuild"].forEach(function (id) {
+
+    // Whichever is publishing becomes the stop button; the other is disabled
+    // rather than hidden, so the pair does not reflow under the cursor.
+    var cf = document.getElementById("tunnel"), ts = document.getElementById("funnel");
+    cf.textContent = s.tunnel_kind === "cloudflare" ? "Stop publishing" : "Publish · Cloudflare";
+    ts.textContent = s.tunnel_kind === "tailscale" ? "Stop publishing" : "Publish · Tailscale";
+    cf.disabled = s.tunnel_running && s.tunnel_kind !== "cloudflare";
+    ts.disabled = s.tunnel_running && s.tunnel_kind !== "tailscale";
+    // Titles carry the reason a path is unavailable; the button still works,
+    // because the underlying script explains the refusal better than a
+    // greyed-out control does.
+    cf.title = s.cloudflare.ok ? "Serves fbc.omniflexfitness.com" : "cloudflared: " + s.cloudflare.why;
+    ts.title = s.tailscale.ok ? "Serves this machine's own .ts.net hostname" : "tailscale: " + s.tailscale.why;
+
+    ["all", "pull", "rebuild", "stop", "logs", "doctor"].forEach(function (id) {
       document.getElementById(id).disabled = s.task_running;
     });
     document.getElementById("cancel").disabled = !s.task_running;
@@ -560,15 +785,54 @@ class Console(http.server.BaseHTTPRequestHandler):
         opts = opts if isinstance(opts, dict) else {}
         commands = build_commands(self.repo, opts)
 
+        global TUNNEL_KIND
+
         if action == "cancel":
             return {"ok": TASK.stop()}
-        if action == "tunnel":
+
+        if action in ("tunnel", "funnel"):
+            kind = "cloudflare" if action == "tunnel" else "tailscale"
             if TUNNEL.running:
+                # Either button stops whatever is publishing. Pressing the
+                # other one while something is up would otherwise start a
+                # second publisher for the same port.
+                was = TUNNEL_KIND
                 TUNNEL.stop()
+                TUNNEL_KIND = ""
+                if was == "tailscale":
+                    # A foreground funnel killed rather than interrupted can
+                    # leave its rule behind, and the rule is what holds the
+                    # port - so the next start would fail with "listener
+                    # already exists". Cleared explicitly.
+                    self._funnel_off(commands["funnel_off"])
                 return {"ok": True, "stopped": True}
-            return {"ok": TUNNEL.start("tunnel", commands["tunnel"], self.repo)}
-        if action in ("pull", "rebuild"):
+            if TUNNEL.start(kind, commands[action], self.repo):
+                TUNNEL_KIND = kind
+                return {"ok": True}
+            return {"ok": False}
+
+        if action in ("pull", "rebuild", "logs"):
             return {"ok": TASK.start(action, commands[action], self.repo)}
+
+        if action == "stop":
+            # Asked before attempted, for the same reason share.ps1 does it:
+            # `docker rm` on nothing is an error, and an error here reads as a
+            # failure rather than as "there was nothing to stop".
+            if not container_exists():
+                rule("stop")
+                log_write("Nothing named {} is present.".format(CONTAINER))
+                log_write("[stop finished, exit 0]")
+                return {"ok": True}
+            return {"ok": TASK.start("stop", commands["stop"], self.repo)}
+
+        if action == "doctor":
+            if TASK.running:
+                return {"ok": False}
+            threading.Thread(
+                target=doctor, args=(self.repo, int(opts.get("port") or 8060)),
+                daemon=True,
+            ).start()
+            return {"ok": True}
         if action == "all":
             # Chained in a thread rather than a shell string, so the rebuild
             # starts only if the pull actually succeeded and neither command
@@ -580,6 +844,30 @@ class Console(http.server.BaseHTTPRequestHandler):
             ).start()
             return {"ok": True}
         return {"ok": False, "error": "unknown action"}
+
+    @staticmethod
+    def _funnel_off(argv: List[str]) -> None:
+        """Clear a Tailscale funnel rule after killing its process.
+
+        Short and synchronous - it is one control-plane call, not a server -
+        so it does not need the slot machinery, and running it inline keeps
+        the "stopped" reply honest about the rule actually being gone.
+        """
+        exe = shutil.which(argv[0])
+        if not exe:
+            return
+        try:
+            out = subprocess.run(
+                [exe] + argv[1:], capture_output=True, text=True,
+                timeout=15, check=False, errors="replace",
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            log_write("[could not clear the funnel rule: {}]".format(exc))
+            return
+        log_write("[{}]".format(" ".join(argv)))
+        for line in (out.stdout + out.stderr).splitlines():
+            if line.strip():
+                log_write(line.rstrip())
 
     @staticmethod
     def _pull_then_rebuild(commands: Dict[str, List[str]], repo: Path) -> None:
@@ -618,6 +906,9 @@ class Console(http.server.BaseHTTPRequestHandler):
             "task_label": TASK.label,
             "tunnel_running": TUNNEL.running,
             "tunnel_pid": TUNNEL.pid,
+            "tunnel_kind": TUNNEL_KIND if TUNNEL.running else "",
+            "cloudflare": cloudflared_ready(),
+            "tailscale": tailscale_ready(),
         })
         return payload
 
