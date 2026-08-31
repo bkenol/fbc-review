@@ -8,6 +8,8 @@ api/training.api.ts
 configuration.ts
 encoder.ts
 index.ts
+model/abstention-diagnosis.ts
+model/abstention-kind-info.ts
 model/abstention.ts
 model/admin-overview.ts
 model/assist-opinion.ts
@@ -47,6 +49,8 @@ model/history-response.ts
 model/issue-created.ts
 model/job.ts
 model/mail-status.ts
+model/markup-colour-info.ts
+model/markup-export.ts
 model/markup-geometry.ts
 model/markup-kind-info.ts
 model/markup-kind.ts
@@ -67,6 +71,7 @@ model/rule-calibration.ts
 model/sheet-profile.ts
 model/source-profile.ts
 model/summary.ts
+model/sweep-request.ts
 model/training-status.ts
 model/triage-result.ts
 param.ts

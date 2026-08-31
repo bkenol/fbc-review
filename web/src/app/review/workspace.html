@@ -1,23 +1,18 @@
-<section class="step workspace">
-  <div class="step-head">
-    <span class="mark">05</span>
+<section class="step workspace roomy">
+  <!-- One line rather than a step heading. On a screen whose job is to show a
+       36-inch drawing, a numbered section header and a rule across the top are
+       forty pixels of the sheet. -->
+  <div class="workspace-head">
+    <a routerLink="/">← All reviews</a>
     <h2>{{ job()?.filename || 'Review' }}</h2>
-  </div>
-
-  @if (failure(); as problem) {
-    <p class="hint" role="alert">{{ problem.message }}</p>
-  }
-
-  @if (job(); as review) {
-    <p class="hint workspace-meta">
-      <a routerLink="/">← All reviews</a>
+    @if (job(); as review) {
       <span class="dim">{{ review.pages }} sheets</span>
       @if (review.options.mode === 'training') {
         <span class="chip">Training run</span>
       }
       @if (review.calibration; as calibration) {
         <span class="dim">
-          Calibration {{ calibration.profile_label }} v{{ calibration.profile_version }}
+          {{ calibration.profile_label }} v{{ calibration.profile_version }}
           @if (calibration.adjusted) {
             · {{ calibration.adjusted }} adjusted, {{ calibration.suppressed }} suppressed
           }
@@ -26,7 +21,19 @@
       @if (review.finished_at; as finished) {
         <span class="dim">{{ finished | date: 'd MMM y, HH:mm' }}</span>
       }
-    </p>
+    }
+    <span class="spacer"></span>
+    @if (trainingOn() && training.markups().length) {
+      <button type="button" class="inline" (click)="preview()">
+        Hand over {{ training.markups().length }} annotation{{
+          training.markups().length === 1 ? '' : 's'
+        }}
+      </button>
+    }
+  </div>
+
+  @if (failure(); as problem) {
+    <p class="hint" role="alert">{{ problem.message }}</p>
   }
 
   @if (source(); as url) {
@@ -36,6 +43,7 @@
         [findings]="findings() ?? []"
         [markups]="training.markups()"
         [markupKinds]="markupKinds()"
+        [markupColours]="markupColours()"
         [canDraw]="trainingOn()"
         [selectedFid]="selectedFinding()?.fid ?? ''"
         (findingPicked)="pickFinding($event)"
@@ -53,130 +61,321 @@
           </p>
         }
 
-        <!-- ── what is selected ─────────────────────────────────────────── -->
-        @if (selectedFinding(); as finding) {
+        <!-- ── handing the pass over ────────────────────────────────────── -->
+        @if (handingOver()) {
           <div class="side-card">
-            <p class="eyebrow">{{ finding.severity }} · {{ finding.sheet }}</p>
-            <h3>{{ finding.title }}</h3>
-            <p class="side-line"><span class="dim">Checked</span> {{ finding.checked }}</p>
-            <p class="side-line"><span class="dim">Result</span> {{ finding.result }}</p>
-            @if (finding.code) {
-              <p class="side-line"><span class="dim">Cites</span> {{ finding.code }}</p>
-            }
-            @if (finding.action) {
-              <p class="side-line"><span class="dim">Do</span> {{ finding.action }}</p>
-            }
-            <button type="button" class="inline" (click)="clearSelection()">Close</button>
-          </div>
-
-          @if (trainingOn()) {
-            @if (saidAbout().get(finding.fid); as already) {
-              <p class="hint">
-                You have already given feedback on this finding —
-                {{ already.triage.label | lowercase }}. Sending more is fine; it is
-                recorded separately.
+            <p class="eyebrow">The pass, as it stands</p>
+            @if (training.markupExport(); as bundle) {
+              <p class="side-line">
+                <span class="dim">Annotations</span> {{ bundle.markups.length }} on
+                {{ (bundle.sheets ?? []).length }}
+                sheet{{ (bundle.sheets ?? []).length === 1 ? '' : 's' }},
+                {{ bundle.commented ?? 0 }} with a comment
               </p>
+              <!-- Readable before it is sent. Nobody should hand over a
+                   document they have only been told the size of. -->
+              <pre class="bundle" aria-label="The pass in full">{{ bundle.text }}</pre>
+              <div class="side-actions">
+                <button type="button" class="ghost" (click)="download()">
+                  Save a copy
+                </button>
+                <button type="button" class="inline" (click)="cancelHandover()">
+                  Back to the sheet
+                </button>
+              </div>
+            } @else {
+              <p class="hint" aria-live="polite">Gathering the pass…</p>
             }
-            <app-feedback-panel
-              [aspects]="aspects()"
-              [subject]="subject()"
-              [busy]="training.saving()"
-              [accepted]="training.lastAccepted()"
-              [headline]="feedbackHeadline()"
-              (submitted)="onFeedback($event)"
-              (dismissed)="training.clearAccepted()"
-            />
-          }
-        } @else if (selectedMarkup(); as markup) {
-          <div class="side-card">
-            <p class="eyebrow">{{ markup.kind }} · sheet {{ markup.page }}</p>
-            <label class="comment">
-              <span>Comment on this markup</span>
-              <textarea
-                rows="3"
-                maxlength="4000"
-                [value]="commentDraft()"
-                (input)="onCommentInput($event)"
-              ></textarea>
-            </label>
-            <div class="side-actions">
-              <button
-                type="button"
-                class="btn"
-                [disabled]="training.saving()"
-                (click)="saveComment()"
-              >
-                Save comment
-              </button>
-              <button type="button" class="inline" (click)="reportGap(markup)">
-                Report a missed check here
-              </button>
-              <button type="button" class="inline" (click)="removeMarkup(markup)">
-                Delete
-              </button>
-            </div>
           </div>
 
-          @if (trainingOn() && subject() === 'coverage') {
+          @if (training.markupExport()) {
             <app-feedback-panel
               [aspects]="aspects()"
-              [subject]="subject()"
+              [subject]="sweepSubject"
               [busy]="training.saving()"
               [accepted]="training.lastAccepted()"
-              [headline]="feedbackHeadline()"
-              (submitted)="onFeedback($event)"
-              (dismissed)="training.clearAccepted()"
+              headline="Hand this pass over"
+              (submitted)="handOver($event)"
+              (dismissed)="cancelHandover()"
             />
           }
         } @else {
-          <p class="hint">
-            Pick a finding to read it and say what it got right or wrong.
-            @if (trainingOn()) {
-              Or draw on the sheet to point at something the review missed.
-            }
-          </p>
-        }
+          <!-- ── what is selected ───────────────────────────────────────── -->
+          @if (selectedFinding(); as finding) {
+            <div class="side-card">
+              <p class="eyebrow">{{ finding.severity }} · {{ finding.sheet }}</p>
+              <h3>{{ finding.title }}</h3>
+              <p class="side-line"><span class="dim">Checked</span> {{ finding.checked }}</p>
+              <p class="side-line"><span class="dim">Result</span> {{ finding.result }}</p>
+              @if (finding.code) {
+                <p class="side-line"><span class="dim">Cites</span> {{ finding.code }}</p>
+              }
+              @if (finding.action) {
+                <p class="side-line"><span class="dim">Do</span> {{ finding.action }}</p>
+              }
+              <button type="button" class="inline" (click)="clearSelection()">Close</button>
+            </div>
 
-        <!-- ── the register, in reading order ───────────────────────────── -->
-        <div class="side-list">
-          <p class="eyebrow">Findings ({{ open().length }} open)</p>
-          @for (finding of findings() ?? []; track finding.fid) {
+            @if (trainingOn()) {
+              @if (saidAbout().get(finding.fid); as already) {
+                <p class="hint">
+                  You have already given feedback on this finding —
+                  {{ already.triage.label | lowercase }}. Sending more is fine; it is
+                  recorded separately.
+                </p>
+              }
+              <app-feedback-panel
+                [aspects]="aspects()"
+                [subject]="subject()"
+                [busy]="training.saving()"
+                [accepted]="training.lastAccepted()"
+                [headline]="feedbackHeadline()"
+                (submitted)="onFeedback($event)"
+                (dismissed)="training.clearAccepted()"
+              />
+            }
+          } @else if (selectedAbstention(); as abstention) {
+            <!-- ── a rule that declined to run ──────────────────────────── -->
+            <div class="side-card">
+              <p class="eyebrow">Not checked · {{ abstention.rule }}</p>
+              <h3>{{ kindOf(abstention)?.label || 'This rule stood down' }}</h3>
+              <p class="side-line">
+                <span class="dim">It said</span> {{ abstention.reason }}
+              </p>
+              @if (abstention.detail) {
+                <p class="side-line"><span class="dim">Detail</span> {{ abstention.detail }}</p>
+              }
+              @if (kindOf(abstention); as kind) {
+                <p class="side-line"><span class="dim">Which means</span> {{ kind.help }}</p>
+                <p class="side-line"><span class="dim">What fixes it</span> {{ kind.guidance }}</p>
+              }
+              <button type="button" class="inline" (click)="clearSelection()">Close</button>
+            </div>
+
+            @if (trainingOn()) {
+              @if (saidAboutRule().get(abstention.rule); as already) {
+                <p class="hint">
+                  You have already reported this one — {{ already.triage.label | lowercase }}.
+                </p>
+              }
+              @if (canPropose()) {
+                <app-feedback-panel
+                  [aspects]="aspects()"
+                  [subject]="subject()"
+                  [busy]="training.saving()"
+                  [accepted]="training.lastAccepted()"
+                  [headline]="feedbackHeadline()"
+                  [initial]="prefill()"
+                  (submitted)="onFeedback($event)"
+                  (dismissed)="training.clearAccepted()"
+                />
+              } @else {
+                <p class="hint">
+                  Nothing to propose here — this abstention looks correct. If the value
+                  is in fact printed on a sheet, say so and it becomes work.
+                  <button type="button" class="inline" (click)="reportAnyway()">
+                    Report it anyway
+                  </button>
+                </p>
+              }
+            }
+          } @else if (selectedMarkup(); as markup) {
+            <div class="side-card">
+              <p class="eyebrow">{{ markup.kind }} · sheet {{ markup.page }}</p>
+              <label class="comment">
+                <span>
+                  @if (markup.kind === 'text') {
+                    What this label says on the drawing
+                  } @else {
+                    Comment on this markup
+                  }
+                </span>
+                <textarea
+                  rows="3"
+                  maxlength="4000"
+                  [value]="commentDraft()"
+                  (input)="onCommentInput($event)"
+                ></textarea>
+              </label>
+
+              <!-- Recolouring is a save of its own rather than a field in the
+                   form: it is one click, and a category you have to press Save
+                   to set is a category people stop setting. -->
+              <div class="viewer-inks">
+                @for (ink of markupColours(); track ink.key) {
+                  <button
+                    type="button"
+                    class="ink"
+                    [class.on]="markup.colour === ink.key"
+                    [style.--ink]="ink.hex"
+                    (click)="recolour(ink.key)"
+                    [title]="ink.label + ' — ' + ink.help"
+                  >
+                    <span class="dot" aria-hidden="true"></span>
+                    <span class="ink-label">{{ ink.label }}</span>
+                  </button>
+                }
+              </div>
+
+              <div class="side-actions">
+                <button
+                  type="button"
+                  class="btn"
+                  [disabled]="training.saving()"
+                  (click)="saveComment()"
+                >
+                  Save comment
+                </button>
+                <button type="button" class="inline" (click)="reportGap(markup)">
+                  Report a missed check here
+                </button>
+                <button type="button" class="inline" (click)="removeMarkup(markup)">
+                  Delete
+                </button>
+              </div>
+            </div>
+
+            @if (trainingOn() && subject() === 'coverage') {
+              <app-feedback-panel
+                [aspects]="aspects()"
+                [subject]="subject()"
+                [busy]="training.saving()"
+                [accepted]="training.lastAccepted()"
+                [headline]="feedbackHeadline()"
+                (submitted)="onFeedback($event)"
+                (dismissed)="training.clearAccepted()"
+              />
+            }
+          } @else {
+            <p class="hint">
+              Pick a finding to read it and say what it got right or wrong.
+              @if (trainingOn()) {
+                Or draw on the sheet to point at something the review missed.
+              }
+            </p>
+          }
+
+          <!-- ── the root cause, when there is one ───────────────────────── -->
+          @for (finding of diagnosis(); track finding.key) {
+            <div class="note warn side-diagnosis">
+              <b>{{ finding.headline }}</b>
+              {{ finding.detail }}
+              <span class="do">{{ finding.action }}</span>
+            </div>
+          }
+
+          <!-- ── the registers ──────────────────────────────────────────── -->
+          <div class="side-tabs" role="tablist">
             <button
               type="button"
-              class="side-row"
-              [class.on]="selectedFinding()?.fid === finding.fid"
-              [attr.data-severity]="finding.severity"
-              (click)="pickFinding(finding)"
+              role="tab"
+              [attr.aria-selected]="tab() === 'findings'"
+              [class.on]="tab() === 'findings'"
+              (click)="tab.set('findings')"
             >
-              <span class="side-sev">{{ finding.severity }}</span>
-              <span class="side-fid">{{ finding.fid }}</span>
-              <span class="side-sheet">{{ finding.sheet }}</span>
-              <span class="side-title">{{ finding.title }}</span>
-              @if (saidAbout().has(finding.fid)) {
-                <span class="side-flag" title="You have given feedback on this">✓</span>
-              }
+              Findings ({{ open().length }})
             </button>
-          } @empty {
-            <p class="hint">This review reported nothing.</p>
-          }
-        </div>
-
-        @if (trainingOn() && training.markups().length) {
-          <div class="side-list">
-            <p class="eyebrow">Your markup</p>
-            @for (markup of training.markups(); track markup.id) {
+            <button
+              type="button"
+              role="tab"
+              [attr.aria-selected]="tab() === 'notchecked'"
+              [class.on]="tab() === 'notchecked'"
+              (click)="tab.set('notchecked')"
+            >
+              Not checked ({{ abstentions().length }})
+            </button>
+            @if (trainingOn()) {
               <button
                 type="button"
-                class="side-row"
-                [class.on]="selectedMarkup()?.id === markup.id"
-                (click)="pickMarkup(markup)"
+                role="tab"
+                [attr.aria-selected]="tab() === 'markup'"
+                [class.on]="tab() === 'markup'"
+                (click)="tab.set('markup')"
               >
-                <span class="side-sev">{{ markup.kind }}</span>
-                <span class="side-sheet">sheet {{ markup.page }}</span>
-                <span class="side-title">{{ markup.comment || 'No comment yet' }}</span>
+                Markup ({{ training.markups().length }})
               </button>
             }
           </div>
+
+          @switch (tab()) {
+            @case ('findings') {
+              <div class="side-list">
+                @for (finding of findings() ?? []; track finding.fid) {
+                  <button
+                    type="button"
+                    class="side-row"
+                    [class.on]="selectedFinding()?.fid === finding.fid"
+                    [attr.data-severity]="finding.severity"
+                    (click)="pickFinding(finding)"
+                  >
+                    <span class="side-sev">{{ finding.severity }}</span>
+                    <span class="side-fid">{{ finding.fid }}</span>
+                    <span class="side-sheet">{{ finding.sheet }}</span>
+                    <span class="side-title">{{ finding.title }}</span>
+                    @if (saidAbout().has(finding.fid)) {
+                      <span class="side-flag" title="You have given feedback on this">✓</span>
+                    }
+                  </button>
+                } @empty {
+                  <p class="hint">This review reported nothing.</p>
+                }
+              </div>
+            }
+
+            @case ('notchecked') {
+              <!-- "Not checked" is not "passed", and the register has always
+                   said so. What is new is that each row now says which *kind*
+                   of not-checked it is, and the ones worth arguing with are
+                   the ones you can open. -->
+              <div class="side-list">
+                @if (proposable().length) {
+                  <p class="hint">
+                    {{ proposable().length }} of these look worth reporting. Open one to
+                    say what the reviewer should have been able to see.
+                  </p>
+                }
+                @for (abstention of abstentions(); track abstention.rule) {
+                  <button
+                    type="button"
+                    class="side-row"
+                    [class.on]="selectedAbstention()?.rule === abstention.rule"
+                    [class.quiet]="!abstention.proposable"
+                    (click)="pickAbstention(abstention)"
+                  >
+                    <span class="side-sev">{{ kindOf(abstention)?.label || abstention.kind }}</span>
+                    <span class="side-fid">{{ abstention.rule }}</span>
+                    <span class="side-title">{{ abstention.reason }}</span>
+                    @if (saidAboutRule().has(abstention.rule)) {
+                      <span class="side-flag" title="You have reported this one">✓</span>
+                    }
+                  </button>
+                } @empty {
+                  <p class="hint">Every registered rule reached a conclusion on this set.</p>
+                }
+              </div>
+            }
+
+            @case ('markup') {
+              <div class="side-list">
+                @for (markup of training.markups(); track markup.id) {
+                  <button
+                    type="button"
+                    class="side-row"
+                    [class.on]="selectedMarkup()?.id === markup.id"
+                    (click)="pickMarkup(markup)"
+                  >
+                    <span class="side-sev">{{ markup.kind }}</span>
+                    <span class="side-sheet">sheet {{ markup.page }}</span>
+                    <span class="side-title">{{ markup.comment || 'No comment yet' }}</span>
+                  </button>
+                } @empty {
+                  <p class="hint">
+                    Nothing drawn yet. Pick a tool above the sheet and mark something.
+                  </p>
+                }
+              </div>
+            }
+          }
         }
       </aside>
     </div>

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 import pymupdf
 
@@ -128,6 +128,80 @@ def _vector_items(page: pymupdf.Page) -> int:
     return total
 
 
+#: How far apart two image rects may sit and still be one plotted region.
+#:
+#: AutoCAD's PDF driver slices a single plotted raster into horizontal bands and
+#: emits each as its own image. Measured on the ITEC set, G-002's code-analysis
+#: table arrives as three of them and A-101's egress tables as two apiece. The
+#: seam between bands is a hairline; two genuinely separate tables on a permit
+#: sheet are inches apart. Two points is comfortably inside that gap and nowhere
+#: near closing it.
+_SEAM_PT = 2.0
+
+#: How much two rects must overlap on the *other* axis before they count as
+#: bands of one thing. Bands of one plot share almost the whole width; two
+#: tables that happen to abut do not.
+_SEAM_OVERLAP = 0.8
+
+
+def _abuts(a: pymupdf.Rect, b: pymupdf.Rect) -> bool:
+    """Whether these two rects are bands of one sliced region.
+
+    True when they overlap, or when they are within a seam of each other on one
+    axis while substantially sharing the other. Deliberately strict on both
+    counts: merging two real tables would cluster the left one's labels against
+    the right one's values, which is a worse failure than leaving a seam in.
+    """
+    x_gap = max(a.x0, b.x0) - min(a.x1, b.x1)
+    y_gap = max(a.y0, b.y0) - min(a.y1, b.y1)
+    if x_gap > _SEAM_PT or y_gap > _SEAM_PT:
+        return False
+
+    def share(a0: float, a1: float, b0: float, b1: float) -> float:
+        # Against the *larger* extent deliberately. Bands sliced from one plot
+        # have the same width as each other; a narrow strip sitting against a
+        # wide one is a different object that happens to touch it, and dividing
+        # by the smaller extent would score that a perfect match.
+        span = min(a1, b1) - max(a0, b0)
+        larger = max(a1 - a0, b1 - b0)
+        return span / larger if larger > 0 else 0.0
+
+    # Stacked bands share their width; side-by-side ones share their height.
+    if y_gap > -_SEAM_PT:
+        return share(a.x0, a.x1, b.x0, b.x1) >= _SEAM_OVERLAP
+    if x_gap > -_SEAM_PT:
+        return share(a.y0, a.y1, b.y0, b.y1) >= _SEAM_OVERLAP
+    return True  # genuinely overlapping
+
+
+def _coalesce(tiles: List[Tuple[pymupdf.Rect, float]]) -> List[Tuple[pymupdf.Rect, float]]:
+    """Merge sliced bands back into the regions they were plotted as.
+
+    Transitive, because a region sliced into three bands arrives as A-B and B-C
+    and has to come out as one rect rather than two. Repeats until a pass
+    changes nothing; the lists here are single digits long, so the quadratic
+    inner loop is not worth avoiding.
+
+    Pixel counts are summed rather than recomputed: the bands are disjoint
+    slices of one raster, so their megapixels add.
+    """
+    merged = list(tiles)
+    changed = True
+    while changed:
+        changed = False
+        out: List[Tuple[pymupdf.Rect, float]] = []
+        for rect, pixels in merged:
+            for index, (kept, kept_pixels) in enumerate(out):
+                if _abuts(rect, kept):
+                    out[index] = (kept | rect, kept_pixels + pixels)
+                    changed = True
+                    break
+            else:
+                out.append((pymupdf.Rect(rect), pixels))
+        merged = out
+    return merged
+
+
 def _images(page: pymupdf.Page):
     """Coverage, count, and the regions big enough to be worth reading."""
     page_area = abs(page.rect.get_area())
@@ -148,26 +222,38 @@ def _images(page: pymupdf.Page):
     # is the identity on an unrotated page, so this costs nothing there.
     to_page = page.rotation_matrix
 
+    tiles: List[Tuple[pymupdf.Rect, float]] = []
     try:
         for info in page.get_image_info():
             bbox = pymupdf.Rect(info["bbox"]) * to_page
-            area = abs(bbox.get_area())
-            covered += area
+            covered += abs(bbox.get_area())
             count += 1
-
-            coverage = area / page_area
-            megapixels = (info.get("width", 0) * info.get("height", 0)) / 1e6
-            if coverage >= MIN_REGION_COVERAGE and megapixels >= MIN_REGION_MEGAPIXELS:
-                regions.append(
-                    RasterRegion(
-                        x0=round(bbox.x0, 2), y0=round(bbox.y0, 2),
-                        x1=round(bbox.x1, 2), y1=round(bbox.y1, 2),
-                        megapixels=round(megapixels, 2),
-                        coverage=round(coverage, 3),
-                    )
-                )
+            tiles.append(
+                (bbox, (info.get("width", 0) * info.get("height", 0)) / 1e6)
+            )
     except Exception:
         return 0, 0.0, []
+
+    # Coalesce before the size floors, not after.
+    #
+    # The floors ask "is this worth OCRing", and the honest subject of that
+    # question is the region as it was plotted, not the band the PDF driver
+    # happened to slice it into. Filtering first drops bands that are small on
+    # their own and part of a table that is not — and OCRing the survivors
+    # independently cuts words at the seams and stops any row spanning the
+    # table, which is how 27,000 recovered characters can yield zero rows.
+    for rect, megapixels in _coalesce(tiles):
+        area = abs(rect.get_area())
+        coverage = area / page_area
+        if coverage >= MIN_REGION_COVERAGE and megapixels >= MIN_REGION_MEGAPIXELS:
+            regions.append(
+                RasterRegion(
+                    x0=round(rect.x0, 2), y0=round(rect.y0, 2),
+                    x1=round(rect.x1, 2), y1=round(rect.y1, 2),
+                    megapixels=round(megapixels, 2),
+                    coverage=round(coverage, 3),
+                )
+            )
 
     return count, min(covered / page_area, 1.0), regions
 

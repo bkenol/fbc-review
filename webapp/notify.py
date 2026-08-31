@@ -61,17 +61,53 @@ def github_status() -> str:
 # ── rendering ─────────────────────────────────────────────────────────────
 def _finding_lines(record: Dict[str, Any]) -> List[str]:
     finding = record.get("finding") or {}
-    if not finding:
-        return ["_No finding — this is a coverage report about something the "
-                "review did not produce._"]
-    return [
-        f"- **Rule** `{finding.get('rule_id', '')}`",
-        f"- **Severity** {finding.get('severity', '')}",
-        f"- **Sheet** {finding.get('sheet', '')} (page {finding.get('page', '')})",
-        f"- **Cites** {finding.get('code', '') or '—'}",
-        f"- **Title** {finding.get('title', '')}",
-        f"- **Result** {finding.get('result', '')}",
-    ]
+    if finding:
+        return [
+            f"- **Rule** `{finding.get('rule_id', '')}`",
+            f"- **Severity** {finding.get('severity', '')}",
+            f"- **Sheet** {finding.get('sheet', '')} (page {finding.get('page', '')})",
+            f"- **Cites** {finding.get('code', '') or '—'}",
+            f"- **Title** {finding.get('title', '')}",
+            f"- **Result** {finding.get('result', '')}",
+        ]
+
+    # An abstention is the opposite shape: there is no finding precisely because
+    # the rule declined to produce one, and what the owner needs is the reason
+    # it gave and how this build classified that reason.
+    abstention = record.get("abstention") or {}
+    if abstention:
+        from webapp import abstentions as abstention_kinds
+
+        kind = abstention_kinds.kind(str(abstention.get("kind") or "unknown"))
+        lines = [
+            f"- **Rule** `{abstention.get('rule', '')}` — *declined to run*",
+            f"- **Reason it gave** {abstention.get('reason', '')}",
+        ]
+        if abstention.get("detail"):
+            lines.append(f"- **Detail** {abstention['detail']}")
+        lines += [
+            f"- **Classified as** {kind.label} — {kind.help}",
+            f"- **Standing guidance** {kind.guidance}",
+        ]
+        return lines
+
+    sweep = record.get("sweep") or {}
+    if sweep:
+        markups = sweep.get("markups") or []
+        sheets = sweep.get("sheets") or []
+        return [
+            f"- **A marked-up pass** over `{sweep.get('filename', '')}`",
+            f"- **{len(markups)} annotation{'' if len(markups) == 1 else 's'}** "
+            f"on {len(sheets)} sheet{'' if len(sheets) == 1 else 's'}, "
+            f"{sweep.get('commented', 0)} with a written comment",
+            "- **Kinds** " + (
+                ", ".join(f"{v}× {k}" for k, v in sorted((sweep.get("counts") or {}).items()))
+                or "—"
+            ),
+        ]
+
+    return ["_No finding — this is a coverage report about something the "
+            "review did not produce._"]
 
 
 def _answer_lines(record: Dict[str, Any]) -> List[str]:
@@ -89,11 +125,31 @@ def _answer_lines(record: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _what(record: Dict[str, Any]) -> str:
+    """What this piece of feedback is about, in one token.
+
+    Used for digest rows and issue titles, where a row that says only
+    "coverage" for four different kinds of submission is a row nobody can
+    triage from the list.
+    """
+    finding = record.get("finding") or {}
+    if finding.get("rule_id"):
+        return str(finding["rule_id"])
+    if record.get("subject") == "abstention" and record.get("rule_id"):
+        return f"{record['rule_id']} (stood down)"
+    if record.get("subject") == "sweep":
+        sweep = record.get("sweep") or {}
+        count = len(sweep.get("markups") or [])
+        return f"markup pass, {count} annotation{'' if count == 1 else 's'}"
+    return str(record.get("sheet") or "coverage")
+
+
 def summarise(record: Dict[str, Any]) -> str:
     """One line for a digest row or an issue title."""
-    finding = record.get("finding") or {}
-    what = finding.get("rule_id") or record.get("sheet") or "coverage"
-    return f"[{record.get('disposition', '')}] {what} — {record.get('rationale', '')[:90]}"
+    return (
+        f"[{record.get('disposition', '')}] {_what(record)} — "
+        f"{record.get('rationale', '')[:90]}"
+    )
 
 
 def feature_prompt(record: Dict[str, Any], job: Optional[Dict[str, Any]] = None) -> str:
@@ -158,6 +214,20 @@ def feature_prompt(record: Dict[str, Any], job: Optional[Dict[str, Any]] = None)
             f"- **{markup.get('kind', 'markup')}** on page {markup.get('page', '?')} "
             f"at {markup.get('rect') or markup.get('points') or 'no geometry'} "
             "(PDF user space, origin top-left)",
+            "",
+        ]
+
+    # The pass itself, verbatim. A sweep's value is the sentences somebody wrote
+    # next to specific places on specific sheets, and summarising it away would
+    # leave a prompt that says a pass happened without saying what it found.
+    sweep = record.get("sweep") or {}
+    if sweep.get("text"):
+        lines += [
+            "### The marked-up pass, as handed over",
+            "",
+            "```",
+            str(sweep["text"]),
+            "```",
             "",
         ]
 
@@ -256,6 +326,17 @@ def _mail_body(record: Dict[str, Any], job: Optional[Dict[str, Any]]) -> str:
             f"Finding: {finding.get('rule_id', '')} {finding.get('severity', '')} "
             f"on {finding.get('sheet', '')} — {finding.get('title', '')}",
         ]
+    abstention = record.get("abstention") or {}
+    if abstention:
+        parts += [
+            f"Stood down: {abstention.get('rule', '')} — {abstention.get('reason', '')}",
+        ]
+    sweep = record.get("sweep") or {}
+    if sweep:
+        parts += [
+            f"Markup pass: {len(sweep.get('markups') or [])} annotations on "
+            f"{len(sweep.get('sheets') or [])} sheets",
+        ]
     comment = (record.get("comment") or "").strip()
     if comment:
         parts += ["", "They wrote:", comment]
@@ -277,10 +358,9 @@ def notify_owner(record: Dict[str, Any], job: Optional[Dict[str, Any]] = None) -
     if record.get("disposition") not in URGENT:
         return "not urgent — will appear in the digest"
 
-    finding = record.get("finding") or {}
     subject = (
         f"[FBC feedback] {DISPOSITION_LABELS.get(record.get('disposition', ''), '')}"
-        f" — {finding.get('rule_id') or 'coverage'}"
+        f" — {_what(record)}"
     )
     try:
         return mailer.send_review(recipients, subject, _mail_body(record, job))
@@ -326,10 +406,9 @@ def create_issue(record: Dict[str, Any], job: Optional[Dict[str, Any]] = None) -
     if not github_configured():
         return ""
 
-    finding = record.get("finding") or {}
     disposition = record.get("disposition", "")
     title = (
-        f"[feedback] {finding.get('rule_id') or 'coverage'} — "
+        f"[feedback] {_what(record)} — "
         f"{DISPOSITION_LABELS.get(disposition, disposition)}"
     )
     payload = json.dumps({

@@ -2394,3 +2394,285 @@ td.sev .chip.conflict {
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
+
+/* ── full-bleed routes ─────────────────────────────────────────────────────
+ * One screen in this app is not a document: the workspace, where a 24x36 sheet
+ * is the entire point. Inside the ordinary measure that sheet renders at about
+ * a third of the window with 96px of clearance above it, which is a drawing you
+ * cannot read.
+ *
+ * So a route may declare `data: { chrome: 'full' }` and get the window. The
+ * masthead is absolute and takes no layout space, so the only clearance needed
+ * is enough to clear its one row — the marketing block above it is not rendered
+ * at all on these routes.
+ *
+ * `100dvh` rather than `100vh`: on a phone the address bar is part of `vh` and
+ * a sheet sized against it is cut off by exactly that much.
+ */
+.wrap.full {
+  max-width: none;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: 54px var(--space-3) 0;
+}
+
+.wrap.full > router-outlet + * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (max-width: 720px) {
+  .wrap.full {
+    padding: 108px var(--space-2) 0;
+  }
+}
+
+/* The disclaimer is not optional anywhere, and a workspace is precisely where
+   somebody might mistake this for a plan approval. Compressed onto one quiet
+   line rather than dropped. */
+footer.terse {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  max-width: none;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
+footer.terse .build-line {
+  display: inline;
+  margin-left: var(--space-3);
+}
+
+/* ── the workspace, given the window ───────────────────────────────────────
+ * A column that fills what the full-bleed wrap hands it, with the split taking
+ * every pixel the meta row and the disclaimer do not. `min-height: 0` on both
+ * the column and the split is what actually makes it work: a flex child's
+ * default `min-height: auto` refuses to shrink below its content, so without
+ * these the stage grows to fit the whole sheet and the page scrolls instead of
+ * the drawing.
+ */
+.workspace.roomy {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+  gap: var(--space-2);
+}
+
+.workspace.roomy .workspace-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--space-3);
+}
+
+.workspace.roomy .workspace-side {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--space-2);
+}
+
+.workspace.roomy .viewer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.workspace.roomy .viewer-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+/* The header row of the workspace: everything you need to know about which
+   review this is, on one line, in the space a heading would otherwise take. */
+.workspace-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--hairline);
+}
+
+.workspace-head h2 {
+  margin: 0;
+  font: var(--weight-bold) 15px/1.2 var(--font-serif);
+  color: var(--text-strong);
+}
+
+.workspace-head .spacer {
+  flex: 1 1 auto;
+}
+
+/* ── markup colour ─────────────────────────────────────────────────────────
+ * The swatch is the button. `--ink` is set per button from what the API
+ * publishes, so adding a category in `webapp/feedback_schema.py` reaches this
+ * with no CSS change.
+ */
+.viewer-inks {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.45rem;
+  background: none;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.ink .dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--ink, var(--annotation));
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 25%) inset;
+}
+
+.ink:hover {
+  color: var(--text-strong);
+}
+
+.ink.on {
+  color: var(--text-strong);
+  border-color: var(--ink, var(--annotation));
+}
+
+/* Markup drawn in a chosen colour uses it; unclassified markup keeps the
+   annotation ink, which is what `swatch()` returns for an empty key. */
+.markup[style*='--ink'] rect,
+.markup[style*='--ink'] line,
+.markup[style*='--ink'] path,
+.markup[style*='--ink'] circle {
+  stroke: var(--ink, var(--annotation));
+}
+
+.markup .wash {
+  fill: var(--ink, var(--annotation));
+  fill-opacity: 0.18;
+  stroke: none;
+}
+
+.markup text.label {
+  fill: var(--ink, var(--annotation));
+  font-family: var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: var(--paper-white);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+/* An `<a class="pastrow">` in the training console does what the button does on
+   the tool page. Same geometry, no underline, and the link colour does not
+   override the row's own ink. */
+a.pastrow {
+  text-decoration: none;
+  color: var(--text-body);
+}
+a.pastrow:hover {
+  color: var(--text-body);
+}
+
+/* ── the side panel's registers ────────────────────────────────────────────
+ * Three lists — findings, what was not checked, and your own markup — sharing
+ * one column, because a workspace whose side panel stacks all three is a
+ * workspace you scroll instead of read.
+ */
+.side-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: var(--hairline);
+  margin-top: var(--space-3);
+}
+
+.side-tabs button {
+  font: inherit;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.5rem;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.side-tabs button:hover {
+  color: var(--text-strong);
+}
+
+.side-tabs button.on {
+  color: var(--text-strong);
+  border-bottom-color: var(--primary);
+}
+
+/* An abstention that looks correct is listed but not pressed forward: it is
+   there so "not checked" stays visible, not because it is work. */
+.side-row.quiet {
+  opacity: 0.62;
+}
+.side-row.quiet:hover {
+  opacity: 1;
+}
+
+/* The root-cause callout, in the side panel and on the results page. */
+.side-diagnosis {
+  margin-top: var(--space-3);
+}
+
+.note .do {
+  display: block;
+  margin-top: var(--space-2);
+  font: var(--type-small);
+  color: var(--text-strong);
+}
+
+/* The pass, before it is handed over. Monospace and scrollable: it is a
+   document to be read, and reading it is the point of showing it. */
+.bundle {
+  max-height: 16rem;
+  overflow: auto;
+  margin: var(--space-2) 0;
+  padding: var(--space-2);
+  background: var(--surface-sunk);
+  border: 1px solid var(--border-hairline);
+  font: var(--type-code);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-body);
+}
+
+/* The classification chip beside an abstention in the register. Quiet: the
+   reason the rule gave is the sentence, and this is the filing. */
+.annot-kind {
+  margin-left: var(--space-2);
+  padding: 0 0.35rem;
+  font: var(--type-code);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  border: 1px solid var(--border-hairline);
+  white-space: nowrap;
+}
+
+/* An abstention that was correct is listed but not pushed forward. Still
+   legible — "not checked" stays visible whatever kind it is. */
+.annotations li.quiet {
+  opacity: 0.68;
+}

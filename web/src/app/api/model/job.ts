@@ -13,6 +13,7 @@ import { CalibrationReport } from './calibration-report';
 import { Summary } from './summary';
 import { ConversionReport } from './conversion-report';
 import { Downloads } from './downloads';
+import { AbstentionDiagnosis } from './abstention-diagnosis';
 import { SourceProfile } from './source-profile';
 
 
@@ -31,6 +32,10 @@ export interface Job {
      * What was submitted with the review, if anything.
      */
     declaration?: ProjectDeclaration | null;
+    /**
+     * Root causes that would account for several of this review\'s abstentions at once. Computed on read from the abstentions and the source profile, so an old review gets one too. Empty when nothing in the record supports a claim.
+     */
+    diagnosis?: Array<AbstentionDiagnosis>;
     /**
      * Present only while state is `done`.
      */

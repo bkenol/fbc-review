@@ -17,6 +17,9 @@
   </div>
 
   <p class="session">
+    @if (trainingAvailable()) {
+      <a routerLink="/training">Training</a>
+    }
     @if (isOwner()) {
       <a routerLink="/admin">Feedback</a>
     }
@@ -33,17 +36,21 @@
   </p>
 </header>
 
-<div class="wrap">
-  <!-- Headline shape is the system's: a concrete claim with a measure in it. -->
-  <p class="eyebrow">Pre-submittal plan review</p>
-  <h1>Every stated value checked against the section it cites.</h1>
-  <p class="claim"><span>{{ claim() }}</span></p>
-  <p class="lede">
-    Drop a vector permit set. Every stated code value is checked against the section it
-    cites, the arithmetic is redone, and the egress paths are measured off the drawing at
-    the scale recorded inside the file. A rule that cannot get the input it needs abstains
-    and says so.
-  </p>
+<div class="wrap" [class.full]="fullBleed()">
+  <!-- Headline shape is the system's: a concrete claim with a measure in it.
+       Not on a full-bleed route: a screen whose whole job is to show a 36-inch
+       drawing does not open with three paragraphs of positioning above it. -->
+  @if (!fullBleed()) {
+    <p class="eyebrow">Pre-submittal plan review</p>
+    <h1>Every stated value checked against the section it cites.</h1>
+    <p class="claim"><span>{{ claim() }}</span></p>
+    <p class="lede">
+      Drop a vector permit set. Every stated code value is checked against the section it
+      cites, the arithmetic is redone, and the egress paths are measured off the drawing at
+      the scale recorded inside the file. A rule that cannot get the input it needs abstains
+      and says so.
+    </p>
+  }
 
   @if (auth.state() === 'starting') {
     <section class="step">
@@ -57,8 +64,11 @@
     <router-outlet />
   }
 
-  <!-- Required on every state, and not negotiable prose. -->
-  <footer>
+  <!-- Required on every state, and not negotiable prose. Compressed to one
+       line on a full-bleed route rather than dropped: the disclaimer is not
+       optional anywhere, and a workspace is exactly where somebody might
+       mistake this for a plan approval. -->
+  <footer [class.terse]="fullBleed()">
     Advisory only. A licensed design professional remains responsible for code compliance —
     this is not a plan approval and does not replace review by the authority having
     jurisdiction.

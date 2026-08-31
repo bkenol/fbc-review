@@ -15,11 +15,15 @@ export enum MarkupKind {
 
     Box = 'box',
 
+    Cloud = 'cloud',
+
     Arrow = 'arrow',
 
     Strikeout = 'strikeout',
 
     Freehand = 'freehand',
+
+    Text = 'text',
 
     Note = 'note'
 }

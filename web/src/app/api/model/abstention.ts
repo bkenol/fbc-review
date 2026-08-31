@@ -10,10 +10,18 @@
 
 
 /**
- * A rule that declined to run. Never the same thing as a rule that passed.
+ * A rule that declined to run. Never the same thing as a rule that passed.  `rule`, `reason` and `detail` are what the engine recorded and are never rewritten. `kind` and `proposable` are `webapp.abstentions`\' reading of that reason, added on the way out — so the register still shows what the rule said, and the classification sits beside it rather than in place of it.
  */
 export interface Abstention { 
     detail?: string;
+    /**
+     * Which class of abstention this is. See `AbstentionKindInfo`.
+     */
+    kind?: string;
+    /**
+     * Whether this one is worth offering a proposal for. False on an abstention that was correct — most \'the set does not state it\' abstentions are.
+     */
+    proposable?: boolean;
     reason: string;
     rule: string;
 }

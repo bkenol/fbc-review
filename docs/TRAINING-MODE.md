@@ -197,14 +197,117 @@ Two consequences worth knowing:
 
 ## 5. What the reviewer sees
 
-`/review/{id}` opens the set as uploaded and draws the findings over it as an
-SVG overlay in PDF user space. Clicking a finding opens it; the feedback form
-below is the taxonomy the server publishes, rendered.
+### `/training` — the way in
 
-In training mode the sheet also takes markup — highlight, box, arrow,
-strikeout, freehand, note — each with a comment. Markup is how you report
-something the review *missed*: there is no finding to attach that to, so it
-attaches to the place on the drawing instead.
+Training is a destination, not a checkbox. It used to be only a review option,
+which meant the one way to reach any of it was to have a permit set in hand and
+be willing to wait forty seconds — while the questions people actually have
+(what have I told it, what did it do with that, what is still waiting on
+somebody) have nothing to do with the document in front of them.
+
+`/training` needs no upload. It shows the live profile version, how many rules
+it has moved, and every finished review as something you can open and work
+through. There is genuinely nothing to train on without a document; there is no
+reason it has to be a *new* one.
+
+The checkbox on the upload form still exists and still means one thing: which
+profile a **new** review runs against — your own candidate, so you see the
+effect of feedback you have already given, or the approved one everybody else
+gets. It has never decided what you can do to a review afterwards.
+
+### `/review/{id}` — the workspace
+
+The set as uploaded, with the findings drawn over it as an SVG overlay in PDF
+user space. The route declares `data: { chrome: 'full' }`, which drops the
+marketing block and the page gutters: a 24x36 sheet inside a 92-character
+measure is a drawing you cannot read, and this is the one screen where the
+document is the whole point.
+
+The zoom fits the sheet rather than opening at 100%, and keeps fitting it as the
+window and the side panel change size until somebody zooms by hand. `viewer/fit.ts`
+is that arithmetic, pure and tested on its own — fitting both axes is what makes
+one rule work for a landscape 24x36, a portrait title sheet and a square detail
+sheet with no orientation branch anywhere.
+
+In training mode the sheet also takes markup — highlight, box, revision cloud,
+arrow, strikeout, freehand, text label, note — each with a comment and a
+category colour. Markup is how you report something the review *missed*: there
+is no finding to attach that to, so it attaches to the place on the drawing
+instead.
+
+Colour is semantic rather than decorative: **must change**, **question**,
+**review missed this**, **note**. Four categories a plan reviewer's red pen
+already distinguishes, published from `feedback_schema.MARKUP_COLOURS` so the
+client carries no copy. Unclassified is a real state and stays one — no swatch
+selected does not silently become "note".
+
+### Handing a pass over
+
+`GET /api/jobs/{id}/markups/export` returns the whole annotated pass: every
+annotation with its comment, its sheet and its geometry, plus a plain-text
+rendering of the same thing, ordered the way a drawing is read. The reviewer can
+read it, save it, or hand it over.
+
+`POST /api/jobs/{id}/markups/submit` hands it over as one piece of feedback with
+the bundle attached as a snapshot. Two decisions there:
+
+- **The request carries no markup.** The server reads its own store, so a pass
+  that was never drawn cannot be submitted, and editing an annotation afterwards
+  does not change what the owner was handed. Same rule as `rule_id` and
+  `finding_fid`: an anchor comes from what the service produced.
+- **The bundle the reviewer previews is the bundle the owner reads** — the same
+  endpoint, the same bytes. Nobody should hand over a document they have only
+  been told the size of.
+
+Every defect verdict on the `sweep` aspect is `COMPONENT` or `JUDGEMENT`, which
+is not an oversight. The value in a marked-up permit set is the drawings and the
+sentences, and no fold over a dropdown extracts that. It goes to a person.
+
+### Arguing with a rule that stood down
+
+The register has always listed abstentions — "not checked" must never look like
+"checked and passed". What it could not say is whether the abstention was
+**right**, and those are very different situations wearing the same words:
+
+- `DECL.HEIGHT — neither the drawings nor the declaration state this` on a set
+  that genuinely omits the height. Correct. Nothing to fix.
+- The same line on a set whose G-002 prints `HEIGHT: 25'-4"` in a table that was
+  pasted in as a **picture**. The value is on the sheet, in ink, and nothing
+  read it.
+
+`webapp/abstentions.py` classifies the reason string into one of seven classes —
+`extraction`, `geometry`, `corpus`, `absent`, `option`, `error`, `unknown` — and
+only the ones with something to fix are offered as work. It classifies the
+reason, never the drawing: it cannot see the sheet, so it never asserts a value
+is printed anywhere. What it says is which class of failure this is and what
+would have to be true for the abstention to be wrong. The reviewer confirms or
+denies, through the `abstention` subject.
+
+The one inference it draws is corroborated rather than guessed. When a review
+reports sheets that paste part of the drawing in as an image and the rebuild was
+never run, "the set does not state this" stops being a claim about the drawings
+and becomes a claim about the part of the drawings that was read — so those
+abstentions are reclassified `extraction`, which is the proposable class. Both
+facts come off the same job record.
+
+`diagnose()` goes one step further and names root causes that would account for
+several abstentions at once, with the sheets to check. On the ITEC Alico Park
+set — 35 sheets, 31 rules, 25 abstentions, eleven sheets carrying pasted images,
+rebuild off — it reports:
+
+> 24 rules stood down for want of a value, and 11 sheets paste part of the
+> drawing in as a picture. Sheet 1, 2, 6, 7, 9, 12, 13, 17, 18, 19, 31 are where
+> to look.
+
+One cause, not twenty-four separate mysteries. Every claim names its sheets so
+it can be checked rather than believed.
+
+`tests/test_abstentions.py::test_every_reason_the_corpus_emits_is_classified`
+parses every `Abstention(...)` in `fbcreview/` out of the source and asserts
+this module has a class for it. `fbcreview/` is not this service's to edit, so
+the coupling runs the other way: a new reason over there fails a test here and
+somebody decides what it means, rather than a reviewer being told
+"unclassified" about something the engine was perfectly clear about.
 
 Two viewer decisions worth recording:
 

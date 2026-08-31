@@ -46,8 +46,20 @@ SUBJECT_FINDING = "finding"
 #: subject always means new code — which is why it is a separate subject and
 #: not a seventh aspect.
 SUBJECT_COVERAGE = "coverage"
+#: Feedback on a rule that *declined to run*, anchored to the abstention rather
+#: than to a finding or a markup. A separate subject because the question is a
+#: different one: not "was this right" but "should it have been able to tell".
+#: The register already lists abstentions; this is how a person says which of
+#: them were wrong to stand down, and it is the only path by which "the value is
+#: printed right there" reaches the owner as work rather than as a complaint.
+SUBJECT_ABSTENTION = "abstention"
+#: A whole marked-up pass, submitted at the end of a session. Anchored to no
+#: single thing — it *is* the set of things, carried as the markup bundle. Its
+#: own subject because a sweep is read rather than routed: nobody can decide
+#: from a dropdown what twenty annotations on a permit set add up to.
+SUBJECT_SWEEP = "sweep"
 
-SUBJECTS = (SUBJECT_FINDING, SUBJECT_COVERAGE)
+SUBJECTS = (SUBJECT_FINDING, SUBJECT_COVERAGE, SUBJECT_ABSTENTION, SUBJECT_SWEEP)
 
 # ── verdict polarity ──────────────────────────────────────────────────────
 GOOD, DEFECT = "good", "defect"
@@ -348,8 +360,113 @@ GAP = Aspect(
     ),
 )
 
+# ── abstention: whether a rule was right to stand down ────────────────────
+# The register already says a rule abstained and why. This asks the only
+# question the register cannot answer: was it *right* to?
+#
+# The first verdict is the praise one, and on this subject it carries more
+# weight than usual. "Neither the drawings nor the declaration state this" is
+# very often correct, and a taxonomy that offered only ways to complain would
+# collect a defect report every time somebody clicked through the list.
+#
+# `webapp.abstentions` pre-selects the verdict its classification implies, and
+# the person may change it. Nothing is submitted that they did not choose.
+STANDDOWN = Aspect(
+    key="standdown",
+    label="Why it stood down",
+    help="Should this rule have been able to reach a conclusion here?",
+    subject=SUBJECT_ABSTENTION,
+    required=True,
+    verdicts=(
+        Verdict(
+            "correctly_abstained", "Right to stand down",
+            "The set genuinely does not carry what this rule needed. Abstaining "
+            "was the correct answer.",
+            polarity=GOOD, remedy=TUNABLE, knob="confirmations", delta=1,
+        ),
+        Verdict(
+            "data_on_sheet", "The value is printed on the sheet",
+            "It is there in ink, in text, and the extractor did not pick it up.",
+            remedy=COMPONENT,
+        ),
+        Verdict(
+            "data_in_image", "The value is in a table pasted as a picture",
+            "The sheet states it, but in an image rather than as text — so nothing "
+            "read it. Rebuilding that sheet is what recovers it.",
+            remedy=COMPONENT,
+        ),
+        Verdict(
+            "layer_named_differently", "Our CAD layer is named differently",
+            "The geometry is on the drawing under a name this build does not "
+            "match. A mapping, not a rewrite.",
+            remedy=COMPONENT,
+        ),
+        Verdict(
+            "corpus_missing", "The code data is missing from this build",
+            "The table or row this rule needed is not carried. Adding it is a "
+            "corpus decision, never an automatic one.",
+            remedy=JUDGEMENT,
+        ),
+        Verdict(
+            "rule_failed", "The rule errored",
+            "It raised rather than deciding. An engine bug.",
+            remedy=COMPONENT,
+        ),
+        Verdict(
+            "should_not_apply", "This rule does not govern this project",
+            "Standing down was the right outcome but for the wrong reason — the "
+            "rule should not be running on this building at all.",
+            remedy=TUNABLE, knob="scope_occupancy", delta="exclude",
+        ),
+    ),
+)
+
+# ── sweep: a whole marked-up pass, handed over ────────────────────────────
+# Every defect verdict here is JUDGEMENT or COMPONENT, and that is not an
+# oversight. A sweep is a reviewer's annotated copy of a permit set: the value
+# in it is the drawings and the sentences, and no fold over a dropdown can
+# extract that. It goes to a person to read, which is the honest routing.
+SWEEP = Aspect(
+    key="sweep",
+    label="What this pass found",
+    help="What does the markup you are handing over amount to?",
+    subject=SUBJECT_SWEEP,
+    required=True,
+    verdicts=(
+        Verdict(
+            "agrees", "The review held up",
+            "I went through the set and the annotations are notes, not "
+            "corrections.",
+            polarity=GOOD, remedy=TUNABLE, knob="confirmations", delta=1,
+        ),
+        Verdict(
+            "missed_items", "The markup points at things the review missed",
+            "Annotations mark requirements nothing was raised about.",
+            remedy=COMPONENT,
+        ),
+        Verdict(
+            "wrong_items", "The markup points at findings that are wrong",
+            "Annotations mark findings that should not have been raised, or were "
+            "raised badly.",
+            remedy=JUDGEMENT,
+        ),
+        Verdict(
+            "mixed", "Both — misses and mistakes",
+            "The pass found some of each. Read it.",
+            remedy=JUDGEMENT,
+        ),
+        Verdict(
+            "unreadable_set", "The set itself defeated the review",
+            "Scanned sheets, pasted tables or flattened layers meant most of it "
+            "was never read.",
+            remedy=COMPONENT,
+        ),
+    ),
+)
+
 ASPECTS: Tuple[Aspect, ...] = (
     CONCLUSION, SEVERITY, CITATION, EVIDENCE, LOCATION, CLARITY, GAP,
+    STANDDOWN, SWEEP,
 )
 
 _BY_KEY: Dict[str, Aspect] = {a.key: a for a in ASPECTS}
@@ -362,10 +479,28 @@ _BY_KEY: Dict[str, Aspect] = {a.key: a for a in ASPECTS}
 MARKUP_KINDS: Tuple[Tuple[str, str, str], ...] = (
     ("highlight", "Highlight", "A translucent wash over text or a table row."),
     ("box", "Box", "A rectangle around a region of the drawing."),
+    ("cloud", "Revision cloud", "The drafting convention for 'this area has to change'."),
     ("arrow", "Arrow", "Points at one thing from somewhere with room to write."),
     ("strikeout", "Strike out", "A line through something that should not be there."),
-    ("freehand", "Freehand", "A drawn line, for anything the other four cannot frame."),
+    ("freehand", "Freehand", "A drawn line, for anything the other shapes cannot frame."),
+    ("text", "Text", "A label written on the drawing itself, where it has to be read."),
     ("note", "Note", "A pin with no geometry, for a comment about the sheet itself."),
+)
+
+#: What a colour means, rather than a paint box.
+#:
+#: A palette of twenty swatches gets used as decoration and tells the person
+#: reading the markup afterwards nothing. These four are the ones a plan
+#: reviewer's red pen already distinguishes, so a submitted pass can be sorted
+#: by intent without opening every comment. `MarkupRequest.colour` is optional
+#: and an empty value means "unclassified", which is honest — it does not
+#: silently become one of these.
+MARKUP_COLOURS: Tuple[Tuple[str, str, str, str], ...] = (
+    ("issue", "Must change", "#d1495b", "A defect in the set: this has to be corrected."),
+    ("question", "Question", "#e8a33d", "Not obviously wrong, but it needs an answer."),
+    ("missed", "Review missed this", "#7b5ea7",
+     "The set may be fine; the review should have said something and did not."),
+    ("note", "Note", "#3d7ea6", "Context for whoever reads this pass. Not a defect."),
 )
 
 
@@ -381,6 +516,12 @@ def to_dicts() -> List[Dict[str, Any]]:
 
 def markup_kinds() -> List[Dict[str, str]]:
     return [{"key": k, "label": l, "help": h} for k, l, h in MARKUP_KINDS]
+
+
+def markup_colours() -> List[Dict[str, str]]:
+    return [
+        {"key": k, "label": l, "hex": x, "help": h} for k, l, x, h in MARKUP_COLOURS
+    ]
 
 
 def lookup(aspect: str, verdict: str) -> Optional[Verdict]:

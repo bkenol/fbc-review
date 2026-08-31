@@ -1,0 +1,147 @@
+@let status = config()?.training;
+
+@if (!enabled()) {
+  <section class="step">
+    <div class="step-head">
+      <span class="mark"><span class="xtick" aria-hidden="true"></span></span>
+      <h2>Training is off on this deployment</h2>
+    </div>
+    <p class="hint">
+      Nothing is collected and nothing is calibrated — the service reviews exactly as it
+      did before any of this existed. Set <code>FBC_TRAINING</code> to switch it on.
+    </p>
+    <div class="row">
+      <a class="btn" routerLink="/">Review a set</a>
+    </div>
+  </section>
+} @else {
+  <!-- ── 01 · what training mode actually is ─────────────────────────────
+       Said plainly and up front, because the word "training" promises
+       something this cannot do and the gap between the two is the thing most
+       likely to be misunderstood. -->
+  <section class="step">
+    <div class="step-head">
+      <span class="mark">01</span>
+      <h2>Training</h2>
+    </div>
+
+    <p class="lede">
+      Feedback here does not retrain a model — there is no model in the review path, and
+      there is not going to be. What it does is move a named, versioned set of per-rule
+      levers: which rules run, what severity they report at, which occupancies they govern.
+      Every change is diffable, reversible, and attributable to the feedback that argued
+      for it.
+    </p>
+    <p class="hint">
+      That is the trade. A trained model could learn a check nobody wrote; this cannot. In
+      exchange, you can show a permit applicant exactly why a finding says what it says,
+      which is the property this product is actually for.
+    </p>
+
+    <div class="dimrun">
+      <div class="dim">
+        <b class="fig">{{ status?.profile_version ?? 0 }}</b>
+        <span class="rule" aria-hidden="true"><span class="slash"></span></span>
+        <span class="lab">Live version</span>
+      </div>
+      <div class="dim">
+        <b class="fig">{{ status?.calibrated_rules ?? 0 }}</b>
+        <span class="rule" aria-hidden="true"><span class="slash"></span></span>
+        <span class="lab">Rules moved</span>
+      </div>
+      <div class="dim" [class.zero]="!openable().length">
+        <b class="fig">{{ openable().length }}</b>
+        <span class="rule" aria-hidden="true"><span class="slash"></span></span>
+        <span class="lab">Sets to work on</span>
+      </div>
+    </div>
+
+    <p class="figures">
+      Production reviews against <b>{{ status?.profile_label }}</b> v{{
+        status?.profile_version
+      }}. Comment assist: {{ status?.assist }}. Issues: {{ status?.github }}.
+    </p>
+
+    @if (isOwner()) {
+      <div class="row">
+        <a class="btn" routerLink="/admin">Open the feedback queue</a>
+      </div>
+    }
+  </section>
+
+  <!-- ── 02 · pick something to work on ──────────────────────────────────
+       The whole point of this route: no upload required. Every finished review
+       is already in storage with its findings and its set. -->
+  <section class="step">
+    <div class="step-head">
+      <span class="mark">02</span>
+      <h2>Work on a set</h2>
+      @if (openable().length > 8) {
+        <button type="button" class="inline" (click)="toggleAll()">
+          {{ showAll() ? 'Show fewer' : 'Show all ' + openable().length }}
+        </button>
+      }
+    </div>
+
+    @if (openable().length) {
+      <p class="hint">
+        Opening one fetches its findings back out of storage — nothing is re-run. Inside,
+        you can read every finding, mark up the sheets, argue with a rule that declined to
+        run, and hand the whole pass over.
+      </p>
+      <ul class="pastlist">
+        @for (entry of recent(); track entry.id) {
+          <li class="{{ worstOf(entry) }}">
+            <a class="pastrow" [routerLink]="['/review', entry.id]">
+              <span class="when">{{ entry.created_at | date: 'd MMM y · HH:mm' }}</span>
+              <span class="what">
+                <b class="name">{{ entry.project_name || entry.filename }}</b>
+                <span class="sub">
+                  {{ entry.filename }} · {{ entry.pages }} sheet{{
+                    entry.pages === 1 ? '' : 's'
+                  }}
+                </span>
+              </span>
+              <span class="counts" aria-hidden="true">
+                @for (severity of tallyOrder; track severity) {
+                  @if (countOf(entry, severity) > 0) {
+                    <span class="c {{ severity }}">
+                      <b>{{ countOf(entry, severity) }}</b>{{ severity.charAt(0) }}
+                    </span>
+                  }
+                }
+              </span>
+              <span class="open">{{ entry.open_findings }} open</span>
+            </a>
+          </li>
+        }
+      </ul>
+    } @else {
+      <p class="hint">
+        No finished reviews yet. Training works on reviews that already exist, so run one
+        first — it does not have to be run in training mode to be worked on afterwards.
+      </p>
+      <div class="row">
+        <a class="btn" routerLink="/">Review a set</a>
+      </div>
+    }
+  </section>
+
+  <!-- ── 03 · how a review runs in training mode ─────────────────────────── -->
+  <section class="step">
+    <div class="step-head">
+      <span class="mark">03</span>
+      <h2>Running one in training mode</h2>
+    </div>
+    <p class="hint">
+      The checkbox on the upload form decides which profile a <i>new</i> review runs
+      against: your own candidate, so you see the effect of feedback you have already
+      given, rather than the approved one everybody else gets. It changes nothing about
+      what you can do afterwards — feedback, markup and hand-over work on any finished
+      review either way.
+    </p>
+    <div class="row">
+      <a class="btn" routerLink="/">Upload a set</a>
+    </div>
+  </section>
+}

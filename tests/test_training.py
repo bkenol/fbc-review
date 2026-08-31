@@ -785,3 +785,281 @@ def test_the_findings_document_still_matches_its_published_schema(
     assert parsed.calibration.profile_version == 1
     assert parsed.findings[0].severity == "MEDIUM"
     assert parsed.summary.counts == {"MEDIUM": 1}
+
+
+# ══ abstentions: arguing with a rule that declined to run ═════════════════
+def seed_abstentions(client, job_id="job-1", rows=None):
+    """Attach a summary carrying abstentions to an already-seeded review."""
+    rows = rows if rows is not None else [
+        {"rule": "DOORS.CLEAR_WIDTH", "reason": "no door schedule extracted", "detail": ""},
+        {"rule": "DECL.HEIGHT",
+         "reason": "neither the drawings nor the declaration state this",
+         "detail": "Building height"},
+    ]
+    client.fake_store.docs[job_id]["summary"] = {
+        "sheets": 3, "pages": 3, "cad_layers": 0, "annotations": 0, "marked": 0,
+        "counts": {}, "open": 0, "verified": 0, "conflicts": 0,
+        "abstentions": rows, "rules_run": 31, "scale_pages": 0,
+        "pdf_bytes": 1024, "pdf_name": "set — CODE REVIEW.pdf", "findings_count": 0,
+    }
+    return rows
+
+
+def test_an_abstention_is_classified_on_the_way_out(training_client):
+    """The engine's reason is preserved; the reading of it sits beside it."""
+    seed_done_job(training_client)
+    seed_abstentions(training_client)
+
+    job = training_client.get("/api/jobs/job-1").json()
+    rows = {a["rule"]: a for a in job["summary"]["abstentions"]}
+
+    assert rows["DOORS.CLEAR_WIDTH"]["reason"] == "no door schedule extracted"
+    assert rows["DOORS.CLEAR_WIDTH"]["kind"] == "extraction"
+    assert rows["DOORS.CLEAR_WIDTH"]["proposable"] is True
+    # Nothing said this value is anywhere, so there is nothing to propose.
+    assert rows["DECL.HEIGHT"]["kind"] == "absent"
+    assert rows["DECL.HEIGHT"]["proposable"] is False
+
+
+def test_a_set_with_unread_pasted_tables_is_diagnosed(training_client):
+    seed_done_job(training_client)
+    seed_abstentions(training_client, rows=[
+        {"rule": f"DECL.FIELD_{i}",
+         "reason": "neither the drawings nor the declaration state this", "detail": ""}
+        for i in range(6)
+    ])
+    training_client.fake_store.docs["job-1"]["source"] = {
+        "kind": "vector", "cad_layers": 0, "reviewable_pages": 3,
+        "raster_pages": [], "region_pages": [0, 1], "summary": "", "sheets": [],
+    }
+
+    job = training_client.get("/api/jobs/job-1").json()
+    assert [d["key"] for d in job["diagnosis"]] == ["pasted_code_table"]
+    # 1-based, as the viewer numbers them.
+    assert job["diagnosis"][0]["sheets"] == [1, 2]
+    # And the abstentions themselves are re-read in that light.
+    assert all(a["kind"] == "extraction" for a in job["summary"]["abstentions"])
+
+
+def test_feedback_about_an_abstention_has_to_name_the_rule(training_client):
+    seed_done_job(training_client)
+    seed_abstentions(training_client)
+
+    r = training_client.post("/api/jobs/job-1/feedback", json={
+        "subject": "abstention",
+        "answers": {"standdown": "data_on_sheet"},
+    })
+    assert r.status_code == 400
+    assert "which rule" in r.json()["error"]["message"]
+
+
+def test_a_rule_the_review_did_not_stand_down_on_is_not_an_anchor(training_client):
+    """The same rule as `_findings_index`: the anchor comes from what we produced.
+
+    `rule_id` decides which rule a calibration proposal would move, so a browser
+    naming one the review never abstained on has to be a 404 rather than a
+    proposal against a rule nobody complained about.
+    """
+    seed_done_job(training_client)
+    seed_abstentions(training_client)
+
+    r = training_client.post("/api/jobs/job-1/feedback", json={
+        "subject": "abstention",
+        "rule_id": "EGRESS.DEAD_END",
+        "answers": {"standdown": "data_on_sheet"},
+    })
+    assert r.status_code == 404
+
+
+def test_reporting_a_readable_value_routes_to_engine_work(training_client):
+    seed_done_job(training_client)
+    seed_abstentions(training_client)
+
+    r = training_client.post("/api/jobs/job-1/feedback", json={
+        "subject": "abstention",
+        "rule_id": "DOORS.CLEAR_WIDTH",
+        "answers": {"standdown": "data_on_sheet"},
+    })
+    assert r.status_code == 200
+    body = r.json()
+    # No knob reaches an extractor, and the taxonomy says so at the point the
+    # question is written rather than here.
+    assert body["triage"]["disposition"] == "needs_component"
+    assert body["applied_to_candidate"] is False
+
+
+def test_confirming_an_abstention_is_recorded_as_agreement(training_client):
+    """The praise verdict is real evidence, not an opt-out."""
+    seed_done_job(training_client)
+    seed_abstentions(training_client)
+
+    r = training_client.post("/api/jobs/job-1/feedback", json={
+        "subject": "abstention",
+        "rule_id": "DECL.HEIGHT",
+        "answers": {"standdown": "correctly_abstained"},
+    })
+    assert r.status_code == 200
+    assert r.json()["triage"]["disposition"] == "confirmation"
+    assert r.json()["applied_to_candidate"] is True
+
+
+def test_a_missing_code_table_needs_a_person(training_client):
+    """The corpus is the moat: nothing about it is ever applied automatically."""
+    seed_done_job(training_client)
+    seed_abstentions(training_client, rows=[
+        {"rule": "HEIGHT_AREA.TABLE_504_HEIGHT",
+         "reason": "Table 504.3 row not carried in this build's corpus", "detail": ""},
+    ])
+
+    r = training_client.post("/api/jobs/job-1/feedback", json={
+        "subject": "abstention",
+        "rule_id": "HEIGHT_AREA.TABLE_504_HEIGHT",
+        "answers": {"standdown": "corpus_missing"},
+    })
+    assert r.json()["triage"]["disposition"] == "escalate"
+
+
+# ══ the marked-up pass ════════════════════════════════════════════════════
+def draw(client, job_id="job-1", **overrides):
+    body = {
+        "page": 1, "kind": "box",
+        "geometry": {"x0": 10, "y0": 20, "x1": 90, "y1": 60, "points": []},
+        "comment": "", "colour": "", "sheet": "", "finding_fid": "",
+    }
+    body.update(overrides)
+    r = client.post(f"/api/jobs/{job_id}/markups", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_the_pass_can_be_read_before_it_is_handed_over(training_client):
+    seed_done_job(training_client)
+    draw(training_client, comment="Door 104 has no clear width", colour="issue")
+    draw(training_client, page=2, kind="cloud", comment="Rework this stair")
+
+    bundle = training_client.get("/api/jobs/job-1/markups/export").json()
+    assert len(bundle["markups"]) == 2
+    assert bundle["sheets"] == [1, 2]
+    assert bundle["commented"] == 2
+    assert bundle["counts"] == {"box": 1, "cloud": 1}
+    # The plain-text rendering is generated here so the copy the reviewer keeps
+    # and the copy the owner reads are the same bytes.
+    assert "Door 104 has no clear width" in bundle["text"]
+    assert "[issue]" in bundle["text"]
+
+
+def test_the_export_is_ordered_the_way_a_drawing_is_read(training_client):
+    seed_done_job(training_client)
+    draw(training_client, page=2, geometry={"x0": 0, "y0": 5, "x1": 9, "y1": 9, "points": []})
+    draw(training_client, page=1, geometry={"x0": 0, "y0": 90, "x1": 9, "y1": 99, "points": []})
+    draw(training_client, page=1, geometry={"x0": 0, "y0": 10, "x1": 9, "y1": 19, "points": []})
+
+    bundle = training_client.get("/api/jobs/job-1/markups/export").json()
+    assert [(m["page"], m["geometry"]["y0"]) for m in bundle["markups"]] == [
+        (1, 10.0), (1, 90.0), (2, 5.0),
+    ]
+
+
+def test_an_empty_pass_cannot_be_handed_over(training_client):
+    seed_done_job(training_client)
+    r = training_client.post("/api/jobs/job-1/markups/submit", json={
+        "answers": {"sweep": "agrees"}, "comment": "",
+    })
+    assert r.status_code == 400
+    assert "no markup" in r.json()["error"]["message"]
+
+
+def test_handing_a_pass_over_attaches_the_bundle_the_server_holds(
+    training_client, feedback
+):
+    """The client sends answers, never markup.
+
+    Letting it post its own list would let it hand over a pass that was never
+    drawn, and would let a markup edited afterwards change what the owner was
+    given. Both are the same mistake as trusting a `rule_id` from the body.
+    """
+    seed_done_job(training_client)
+    drawn = draw(training_client, comment="Egress width is short here", colour="issue")
+
+    r = training_client.post("/api/jobs/job-1/markups/submit", json={
+        "answers": {"sweep": "missed_items"},
+        "comment": "Three of these are the same corridor.",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["triage"]["disposition"] in ("needs_component", "escalate")
+    assert "1 annotation" in body["message"]
+
+    stored = feedback.get_feedback(body["id"])
+    assert stored["subject"] == "sweep"
+    assert stored["sweep"]["markups"][0]["id"] == drawn["id"]
+    assert "Egress width is short here" in stored["sweep"]["text"]
+
+
+def test_the_snapshot_does_not_change_when_the_markup_does(training_client, feedback):
+    seed_done_job(training_client)
+    drawn = draw(training_client, comment="As handed over")
+
+    submitted = training_client.post("/api/jobs/job-1/markups/submit", json={
+        "answers": {"sweep": "wrong_items"}, "comment": "",
+    }).json()
+
+    training_client.request(
+        "DELETE", f"/api/jobs/job-1/markups/{drawn['id']}"
+    )
+
+    stored = feedback.get_feedback(submitted["id"])
+    assert len(stored["sweep"]["markups"]) == 1
+    assert "As handed over" in stored["sweep"]["text"]
+
+
+def test_a_sweep_posted_to_the_ordinary_feedback_route_is_redirected(training_client):
+    """That route carries no bundle, so a sweep through it would be empty."""
+    seed_done_job(training_client)
+    r = training_client.post("/api/jobs/job-1/feedback", json={
+        "subject": "sweep", "answers": {"sweep": "agrees"},
+    })
+    assert r.status_code == 400
+    assert "markups/submit" in r.json()["error"]["message"]
+
+
+def test_export_and_submit_are_gated_on_training_like_everything_else(client):
+    seed_done_job(client)
+    assert client.get("/api/jobs/job-1/markups/export").status_code == 400
+    assert client.post(
+        "/api/jobs/job-1/markups/submit", json={"answers": {"sweep": "agrees"}}
+    ).status_code == 400
+
+
+def test_a_pass_on_someone_elses_review_is_not_found(training_client):
+    seed_done_job(training_client, job_id="job-theirs", uid="uid-bob")
+    assert training_client.get("/api/jobs/job-theirs/markups/export").status_code == 404
+
+
+# ══ the new markup vocabulary ═════════════════════════════════════════════
+def test_the_new_tools_and_colours_are_published_and_accepted(training_client):
+    body = training_client.get("/api/config").json()
+    kinds = {k["key"] for k in body["markup_kinds"]}
+    assert {"cloud", "text"} <= kinds
+
+    colours = {c["key"] for c in body["markup_colours"]}
+    assert colours == {"issue", "question", "missed", "note"}
+    # Every colour carries a swatch, or the palette renders as four grey dots.
+    assert all(c["hex"].startswith("#") for c in body["markup_colours"])
+
+    # And what is published is what the API takes.
+    seed_done_job(training_client)
+    for kind in sorted(kinds):
+        drawn = draw(training_client, kind=kind, colour="question")
+        assert drawn["kind"] == kind
+        assert drawn["colour"] == "question"
+
+
+def test_the_abstention_catalogue_is_published_for_the_client_to_render(training_client):
+    body = training_client.get("/api/config").json()
+    kinds = {k["key"]: k for k in body["abstention_kinds"]}
+    assert "extraction" in kinds
+    assert kinds["extraction"]["proposable"] is True
+    assert kinds["absent"]["proposable"] is False
+    # Guidance is prose for a reader, not a key.
+    assert len(kinds["extraction"]["guidance"]) > 40

@@ -222,3 +222,73 @@ def test_rotation_does_not_change_how_many_regions_are_found():
     b = profile_of(turned).sheets[0]
     assert len(a.raster_regions) == len(b.raster_regions) == 1
     assert b.has_readable_regions is True
+
+
+# ── sliced regions ────────────────────────────────────────────────────────
+def test_a_table_sliced_into_bands_is_one_region_again():
+    """A plot driver's slicing must not become the OCR's idea of a table.
+
+    AutoCAD cuts one plotted raster into horizontal strips and writes each as
+    its own image. Reading them independently cuts words at the seams and stops
+    any row spanning the table — which is how thousands of recovered characters
+    can yield zero usable rows.
+
+    Sliced finely enough here that no band clears the size floors on its own, so
+    this also pins the quieter half of the bug: before coalescing the sheet
+    reports no pasted regions at all, and a code table that is never noticed is
+    never OCR'd either.
+    """
+    from conftest import make_pdf_with_sliced_table
+
+    prof = profile_of(make_pdf_with_sliced_table(pages=1, bands=6))
+
+    assert prof.kind == "vector"
+    assert prof.region_pages == [0]
+
+    regions = prof.sheets[0].raster_regions
+    assert len(regions) == 1, "the bands were not merged back into one region"
+    # The bands' pixel counts add: they are disjoint slices of one raster.
+    assert regions[0].megapixels > 1.5
+    # And the merged rect spans every band's height.
+    assert regions[0].y1 - regions[0].y0 > 140
+
+
+def test_two_separate_tables_on_one_sheet_stay_separate():
+    """The merge must be strict, or a label pairs with the wrong value.
+
+    `_abuts` is what decides, so this exercises it directly rather than through
+    a PDF: two tables inches apart share no edge and must survive as two.
+    """
+    from webapp.pdfkind import _coalesce
+
+    left = pymupdf.Rect(100, 100, 300, 800)
+    right = pymupdf.Rect(420, 100, 700, 800)
+    assert len(_coalesce([(left, 1.0), (right, 1.0)])) == 2
+
+
+def test_bands_merge_transitively_and_in_any_order():
+    from webapp.pdfkind import _coalesce
+
+    shuffled = [
+        (pymupdf.Rect(0, 200, 100, 300), 0.5),
+        (pymupdf.Rect(0, 0, 100, 100), 0.5),
+        (pymupdf.Rect(0, 100, 100, 200), 0.5),
+    ]
+    merged = _coalesce(shuffled)
+    assert len(merged) == 1
+    assert merged[0][0] == pymupdf.Rect(0, 0, 100, 300)
+    assert merged[0][1] == pytest.approx(1.5)
+
+
+def test_a_narrow_strip_touching_a_wide_band_is_not_part_of_it():
+    """Bands of one plot share their width. A logo abutting a table does not."""
+    from webapp.pdfkind import _coalesce
+
+    band = pymupdf.Rect(0, 0, 1000, 100)
+    strip = pymupdf.Rect(0, 100, 120, 200)
+    assert len(_coalesce([(band, 1.0), (strip, 1.0)])) == 2
+
+
+def test_a_clean_vector_sheet_is_unaffected_by_coalescing():
+    prof = profile_of(make_pdf(pages=2))
+    assert prof.region_pages == []

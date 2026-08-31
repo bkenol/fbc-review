@@ -23,8 +23,28 @@
       <button type="button" class="inline" (click)="zoomBy(1 / 1.25)" aria-label="Zoom out">
         −
       </button>
-      <button type="button" class="inline" (click)="fit()">{{ (zoom() * 100).toFixed(0) }}%</button>
+      <button type="button" class="inline" (click)="actualSize()" title="Actual size, 100%">
+        {{ (zoom() * 100).toFixed(0) }}%
+      </button>
       <button type="button" class="inline" (click)="zoomBy(1.25)" aria-label="Zoom in">+</button>
+      <button
+        type="button"
+        class="tool"
+        [class.on]="fitMode() === 'page'"
+        (click)="fitTo('page')"
+        title="Show the whole sheet, and keep showing it as the window changes"
+      >
+        Fit sheet
+      </button>
+      <button
+        type="button"
+        class="tool"
+        [class.on]="fitMode() === 'width'"
+        (click)="fitTo('width')"
+        title="Fill the width and scroll down the sheet"
+      >
+        Fit width
+      </button>
     </div>
 
     @if (canDraw()) {
@@ -50,6 +70,27 @@
           </button>
         }
       </div>
+
+      <!-- Colour is a category rather than decoration: it is what lets whoever
+           reads a submitted pass sort forty annotations by intent without
+           opening every comment. No swatch selected means unclassified, which
+           is said rather than defaulted into one of them. -->
+      <div class="viewer-inks" role="group" aria-label="Markup colour">
+        @for (ink of markupColours(); track ink.key) {
+          <button
+            type="button"
+            class="ink"
+            [class.on]="colour() === ink.key"
+            [style.--ink]="ink.hex"
+            (click)="pickColour(ink.key)"
+            [title]="ink.label + ' — ' + ink.help"
+            [attr.aria-pressed]="colour() === ink.key"
+          >
+            <span class="dot" aria-hidden="true"></span>
+            <span class="ink-label">{{ ink.label }}</span>
+          </button>
+        }
+      </div>
     }
   </div>
 
@@ -57,7 +98,7 @@
     <p class="hint viewer-error" role="alert">{{ message }}</p>
   }
 
-  <div class="viewer-stage">
+  <div class="viewer-stage" #stage>
     @if (loading()) {
       <p class="hint" aria-live="polite">Opening the set…</p>
     }
@@ -124,6 +165,7 @@
             class="markup"
             [attr.data-kind]="markup.kind"
             [class.has-comment]="!!markup.comment"
+            [style.--ink]="swatch(markup.colour ?? '')"
             (click)="markupPicked.emit(markup)"
           >
             @switch (markup.kind) {
@@ -144,6 +186,23 @@
                   [attr.height]="(markup.geometry.y1 ?? 0) - (markup.geometry.y0 ?? 0)"
                   [attr.stroke-width]="hairline() * 1.6"
                 />
+              }
+              @case ('cloud') {
+                <path [attr.d]="cloud(markup.geometry)" fill="none" [attr.stroke-width]="hairline() * 1.6" />
+              }
+              @case ('text') {
+                <!-- Drawn on the sheet, not hidden in a side panel. A label
+                     whose text you have to click to read is a pin, and there is
+                     already a pin. The font size is in PDF points so the label
+                     keeps its size against the drawing as you zoom. -->
+                <text
+                  class="label"
+                  [attr.x]="markup.geometry.x0"
+                  [attr.y]="markup.geometry.y0"
+                  [attr.font-size]="11 / zoom()"
+                >
+                  {{ markup.comment || 'Double-click to write' }}
+                </text>
               }
               @case ('strikeout') {
                 <line
@@ -185,8 +244,10 @@
 
         <!-- The shape under the cursor right now. -->
         @if (draft(); as shape) {
-          <g class="markup draft" [attr.data-kind]="shape.kind">
-            @if (shape.kind === 'freehand') {
+          <g class="markup draft" [attr.data-kind]="shape.kind" [style.--ink]="swatch(colour())">
+            @if (shape.kind === 'cloud') {
+              <path [attr.d]="cloud(shape)" fill="none" [attr.stroke-width]="hairline() * 1.6" />
+            } @else if (shape.kind === 'freehand') {
               <path
                 [attr.d]="path(shape.points)"
                 fill="none"
