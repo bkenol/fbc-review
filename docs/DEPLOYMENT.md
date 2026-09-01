@@ -1261,10 +1261,16 @@ present, and sends nothing when it is not. An empty header is a 400 of its own,
 which is why "unset" and "empty" have to mean the same thing here.
 
 The type is in the **Type** column at
-<https://console.anthropic.com/settings/keys>. The workspace id starts
-`wrkspc_` and is on the workspace's page under **Organization settings →
-Workspaces**. `bash scripts/setup-secrets.sh --check` says whether you have set
-it, and warns when a key is present without one.
+<https://console.anthropic.com/settings/keys>. `bash scripts/setup-secrets.sh
+--check` says whether you have set it, and warns when a key is present without
+one.
+
+Finding the id has one wrinkle worth knowing. A key created for **All
+workspaces** shows its Workspace ID as `—`, because it is not bound to one —
+which is exactly the key that needs the id supplied. Read it instead off any
+workspace-scoped key in the same organisation, or from the workspace's own page
+under **Organization settings → Workspaces**. It identifies the workspace, not
+the key, so the same `wrkspc_` value serves every key acting in it.
 
 #### Issues from escalated feedback
 
@@ -1309,7 +1315,30 @@ disposition is one of `confirmation`, `auto_tunable`, `needs_component` or
 escalation is not the thing that finds out whether GitHub minds. And note that
 the token is never logged and a GitHub error is recorded by status code only,
 deliberately: an error body can echo the request back, and the request carries
-the report.
+the report. That is the right trade for a service and a poor one for you
+standing at a terminal wondering why nothing happened, which is what the check
+below is for.
+
+##### Checking the token without opening an issue
+
+Send a create-issue request with a deliberately empty body. GitHub answers
+**403** when the token may not write issues and **422** when it may but the
+payload is wrong — and 422 creates nothing, because `title` is required:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -X POST https://api.github.com/repos/OWNER/REPO/issues \
+  -H "Authorization: Bearer $FBC_GITHUB_TOKEN" \
+  -H 'Accept: application/vnd.github+json' \
+  -H 'X-GitHub-Api-Version: 2022-11-28' \
+  -d '{}'
+```
+
+`422` is the answer you want. `403` means the permission is missing; `404`
+almost always means the token's **resource owner** is not the account that owns
+the repository, or the repository was not in its selected list — a
+fine-grained token reports "not found" rather than "not allowed" for a
+repository it cannot see.
 
 ---
 
