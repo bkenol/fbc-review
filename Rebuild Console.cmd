@@ -76,11 +76,22 @@ exit /b 0
 
 :shortcut
 rem WScript.Shell is the only thing on a stock Windows that writes a .lnk.
+rem
+rem WindowStyle 7 is minimised. The target is this .cmd, so Windows opens a
+rem console for it however briefly - it only starts pythonw and exits - and a
+rem black window flashing on every launch is what stops people using a
+rem shortcut.
+rem
+rem Every comment stays above the command: a caret continues the line, so a
+rem `rem` between two continued lines is not a batch comment at all - it is
+rem passed to powershell as an argument, and the shortcut silently stops
+rem being written.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Rebuild Console.lnk'));" ^
   "$s.TargetPath = '%REPO%\Rebuild Console.cmd';" ^
   "$s.WorkingDirectory = '%REPO%';" ^
   "$s.Description = 'Meridian Rebuild Console';" ^
+  "$s.WindowStyle = 7;" ^
   "$s.Save();" ^
   "Write-Host 'Shortcut placed on the Desktop.'"
 pause
