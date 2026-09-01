@@ -1158,7 +1158,7 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_BUILD` | unset | Build number, when handing one in without a full `FBC_VERSION`. |
 | `FBC_DEV_UNSAFE_AUTH` | unset | **Local only.** Ignored whenever `K_SERVICE` is set. |
 | `FBC_SMTP_*`, `FBC_MAIL_FROM` | unset | Email stays inert unless all are set |
-| `FBC_TRAINING_MODE` | unset | `1` turns training mode on. Unset, no feedback collection exists and no Firestore collection beyond `reviews` is touched — see §8. |
+| `FBC_TRAINING_MODE` | unset | `1` turns training mode on. Unset, no feedback collection exists and no Firestore collection beyond `reviews` is touched — see §8. **`share.ps1` and `share.sh` set it for a local run**, along with `FBC_OWNER_EMAILS=dev@localhost` so the owner's queue is reachable under the dev bypass; `-NoTraining` / `--no-training` opts out. The deployed service is unaffected: this default lives in the local run scripts, not in `webapp/config.py`. |
 | `FBC_OWNER_EMAILS` | empty | Who may read the feedback queue and promote a calibration profile. A second, independent list: **empty means nobody**, and being on `FBC_ALLOWED_EMAILS` does not put you on this one. |
 | `FBC_FEEDBACK_COLLECTION` | `feedback` | Firestore collection for submitted feedback |
 | `FBC_MARKUP_COLLECTION` | `markups` | Firestore collection for sheet markup |

@@ -4,7 +4,7 @@
 # Bash equivalent of scripts/share.ps1.
 #
 #   bash scripts/share.sh [--port 8060] [--max-upload-mb 95] [--skip-build]
-#                        [--persistent] [--authenticated]
+#                        [--persistent] [--authenticated] [--no-training]
 #
 # Builds the client, then runs the API with FBC_STATIC_DIR pointed at the bundle
 # so a single origin serves both. That removes CORS from the picture and means a
@@ -59,6 +59,13 @@ MAX_UPLOAD_MB="${FBC_MAX_UPLOAD_MB:-95}"
 SKIP_BUILD=0
 PERSISTENT=0
 AUTHENTICATED=0
+# On by default for a local run. Training mode writes feedback, markups and
+# calibration profiles; on this backend those are JSON files under .devdata,
+# which is throwaway and git-ignored. It does not change what a review reports
+# until someone promotes a calibration profile - with none promoted,
+# active_profile() is the same default CalibrationProfile() the untrained path
+# uses. --no-training is the way back to the deployed service's behaviour.
+TRAINING=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -67,6 +74,7 @@ while [ $# -gt 0 ]; do
     --skip-build)     SKIP_BUILD=1; shift ;;
     --persistent)     PERSISTENT=1; shift ;;
     --authenticated)  AUTHENTICATED=1; shift ;;
+    --no-training)    TRAINING=0; shift ;;
     -h|--help)        sed -n '2,48p' "$0"; exit 0 ;;
     *)                printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
@@ -200,6 +208,22 @@ else
     -e FBC_PROJECT_ID=fbc-dev-local
   )
 fi
+# ── training mode ─────────────────────────────────────────────────────────
+# The owner list is separate from the allowlist on purpose - being allowed to
+# run a review is not being allowed to re-level a rule for everyone - and an
+# unset FBC_OWNER_EMAILS means nobody, so the owner's queue would 404 with
+# training otherwise on. With the dev bypass, every request signs in as
+# dev@localhost, so that is who gets it locally. Anything already in the
+# environment wins, and authenticated mode never invents an owner.
+if [ "$TRAINING" -eq 1 ]; then
+  RUN_ARGS+=(-e FBC_TRAINING_MODE=1)
+  OWNERS="${FBC_OWNER_EMAILS:-}"
+  if [ -z "$OWNERS" ] && [ "$AUTHENTICATED" -eq 0 ]; then
+    OWNERS='dev@localhost'
+  fi
+  if [ -n "$OWNERS" ]; then RUN_ARGS+=(-e "FBC_OWNER_EMAILS=${OWNERS}"); fi
+fi
+
 if [ -n "$VERSION" ]; then RUN_ARGS+=(-e "FBC_VERSION=${VERSION}"); fi
 RUN_ARGS+=(fbc-review:dev)
 
@@ -230,6 +254,11 @@ else
   warn 'Sign-in required: false — anyone with the URL can use this'
   warn 'Close it with --authenticated, or a Cloudflare Access policy'
   warn 'on the hostname (docs/DEPLOYMENT.md section 0d).'
+fi
+if [ "$TRAINING" -eq 1 ]; then
+  ok   'Training mode: on (--no-training turns it off)'
+else
+  info 'Training mode: off'
 fi
 info ''
 info "Upload limit: ${MAX_UPLOAD_MB} MB"
