@@ -80,8 +80,16 @@ FBC_SMTP_HOST=smtp.example.com
 FBC_SMTP_PORT=587
 FBC_SMTP_USER=...
 FBC_SMTP_PASS=...
-FBC_MAIL_FROM="Code Review <review@example.com>"
+FBC_MAIL_FROM=Code Review <review@example.com>
 ```
+
+Locally these live in `secrets/local.env`, which is git-ignored and read both by
+`docker run --env-file` and by `webapp/envfile.py` for a bare `uvicorn` run. Create it
+with `bash scripts/setup-secrets.sh`, which also says what is still missing.
+**Values there are literal — do not quote them**, including the `From` above: Docker's
+env-file parser keeps the quotes, and `webapp/envfile.py` deliberately matches it rather
+than being cleverer in one path than the other. `docs/DEPLOYMENT.md` §6a has the rest,
+including the App Password Google Workspace requires.
 
 Attachments over 20 MB are dropped from the mail and the body points at the download link
 instead — a 24-sheet vector set lands around 17 MB, so this matters.

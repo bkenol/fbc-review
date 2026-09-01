@@ -159,7 +159,13 @@ def read_comment(
         client = anthropic.Anthropic()
         response = client.messages.parse(
             model=MODEL,
-            max_tokens=2000,
+            # Room for the thinking as well as the answer. Adaptive thinking
+            # spends this budget too, and an opinion that hits the cap comes
+            # back unparsed — which this function reports as "no summary",
+            # indistinguishable from having no key at all. A ceiling that
+            # cannot be reached costs nothing: the bill is what was generated,
+            # and the answer is four short fields.
+            max_tokens=16000,
             system=_SYSTEM,
             thinking={"type": "adaptive"},
             output_config={"effort": "medium"},

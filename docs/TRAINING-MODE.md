@@ -223,11 +223,81 @@ marketing block and the page gutters: a 24x36 sheet inside a 92-character
 measure is a drawing you cannot read, and this is the one screen where the
 document is the whole point.
 
-The zoom fits the sheet rather than opening at 100%, and keeps fitting it as the
-window and the side panel change size until somebody zooms by hand. `viewer/fit.ts`
-is that arithmetic, pure and tested on its own — fitting both axes is what makes
-one rule work for a landscape 24x36, a portrait title sheet and a square detail
+The zoom fits rather than opening at 100%, and keeps fitting as the window and
+the side panel change size until somebody zooms by hand. `viewer/fit.ts` is that
+arithmetic, pure and tested on its own — fitting both axes is what makes one
+rule work for a landscape 24x36, a portrait title sheet and a square detail
 sheet with no orientation branch anywhere.
+
+It opens on **fit width**, not fit sheet. Fitting a 24x36 sheet whole, next to a
+side panel, puts a schedule's row height at two or three pixels: the sheet is
+visible and nothing on it is readable, so the first act was always to zoom back
+in. Fit width starts where that zoom was going, and scrolling down a sheet is
+how the paper copy is read anyway. Fit sheet is one click away, because "where
+am I on this sheet" is a real question — it is just not the question you spend
+the session in.
+
+#### The sheet rail
+
+A permit set is read by sheet number. You go to M-2 because the ductwork is on
+M-2, and paging through fifteen sheets to reach it is work the paper set does
+not make you do. So every sheet is a chip on a rail inside the viewer, named
+from `summary.sheet_index`, carrying its open-finding count, its in-file comment
+count and its markup count — the rail is a map of where the work is, not a list
+of names. Arrow keys page it once the sheet has focus, and large arrows sit over
+the drawing where your eyes already are.
+
+The sheet numbers are the engine's own reading of the title block, carried
+forward rather than re-derived: `webapp/worker.py` writes `facts.sheets` into
+the summary. A sheet whose number could not be read is flagged and captioned
+"Sheet n" — the viewer's own numbering, which does not pretend the drawing is
+called `p7`.
+
+#### Three authors mark a permit set
+
+Findings, the file's own comments, and your markup are three separate layers
+with three separate toggles, because "whose mark is this?" has to be answerable
+by turning one off. There is a fourth switch for the reviewed copy — the
+marked-up PDF rendered in place of the source, with the engine's markup burnt in
+and its findings register on the pages past the end of the set.
+
+#### The comments that came with the file
+
+`viewer/annots.ts`. A permit set arrives with other people's marks on it: the
+engineer's revision clouds, a plans examiner's sticky notes from the last
+submittal, a callout the architect left in. Those are the most valuable
+annotations on the sheet, because somebody who knows the building wrote them.
+
+The viewer showed none of them, and not by choice: pdf.js paints a page from its
+content stream, and a PDF annotation is not in the content stream. It is a
+separate array on the page object, drawn by a separate layer this viewer never
+had, so a commented-up set and a clean one rendered identically.
+
+They are now read once per document, drawn in their own geometry — squares,
+ellipses, polygons, ink strokes, text-markup quads — in the colour the file gave
+them, with the region each comment is about and the comment text written on the
+drawing beside it. They are registered in the panel too, so four comments on M-2
+are visible without visiting M-2. The panel says plainly that they came with the
+file and are not something this review found: three authors, and telling them
+apart is the whole job of the layer.
+
+`readAnnotations` reads pdf.js's plain objects through a supplied
+user-space-to-viewport function and imports nothing, so the arithmetic is tested
+without a canvas. An annotation with no readable rectangle is dropped rather
+than placed at the origin — the same rule the finding pins follow.
+
+#### Picking a row takes you to the mark
+
+A register row that does not go to the sheet it is about is a row you then have
+to find, on a set where finding it means knowing which of thirty-five sheets it
+is on. Picking a finding, an in-file comment or a markup pages the viewer to its
+sheet, scrolls the mark into the middle of the stage and lights it for two
+seconds. Picking the same row again re-centres it — that is the case that
+matters, because you have scrolled away and are asking to be taken back.
+
+Picking the mark *on the drawing* deliberately does not scroll: the sheet is
+already in front of you, and moving it out from under the cursor you just
+clicked with is the opposite of helpful.
 
 In training mode the sheet also takes markup — highlight, box, revision cloud,
 arrow, strikeout, freehand, text label, note — each with a comment and a
@@ -309,16 +379,26 @@ the coupling runs the other way: a new reason over there fails a test here and
 somebody decides what it means, rather than a reviewer being told
 "unclassified" about something the engine was perfectly clear about.
 
-Two viewer decisions worth recording:
+Three viewer decisions worth recording:
 
-- **It renders the source set, not the marked-up PDF.** The marked-up PDF has
+- **It opens the source set, not the marked-up PDF.** The marked-up PDF has
   every marker burnt into the page; drawing an interactive layer on top would
-  show each one twice, with neither switchable.
+  show each one twice, with neither switchable. The marked-up copy is a layer
+  you switch to, which is also how its register becomes readable in the app.
 - **Finding pins are placed by searching the page's text layer for the anchor
-  the finding cites** — the same strategy `render/markup.py` uses. When the
-  anchor is not there, usually because the sheet pastes its code table in as a
-  picture, the finding is listed and says it could not be placed. A guessed
-  position would put a marker on the wrong part of somebody's drawing.
+  the finding cites, at the occurrence its `hit` names** — the same strategy
+  and the same index `render/markup.py` uses. The `hit` is not a nicety: on a
+  door schedule listing `2'-8"` four times, always boxing the first would put
+  the viewer's marker on a different door from the marked-up PDF, and the two
+  would be reporting the same finding about different rows. When the anchor is
+  not there, usually because the sheet pastes its code table in as a picture,
+  the finding is listed and says it could not be placed. A guessed position
+  would put a marker on the wrong part of somebody's drawing.
+- **A finding that exists only under the declared reading gets no marker**,
+  because the renderer gives it none. The permit is issued against what was
+  submitted and the AHJ reviews the sheet, so a marker there would attribute to
+  the drawings something the drawings do not say. It is in the register, with
+  its basis stated.
 
 ---
 
@@ -339,6 +419,14 @@ Escalations also mail immediately where SMTP is configured; everything else
 waits for the digest. `auto_tunable` deliberately does not interrupt: it is a
 one-click approval sitting in a queue, and mailing about it would train the
 owner to ignore the mail that matters.
+
+Both optional channels — mail and the comment assist — are configured for a
+local deployment through one git-ignored file, `secrets/local.env`. See
+`docs/DEPLOYMENT.md` §6a for the file, the Google Workspace App Password mail
+needs, and why the parser deliberately refuses to be cleverer than Docker's.
+`bash scripts/setup-secrets.sh --check` says where you stand; the value of that
+is that both channels fail *quietly* when unconfigured — the review still runs
+and the feedback still queues, so nothing tells you but `/admin`.
 
 ---
 

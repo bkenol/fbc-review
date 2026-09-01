@@ -1157,15 +1157,86 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_VERSION` | stamped from `VERSION` | The version reported on `/healthz` and shown in the client. Set by CI; wins over anything computed locally. See §5a. |
 | `FBC_BUILD` | unset | Build number, when handing one in without a full `FBC_VERSION`. |
 | `FBC_DEV_UNSAFE_AUTH` | unset | **Local only.** Ignored whenever `K_SERVICE` is set. |
-| `FBC_SMTP_*`, `FBC_MAIL_FROM` | unset | Email stays inert unless all are set |
+| `FBC_SMTP_*`, `FBC_MAIL_FROM` | unset | Email stays inert unless all are set. For a local run, `secrets/local.env` — see §6a. |
 | `FBC_TRAINING_MODE` | unset | `1` turns training mode on. Unset, no feedback collection exists and no Firestore collection beyond `reviews` is touched — see §8. **`share.ps1` and `share.sh` set it for a local run**, along with `FBC_OWNER_EMAILS=dev@localhost` so the owner's queue is reachable under the dev bypass; `-NoTraining` / `--no-training` opts out. The deployed service is unaffected: this default lives in the local run scripts, not in `webapp/config.py`. |
 | `FBC_OWNER_EMAILS` | empty | Who may read the feedback queue and promote a calibration profile. A second, independent list: **empty means nobody**, and being on `FBC_ALLOWED_EMAILS` does not put you on this one. |
 | `FBC_FEEDBACK_COLLECTION` | `feedback` | Firestore collection for submitted feedback |
 | `FBC_MARKUP_COLLECTION` | `markups` | Firestore collection for sheet markup |
 | `FBC_CALIBRATION_COLLECTION` | `calibration` | Firestore collection for calibration profile versions |
-| `ANTHROPIC_API_KEY` | unset | Summarising free-text feedback comments (`webapp/assist.py`). **Feedback path only** — never the review path, and `tests/test_training.py` walks the import graph to keep that true. Unset, comments route to a person unread. |
+| `ANTHROPIC_API_KEY` | unset | Summarising free-text feedback comments (`webapp/assist.py`). **Feedback path only** — never the review path, and `tests/test_training.py` walks the import graph to keep that true. Unset, comments route to a person unread. For a local run, `secrets/local.env` — see §6a. |
 | `FBC_GITHUB_REPO` | unset | `owner/repo` to open issues in from escalated feedback |
 | `FBC_GITHUB_TOKEN` | unset | Token for the above. Issues stay unavailable unless both are set. |
+
+### 6a. Configuring a local deployment: `secrets/local.env`
+
+On Cloud Run these variables are set once on the service and forgotten. Locally
+the service is a container `scripts/share.sh` starts from whatever shell is
+open, and exporting five SMTP variables and an API key before every start is a
+step that gets skipped. The failure is silent — mail and the comment assist are
+both inert without their keys, a review still runs, feedback still queues, and
+the only place that says otherwise is `/admin`.
+
+So there is one git-ignored file, and both paths read it: the container gets it
+as `docker run --env-file`, and a bare `uvicorn` gets it through
+`webapp/envfile.py`.
+
+```bash
+bash scripts/setup-secrets.sh          # copy the template, then say what is missing
+$EDITOR secrets/local.env              # fill in the blanks
+bash scripts/share.sh                  # restart; the container picks it up
+bash scripts/setup-secrets.sh --check  # what is set, without changing anything
+```
+
+On Windows: `powershell -ExecutionPolicy Bypass -File scripts\setup-secrets.ps1`.
+
+Three rules, and the second one is the one that bites:
+
+1. **Anything already set in the environment wins.** Cloud Run has no such file,
+   and if one ever appeared in a checkout it could not override the real thing.
+2. **Do not quote values.** Docker's `--env-file` takes quotes literally, so
+   `FBC_SMTP_PASS="abcd efgh"` sends the quotes as part of the password.
+   `webapp/envfile.py` deliberately parses no more cleverly than Docker does —
+   a parser that stripped quotes would authenticate locally and fail in the
+   container, which is worse than not supporting them. A password with spaces
+   in it is written bare. `setup-secrets` flags any quoted line it finds.
+3. **There is no `$VAR` expansion.** The value is the characters after the `=`.
+
+#### Mail, on Google Workspace
+
+`webapp/mailer.py` speaks SMTP with STARTTLS, which is `smtp.gmail.com` on 587.
+
+- `FBC_SMTP_USER` is the full address.
+- `FBC_SMTP_PASS` is a 16-character **App Password**, not the account password.
+  Google rejects the account password for SMTP on any account with 2-step
+  verification, which is every Workspace account worth having. Generate one at
+  <https://myaccount.google.com/apppasswords> signed in as that account.
+- `FBC_MAIL_FROM` must be the authenticated address or one of its verified
+  aliases. Gmail rewrites or rejects a `From` it does not own.
+- `FBC_OWNER_EMAILS` is who escalations and the digest go to. Empty means
+  nobody, so mail can be fully configured and still have nowhere to go —
+  `setup-secrets` calls that out.
+
+Prove it end to end from `/admin`: **send the digest now** returns what the SMTP
+server said, including the failure text when it said no.
+
+#### The comment assist
+
+`ANTHROPIC_API_KEY` turns on `webapp/assist.py`, which reads the free-text half
+of a feedback submission so an escalation arrives with a sentence saying what
+the person actually claimed. Keys are at
+<https://console.anthropic.com/settings/keys>.
+
+**It is not the review path and it cannot become the review path.** It runs
+after a review has finished, on a background thread, against feedback a person
+submitted. `tests/test_training.py::test_no_model_call_is_reachable_from_the_review_path`
+walks the import graph from `webapp.worker` and `fbcreview` and fails if
+`anthropic` is reachable from either — including through a lazy import inside a
+function. A review still makes zero model calls with this set. Its opinion is
+advisory and one-directional: it may raise a disposition and can never lower
+one (`docs/TRAINING-MODE.md` §3.5).
+
+For Cloud Run, put the key in Secret Manager and mount it rather than setting it
+as a plain environment variable — see the block below §8.
 
 ---
 

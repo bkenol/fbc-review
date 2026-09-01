@@ -224,6 +224,26 @@ if [ "$TRAINING" -eq 1 ]; then
   if [ -n "$OWNERS" ]; then RUN_ARGS+=(-e "FBC_OWNER_EMAILS=${OWNERS}"); fi
 fi
 
+# ── mail, the comment assist, and issues ──────────────────────────
+# One git-ignored file rather than five exported variables per shell, because
+# the failure of a missed export is silent: mail and the assist are both inert
+# without their keys and neither says so anywhere but /admin. Docker parses it
+# itself, which is why webapp/envfile.py deliberately does not parse it any
+# more cleverly — see the note there about quotes.
+#
+# Every -e above still wins: docker gives --env argument precedence over
+# --env-file whatever the order on the command line, so this can never quietly
+# take over FBC_BACKEND or the dev auth bypass. Passed through winpath because
+# the docker CLI opens the file itself, client-side, exactly as it does a -v
+# path.
+ENV_FILE="$ROOT/secrets/local.env"
+if [ -f "$ENV_FILE" ]; then
+  RUN_ARGS+=(--env-file "$(winpath "$ENV_FILE")")
+  CONFIGURED='yes'
+else
+  CONFIGURED='no'
+fi
+
 if [ -n "$VERSION" ]; then RUN_ARGS+=(-e "FBC_VERSION=${VERSION}"); fi
 RUN_ARGS+=(fbc-review:dev)
 
@@ -259,6 +279,14 @@ if [ "$TRAINING" -eq 1 ]; then
   ok   'Training mode: on (--no-training turns it off)'
 else
   info 'Training mode: off'
+fi
+if [ "$CONFIGURED" = 'yes' ]; then
+  ok   'Local configuration: secrets/local.env'
+  info 'What is actually live is on /admin — mail and the comment assist both'
+  info 'stay inert, quietly, when their keys are missing.'
+else
+  info 'Local configuration: none (mail and the comment assist are off)'
+  info 'Turn them on with:  bash scripts/setup-secrets.sh'
 fi
 info ''
 info "Upload limit: ${MAX_UPLOAD_MB} MB"
