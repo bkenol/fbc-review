@@ -539,6 +539,12 @@ export class SheetViewer {
       if (!context) return;
       await page.render({ canvas, canvasContext: context, viewport }).promise;
       if (token !== this.renderToken) return;
+      // A sheet that has just been drawn is not a sheet that could not be
+      // drawn. Without this the banner from one failure outlives it — and
+      // switching between the set and the reviewed copy cancels a render in
+      // flight, which is a failure that has already fixed itself by the time
+      // anybody could read about it.
+      this.error.set(null);
 
       await this.locateAnchors(page, base, token);
     } catch {
