@@ -1927,6 +1927,219 @@ td.sev .chip.conflict {
   margin-top: 0.5rem;
 }
 
+/* ── the sheet rail ────────────────────────────────────────────────────────
+ * Navigation is the thing a reviewer does most and it used to be the smallest
+ * control on the page: two text links either side of "Sheet 3 of 15". A permit
+ * set is read by sheet number — you go to M-2 because the ductwork is on M-2 —
+ * so every sheet is named here and one click away, and the counts say where the
+ * work is before you get there.
+ *
+ * It scrolls horizontally rather than wrapping. A rail that reflows to three
+ * rows on a narrow window moves every chip each time the panel resizes, and a
+ * target that moves is a target you have to look for.
+ */
+.sheet-rail {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+  padding-bottom: 0.5rem;
+}
+
+.rail-step {
+  flex: 0 0 auto;
+  width: 2.1rem;
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+  cursor: pointer;
+}
+
+.rail-step:hover:not(:disabled) {
+  color: var(--text-strong);
+  border-color: var(--border-input);
+}
+
+.rail-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Shrinks but does not stretch, and takes the slack after itself, so the two
+   step buttons stay against the chips on a three-sheet set instead of being
+   thrown to opposite ends of the bar. */
+.rail-track {
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 0 1 auto;
+  margin-inline-end: auto;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+}
+
+/* Wide enough for a real sheet number — M.001, A-101 — at a readable size,
+   rather than sized to the digits of a page count. */
+.rail-chip {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 4.4rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  text-align: left;
+  background: var(--surface-card);
+  color: var(--text-muted);
+  border: 1px solid var(--border-hairline);
+  border-bottom: 2px solid var(--sev, var(--border-hairline));
+  cursor: pointer;
+}
+
+.rail-chip:hover {
+  color: var(--text-strong);
+  border-color: var(--border-input);
+}
+
+.rail-chip.on {
+  color: var(--primary-ink);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.rail-chip.on .rail-count {
+  background: color-mix(in srgb, var(--primary-ink) 22%, transparent);
+  color: var(--primary-ink);
+}
+
+.rail-code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* A page number standing in for a sheet number is shown as what it is. */
+.rail-code.unread {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.rail-marks {
+  display: flex;
+  gap: 0.2rem;
+  min-height: 0.85rem;
+}
+
+.rail-count {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.62rem;
+  line-height: 1.35;
+  padding: 0 0.25rem;
+  border-radius: 2px;
+  background: var(--surface-sunk);
+  color: var(--text-muted);
+}
+
+.rail-count.findings {
+  background: color-mix(in srgb, var(--sev, var(--text-muted)) var(--sev-tint), transparent);
+  color: var(--sev, var(--text-muted));
+}
+
+.rail-count.comments {
+  color: var(--accent-dimension);
+}
+
+.rail-count.marks {
+  color: var(--annotation);
+}
+
+/* Where you are, said once and in the set's own language. */
+.viewer-where {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.viewer-where strong {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9rem;
+  color: var(--text-strong);
+}
+
+.viewer-where .dim {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
+.viewer-layers {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.viewer-layers .tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── paging from the sheet itself ──────────────────────────────────────────
+ * Over the drawing rather than in the bar, because at fit-width the bar is off
+ * the top of where you are looking. They sit on the frame, not the stage, so
+ * they hold still while the sheet scrolls under them.
+ */
+.viewer-frame {
+  position: relative;
+  min-width: 0;
+}
+
+.stage-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 2.4rem;
+  height: 3.6rem;
+  font: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--text-body);
+  background: color-mix(in srgb, var(--surface-card) 88%, transparent);
+  border: 1px solid var(--border-hairline);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.viewer-frame:hover .stage-arrow {
+  opacity: 1;
+}
+
+.stage-arrow:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stage-arrow.left {
+  left: 0.4rem;
+}
+
+.stage-arrow.right {
+  right: 0.4rem;
+}
+
+.viewer-stage:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 /* The canvas and the overlay are the same box. The overlay must not intercept
  * the pointer unless a tool is active, or the sheet cannot be scrolled or
  * text-selected while reading. */
@@ -2040,6 +2253,114 @@ td.sev .chip.conflict {
 .arrowhead {
   fill: var(--annotation);
   stroke: none;
+}
+
+/* ── comments that came with the file ──────────────────────────────────────
+ * Drawn in the colour the file gave them — `--ink` is set per mark from the
+ * annotation's own colour — because that colour is a claim the drafter made
+ * about their own mark. Recolouring a red revision cloud to this app's ink
+ * would quietly restate somebody else's drawing.
+ *
+ * Deliberately not on the severity ramp and not in the reviewer's blue: three
+ * authors mark a permit set, and telling them apart is the whole job of this
+ * layer.
+ */
+.infile {
+  pointer-events: all;
+  cursor: pointer;
+  fill: none;
+  stroke: var(--ink, var(--accent-dimension));
+}
+
+.infile rect,
+.infile ellipse,
+.infile path,
+.infile line {
+  stroke: var(--ink, var(--accent-dimension));
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.infile rect.wash {
+  fill: var(--ink, var(--accent-dimension));
+  fill-opacity: 0.22;
+  stroke: none;
+}
+
+/* The area of the drawing the comment is about. Dashed, because it is the
+   annotation's declared extent rather than a line anybody drew. */
+.infile rect.region {
+  stroke: var(--ink, var(--accent-dimension));
+  stroke-dasharray: 4 3;
+  stroke-opacity: 0.55;
+  fill: none;
+}
+
+.infile:hover rect.region,
+.infile.selected rect.region {
+  stroke-opacity: 1;
+  fill: var(--ink, var(--accent-dimension));
+  fill-opacity: 0.08;
+}
+
+/* Comment text, written on the drawing beside the mark it belongs to. A
+   comment you have to click something to read is a comment that is not on the
+   sheet. Struck through with the paper colour so it stays legible over
+   linework without a box that would hide the drawing under it. */
+.caption text {
+  fill: var(--ink, var(--annotation));
+  font-family: var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: var(--paper-white);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* What the viewer just scrolled to. Long enough to find on a 36-inch sheet,
+   short enough that it is not still shouting when you start reading. */
+.pin.lit rect,
+.markup.lit rect,
+.markup.lit path,
+.markup.lit line,
+.markup.lit circle,
+.infile.lit rect,
+.infile.lit ellipse,
+.infile.lit path {
+  animation: mark-lit 2.2s ease-out 1;
+}
+
+@keyframes mark-lit {
+  0%,
+  55% {
+    stroke-width: 4px;
+    stroke-opacity: 1;
+  }
+  100% {
+    stroke-width: inherit;
+    stroke-opacity: inherit;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin.lit rect,
+  .markup.lit rect,
+  .markup.lit path,
+  .markup.lit line,
+  .markup.lit circle,
+  .infile.lit rect,
+  .infile.lit ellipse,
+  .infile.lit path {
+    animation: none;
+    stroke-width: 3px;
+  }
+}
+
+.markup.selected rect,
+.markup.selected path,
+.markup.selected line,
+.markup.selected circle {
+  stroke: var(--accent-dimension);
 }
 
 /* ── the side panel ────────────────────────────────────────────────────── */
@@ -2417,6 +2738,19 @@ td.sev .chip.conflict {
   padding: 54px var(--space-3) 0;
 }
 
+/* Where the workspace puts the sheet and the panel side by side, the shell is
+   exactly the window: the sheet scrolls inside its own stage, and the sheet
+   rail, the toolbar and the registers stay where they were put.
+   `min-height` alone cannot do that — it lets a zoomed-in sheet push the shell
+   past the window and take the navigation with it.
+   Below the breakpoint the two stack, one column of a page is the right thing
+   to scroll, and this deliberately does not apply. */
+@media (min-width: 60rem) {
+  .wrap.full {
+    height: 100dvh;
+  }
+}
+
 .wrap.full > router-outlet + * {
   flex: 1 1 auto;
   min-height: 0;
@@ -2468,6 +2802,22 @@ footer.terse .build-line {
   flex: 1 1 auto;
   min-height: 0;
   gap: var(--space-3);
+  /* Stretch, so the sheet column is as tall as the row rather than as tall as
+     the drawing. The base rule starts the two columns at the top, which is
+     right when they are two blocks of prose and wrong when one of them is a
+     36-inch sheet that has to scroll inside itself. */
+  align-items: stretch;
+}
+
+/* The component's own host element sits between the split and the viewer, and
+   an unstyled host is a block of automatic height — which is enough to break
+   the chain and let the sheet grow the page instead of scrolling in its stage.
+   The symptom is the sheet rail disappearing off the top of the window the
+   moment you zoom past fitting, which is exactly when you need it. */
+.workspace.roomy app-sheet-viewer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .workspace.roomy .workspace-side {
@@ -2479,8 +2829,20 @@ footer.terse .build-line {
 .workspace.roomy .viewer {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
+}
+
+/* The frame is what flexes now — it holds the paging arrows still while the
+   sheet scrolls under them — and it passes the height straight through to the
+   stage. A frame that sized itself to its contents instead would let the sheet
+   grow the page rather than scroll inside the stage, which puts the sheet rail
+   and the register off the top of the window on any sheet zoomed past fitting. */
+.workspace.roomy .viewer-frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .workspace.roomy .viewer-stage {

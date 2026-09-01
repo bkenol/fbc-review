@@ -1,22 +1,72 @@
 <div class="viewer">
-  <!-- One bar. Sheet navigation on the left because that is what you reach for
-       most, drawing tools on the right because most sessions never touch them. -->
+  <!-- ── the sheet navigator ──────────────────────────────────────────────
+       Part of the viewer rather than a line above it, and the largest thing on
+       the bar, because going to a sheet is what you do most. Every sheet is
+       named and one click away; the counts say where the work is before you
+       get there. -->
+  <nav class="sheet-rail" aria-label="Sheets in this set">
+    <button
+      type="button"
+      class="rail-step"
+      (click)="go(page() - 1)"
+      [disabled]="page() <= 1"
+      aria-label="Previous sheet"
+    >
+      ‹
+    </button>
+
+    <div class="rail-track" #rail role="tablist" aria-label="Sheets">
+      @for (chip of chips(); track chip.page) {
+        <button
+          type="button"
+          class="rail-chip"
+          role="tab"
+          [class.on]="chip.page === page()"
+          [attr.aria-selected]="chip.page === page()"
+          [attr.data-severity]="chip.severity || null"
+          [title]="chip.title || (chip.read ? chip.code : 'Sheet number not read')"
+          (click)="go(chip.page)"
+        >
+          <span class="rail-code" [class.unread]="!chip.read">{{ chip.code }}</span>
+          <span class="rail-marks">
+            @if (chip.findings) {
+              <span class="rail-count findings" [attr.data-severity]="chip.severity">
+                {{ chip.findings }}
+              </span>
+            }
+            @if (chip.comments) {
+              <span class="rail-count comments" title="Comments already in the file">
+                {{ chip.comments }}
+              </span>
+            }
+            @if (chip.marks) {
+              <span class="rail-count marks" title="Your markup">{{ chip.marks }}</span>
+            }
+          </span>
+        </button>
+      }
+    </div>
+
+    <button
+      type="button"
+      class="rail-step"
+      (click)="go(page() + 1)"
+      [disabled]="page() >= pages()"
+      aria-label="Next sheet"
+    >
+      ›
+    </button>
+  </nav>
+
   <div class="viewer-bar">
-    <div class="viewer-nav">
-      <button type="button" class="inline" (click)="go(page() - 1)" [disabled]="page() <= 1">
-        ‹ Previous
-      </button>
-      <span class="viewer-count">
-        Sheet <strong>{{ page() }}</strong> of {{ pages() || '—' }}
-      </span>
-      <button
-        type="button"
-        class="inline"
-        (click)="go(page() + 1)"
-        [disabled]="page() >= pages()"
-      >
-        Next ›
-      </button>
+    <div class="viewer-where">
+      <strong>{{ here()?.code || 'Sheet ' + page() }}</strong>
+      <span class="viewer-count">{{ page() }} / {{ pages() || '—' }}</span>
+      @if (here(); as chip) {
+        @if (chip.title) {
+          <span class="dim">{{ chip.title }}</span>
+        }
+      }
     </div>
 
     <div class="viewer-zoom">
@@ -30,20 +80,80 @@
       <button
         type="button"
         class="tool"
+        [class.on]="fitMode() === 'width'"
+        (click)="fitTo('width')"
+        title="Fill the width and scroll down the sheet"
+      >
+        Fit width
+      </button>
+      <button
+        type="button"
+        class="tool"
         [class.on]="fitMode() === 'page'"
         (click)="fitTo('page')"
         title="Show the whole sheet, and keep showing it as the window changes"
       >
         Fit sheet
       </button>
+    </div>
+
+    <!-- ── what is drawn on the sheet ───────────────────────────────────
+         Three authors mark a permit set: the review, whoever drew it, and you.
+         Each is switchable, because "whose mark is this?" has to be answerable
+         by turning one off. -->
+    <div class="viewer-layers" role="group" aria-label="What to show on the sheet">
+      @if (markupSrc()) {
+        <button
+          type="button"
+          class="tool"
+          [class.on]="burntIn()"
+          (click)="showDoc(burntIn() ? 'source' : 'markup')"
+          title="Show the reviewed copy — the engine's own markup, burnt into the page, with its register on the sheets past the end of the set"
+        >
+          Reviewed copy
+        </button>
+      }
       <button
         type="button"
         class="tool"
-        [class.on]="fitMode() === 'width'"
-        (click)="fitTo('width')"
-        title="Fill the width and scroll down the sheet"
+        [class.on]="showFindings() && !burntIn()"
+        [disabled]="burntIn()"
+        (click)="showFindings.set(!showFindings())"
+        [title]="
+          burntIn()
+            ? 'Already drawn into the reviewed copy'
+            : 'Box each finding where the review cites the drawing'
+        "
       >
-        Fit width
+        Findings
+      </button>
+      <button
+        type="button"
+        class="tool"
+        [class.on]="showComments() && !burntIn()"
+        [disabled]="burntIn()"
+        (click)="showComments.set(!showComments())"
+        title="Comments and markup already inside the uploaded file"
+      >
+        In-file comments
+      </button>
+      <button
+        type="button"
+        class="tool"
+        [class.on]="showMarkup()"
+        (click)="showMarkup.set(!showMarkup())"
+        title="What you have drawn"
+      >
+        Your markup
+      </button>
+      <button
+        type="button"
+        class="tool"
+        [class.on]="showCaptions()"
+        (click)="showCaptions.set(!showCaptions())"
+        title="Write each comment on the drawing beside the mark it belongs to"
+      >
+        Comment text
       </button>
     </div>
 
@@ -98,182 +208,334 @@
     <p class="hint viewer-error" role="alert">{{ message }}</p>
   }
 
-  <div class="viewer-stage" #stage>
-    @if (loading()) {
-      <p class="hint" aria-live="polite">Opening the set…</p>
-    }
+  <!-- The frame holds the arrows still while the stage scrolls under them. -->
+  <div class="viewer-frame">
+    <button
+      type="button"
+      class="stage-arrow left"
+      (click)="go(page() - 1)"
+      [disabled]="page() <= 1"
+      aria-label="Previous sheet"
+    >
+      ‹
+    </button>
+    <button
+      type="button"
+      class="stage-arrow right"
+      (click)="go(page() + 1)"
+      [disabled]="page() >= pages()"
+      aria-label="Next sheet"
+    >
+      ›
+    </button>
 
-    <div class="sheet" [style.width.px]="cssWidth()" [style.height.px]="cssHeight()">
-      <canvas #canvas class="sheet-canvas" [class.busy]="rendering()"></canvas>
+    <!-- Focusable so the arrow keys page the set. The label says so, because a
+         keyboard shortcut nobody is told about is not a feature. -->
+    <div
+      class="viewer-stage"
+      #stage
+      tabindex="0"
+      role="group"
+      aria-label="The sheet. Arrow keys change sheet."
+      (keydown)="onKey($event)"
+    >
+      @if (loading()) {
+        <p class="hint" aria-live="polite">Opening the set…</p>
+      }
 
-      <!-- The overlay's user space is the page's own, so everything below is in
-           PDF points and the browser does the scaling. preserveAspectRatio is
-           off because the box is set from the same viewport the canvas is
-           rendered at — they cannot disagree, and letting SVG letterbox it
-           would put the drawing and its annotations out of register. -->
-      <svg
-        #overlay
-        class="sheet-overlay"
-        [attr.viewBox]="viewBox()"
-        preserveAspectRatio="none"
-        [class.drawing]="canDraw() && tool() !== select"
-        (pointerdown)="onPointerDown($event)"
-        (pointermove)="onPointerMove($event)"
-        (pointerup)="onPointerUp()"
-        (pointercancel)="onPointerUp()"
-      >
-        <defs>
-          <marker
-            id="markup-arrow"
-            viewBox="0 0 10 10"
-            refX="9"
-            refY="5"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 10 5 L 0 10 z" class="arrowhead" />
-          </marker>
-        </defs>
+      <div class="sheet" #sheetbox [style.width.px]="cssWidth()" [style.height.px]="cssHeight()">
+        <canvas #canvas class="sheet-canvas" [class.busy]="rendering()"></canvas>
 
-        <!-- Findings, boxed where their anchor text actually is. -->
-        @for (item of placed(); track item.finding.fid) {
-          @if (item.box; as box) {
-            <g
-              class="pin"
-              [class.selected]="item.finding.fid === selectedFid()"
-              [attr.data-severity]="item.finding.severity"
-              (click)="showFinding(item.finding)"
+        <!-- The overlay's user space is the page's own, so everything below is in
+             PDF points and the browser does the scaling. preserveAspectRatio is
+             off because the box is set from the same viewport the canvas is
+             rendered at — they cannot disagree, and letting SVG letterbox it
+             would put the drawing and its annotations out of register. -->
+        <svg
+          #overlay
+          class="sheet-overlay"
+          [attr.viewBox]="viewBox()"
+          preserveAspectRatio="none"
+          [class.drawing]="canDraw() && tool() !== select"
+          (pointerdown)="onPointerDown($event)"
+          (pointermove)="onPointerMove($event)"
+          (pointerup)="onPointerUp()"
+          (pointercancel)="onPointerUp()"
+        >
+          <defs>
+            <marker
+              id="markup-arrow"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
             >
-              <rect
-                [attr.x]="box.x0 - 3"
-                [attr.y]="box.y0 - 3"
-                [attr.width]="box.x1 - box.x0 + 6"
-                [attr.height]="box.y1 - box.y0 + 6"
-                [attr.stroke-width]="hairline() * 1.6"
-              />
-              <text [attr.x]="box.x0 - 4" [attr.y]="box.y0 - 6" [attr.font-size]="9 / zoom()">
-                {{ item.finding.fid }}
-              </text>
-            </g>
-          }
-        }
+              <path d="M 0 0 L 10 5 L 0 10 z" class="arrowhead" />
+            </marker>
+          </defs>
 
-        <!-- What the reviewer drew. -->
-        @for (markup of pageMarkups(); track markup.id) {
-          <g
-            class="markup"
-            [attr.data-kind]="markup.kind"
-            [class.has-comment]="!!markup.comment"
-            [style.--ink]="swatch(markup.colour ?? '')"
-            (click)="markupPicked.emit(markup)"
-          >
-            @switch (markup.kind) {
-              @case ('highlight') {
+          <!-- ── the file's own comments ──────────────────────────────────
+               Drawn in the colour the file gave them and in their own geometry,
+               so a drafter's red cloud reads as a drafter's red cloud and not
+               as something this review said. -->
+          @if (showComments() && !burntIn()) {
+            @for (mark of pageAnnots(); track mark.id) {
+              <g
+                class="infile"
+                [attr.data-kind]="mark.kind"
+                [class.selected]="mark.id === selectedAnnotId()"
+                [class.lit]="mark.id === flash()"
+                [style.--ink]="mark.colour"
+                (click)="annotationPicked.emit(mark)"
+              >
+                @for (shape of mark.shapes; track $index) {
+                  @switch (shape.kind) {
+                    @case ('rect') {
+                      <rect
+                        [attr.x]="shape.box.x0"
+                        [attr.y]="shape.box.y0"
+                        [attr.width]="shape.box.x1 - shape.box.x0"
+                        [attr.height]="shape.box.y1 - shape.box.y0"
+                        [attr.stroke-width]="hairline() * 1.4"
+                      />
+                    }
+                    @case ('ellipse') {
+                      <ellipse
+                        [attr.cx]="midX(shape.box)"
+                        [attr.cy]="midY(shape.box)"
+                        [attr.rx]="(shape.box.x1 - shape.box.x0) / 2"
+                        [attr.ry]="(shape.box.y1 - shape.box.y0) / 2"
+                        [attr.stroke-width]="hairline() * 1.4"
+                      />
+                    }
+                    @case ('path') {
+                      <path
+                        [attr.d]="shapePath(shape.points, shape.closed)"
+                        fill="none"
+                        [attr.stroke-width]="hairline() * 1.4"
+                      />
+                    }
+                    @case ('quads') {
+                      @for (quad of shape.boxes; track $index) {
+                        <rect
+                          class="wash"
+                          [attr.x]="quad.x0"
+                          [attr.y]="quad.y0"
+                          [attr.width]="quad.x1 - quad.x0"
+                          [attr.height]="quad.y1 - quad.y0"
+                        />
+                      }
+                    }
+                  }
+                }
+
+                <!-- The area of the drawing this comment is about, said as a
+                     shape rather than left to be inferred from a pin. A sticky
+                     note is a 20-point icon; the box is what makes it findable
+                     on a 36-inch sheet, and it is the annotation's own declared
+                     extent rather than a guess at what it meant. -->
                 <rect
-                  [attr.x]="markup.geometry.x0"
-                  [attr.y]="markup.geometry.y0"
-                  [attr.width]="(markup.geometry.x1 ?? 0) - (markup.geometry.x0 ?? 0)"
-                  [attr.height]="(markup.geometry.y1 ?? 0) - (markup.geometry.y0 ?? 0)"
-                  class="wash"
+                  class="region"
+                  [attr.x]="mark.box.x0 - 2"
+                  [attr.y]="mark.box.y0 - 2"
+                  [attr.width]="mark.box.x1 - mark.box.x0 + 4"
+                  [attr.height]="mark.box.y1 - mark.box.y0 + 4"
+                  [attr.stroke-width]="hairline()"
                 />
-              }
-              @case ('box') {
-                <rect
-                  [attr.x]="markup.geometry.x0"
-                  [attr.y]="markup.geometry.y0"
-                  [attr.width]="(markup.geometry.x1 ?? 0) - (markup.geometry.x0 ?? 0)"
-                  [attr.height]="(markup.geometry.y1 ?? 0) - (markup.geometry.y0 ?? 0)"
-                  [attr.stroke-width]="hairline() * 1.6"
-                />
-              }
-              @case ('cloud') {
-                <path [attr.d]="cloud(markup.geometry)" fill="none" [attr.stroke-width]="hairline() * 1.6" />
-              }
-              @case ('text') {
-                <!-- Drawn on the sheet, not hidden in a side panel. A label
-                     whose text you have to click to read is a pin, and there is
-                     already a pin. The font size is in PDF points so the label
-                     keeps its size against the drawing as you zoom. -->
-                <text
-                  class="label"
-                  [attr.x]="markup.geometry.x0"
-                  [attr.y]="markup.geometry.y0"
-                  [attr.font-size]="11 / zoom()"
+
+                @if (mark.comment && showCaptions()) {
+                  <g class="caption" [attr.transform]="'translate(' + mark.box.x1 + ' ' + mark.box.y0 + ')'">
+                    @for (line of caption(mark.comment); track $index) {
+                      <text
+                        [attr.x]="6 / zoom()"
+                        [attr.y]="(10 + $index * 11) / zoom()"
+                        [attr.font-size]="9 / zoom()"
+                      >
+                        {{ line }}
+                      </text>
+                    }
+                  </g>
+                }
+              </g>
+            }
+          }
+
+          <!-- ── the review's findings ────────────────────────────────────
+               Boxed on the anchor text the engine cites, at the occurrence its
+               `hit` names, so this and the marked-up PDF mark the same row. -->
+          @if (showFindings() && !burntIn()) {
+            @for (item of placed(); track item.finding.fid) {
+              @if (item.box; as box) {
+                <g
+                  class="pin"
+                  [class.selected]="item.finding.fid === selectedFid()"
+                  [class.lit]="item.finding.fid === flash()"
+                  [attr.data-severity]="item.finding.severity"
+                  (click)="showFinding(item.finding)"
                 >
-                  {{ markup.comment || 'Double-click to write' }}
-                </text>
+                  <rect
+                    [attr.x]="box.x0 - 3"
+                    [attr.y]="box.y0 - 3"
+                    [attr.width]="box.x1 - box.x0 + 6"
+                    [attr.height]="box.y1 - box.y0 + 6"
+                    [attr.stroke-width]="hairline() * 1.6"
+                  />
+                  <text [attr.x]="box.x0 - 4" [attr.y]="box.y0 - 6" [attr.font-size]="9 / zoom()">
+                    {{ item.finding.fid }}
+                  </text>
+                </g>
               }
-              @case ('strikeout') {
-                <line
-                  [attr.x1]="markup.geometry.x0"
-                  [attr.y1]="midY({ y0: markup.geometry.y0 ?? 0, y1: markup.geometry.y1 ?? 0 })"
-                  [attr.x2]="markup.geometry.x1"
-                  [attr.y2]="midY({ y0: markup.geometry.y0 ?? 0, y1: markup.geometry.y1 ?? 0 })"
-                  [attr.stroke-width]="hairline() * 1.6"
-                />
-              }
-              @case ('arrow') {
-                <line
-                  [attr.x1]="markup.geometry.x0"
-                  [attr.y1]="markup.geometry.y0"
-                  [attr.x2]="markup.geometry.x1"
-                  [attr.y2]="markup.geometry.y1"
-                  [attr.stroke-width]="hairline() * 1.6"
-                  marker-end="url(#markup-arrow)"
-                />
-              }
-              @case ('freehand') {
+            }
+          }
+
+          <!-- ── what the reviewer drew ───────────────────────────────────-->
+          @if (showMarkup()) {
+            @for (markup of pageMarkups(); track markup.id) {
+              <g
+                class="markup"
+                [attr.data-kind]="markup.kind"
+                [class.has-comment]="!!markup.comment"
+                [class.selected]="markup.id === selectedMarkupId()"
+                [class.lit]="markup.id === flash()"
+                [style.--ink]="swatch(markup.colour ?? '')"
+                (click)="markupPicked.emit(markup)"
+              >
+                @switch (markup.kind) {
+                  @case ('highlight') {
+                    <rect
+                      [attr.x]="markup.geometry.x0"
+                      [attr.y]="markup.geometry.y0"
+                      [attr.width]="(markup.geometry.x1 ?? 0) - (markup.geometry.x0 ?? 0)"
+                      [attr.height]="(markup.geometry.y1 ?? 0) - (markup.geometry.y0 ?? 0)"
+                      class="wash"
+                    />
+                  }
+                  @case ('box') {
+                    <rect
+                      [attr.x]="markup.geometry.x0"
+                      [attr.y]="markup.geometry.y0"
+                      [attr.width]="(markup.geometry.x1 ?? 0) - (markup.geometry.x0 ?? 0)"
+                      [attr.height]="(markup.geometry.y1 ?? 0) - (markup.geometry.y0 ?? 0)"
+                      [attr.stroke-width]="hairline() * 1.6"
+                    />
+                  }
+                  @case ('cloud') {
+                    <path [attr.d]="cloud(markup.geometry)" fill="none" [attr.stroke-width]="hairline() * 1.6" />
+                  }
+                  @case ('text') {
+                    <!-- Drawn on the sheet, not hidden in a side panel. A label
+                         whose text you have to click to read is a pin, and there is
+                         already a pin. The font size is in PDF points so the label
+                         keeps its size against the drawing as you zoom. -->
+                    <text
+                      class="label"
+                      [attr.x]="markup.geometry.x0"
+                      [attr.y]="markup.geometry.y0"
+                      [attr.font-size]="11 / zoom()"
+                    >
+                      {{ markup.comment || 'Double-click to write' }}
+                    </text>
+                  }
+                  @case ('strikeout') {
+                    <line
+                      [attr.x1]="markup.geometry.x0"
+                      [attr.y1]="midY({ y0: markup.geometry.y0 ?? 0, y1: markup.geometry.y1 ?? 0 })"
+                      [attr.x2]="markup.geometry.x1"
+                      [attr.y2]="midY({ y0: markup.geometry.y0 ?? 0, y1: markup.geometry.y1 ?? 0 })"
+                      [attr.stroke-width]="hairline() * 1.6"
+                    />
+                  }
+                  @case ('arrow') {
+                    <line
+                      [attr.x1]="markup.geometry.x0"
+                      [attr.y1]="markup.geometry.y0"
+                      [attr.x2]="markup.geometry.x1"
+                      [attr.y2]="markup.geometry.y1"
+                      [attr.stroke-width]="hairline() * 1.6"
+                      marker-end="url(#markup-arrow)"
+                    />
+                  }
+                  @case ('freehand') {
+                    <path
+                      [attr.d]="path(markup.geometry.points ?? [])"
+                      fill="none"
+                      [attr.stroke-width]="hairline() * 1.6"
+                    />
+                  }
+                  @default {
+                    <circle
+                      [attr.cx]="markup.geometry.x0"
+                      [attr.cy]="markup.geometry.y0"
+                      [attr.r]="6 / zoom()"
+                      [attr.stroke-width]="hairline()"
+                    />
+                  }
+                }
+
+                <!-- A comment you have to click a pin to read is a comment that
+                     is not on the drawing. Every kind but `text` — which is
+                     already its own comment — writes it beside the mark. -->
+                @if (markup.comment && showCaptions() && markup.kind !== 'text') {
+                  <g
+                    class="caption"
+                    [attr.transform]="
+                      'translate(' +
+                      ((markup.geometry.x1 ?? markup.geometry.x0) ?? 0) +
+                      ' ' +
+                      (markup.geometry.y0 ?? 0) +
+                      ')'
+                    "
+                  >
+                    @for (line of caption(markup.comment); track $index) {
+                      <text
+                        [attr.x]="6 / zoom()"
+                        [attr.y]="(10 + $index * 11) / zoom()"
+                        [attr.font-size]="9 / zoom()"
+                      >
+                        {{ line }}
+                      </text>
+                    }
+                  </g>
+                }
+              </g>
+            }
+          }
+
+          <!-- The shape under the cursor right now. -->
+          @if (draft(); as shape) {
+            <g class="markup draft" [attr.data-kind]="shape.kind" [style.--ink]="swatch(colour())">
+              @if (shape.kind === 'cloud') {
+                <path [attr.d]="cloud(shape)" fill="none" [attr.stroke-width]="hairline() * 1.6" />
+              } @else if (shape.kind === 'freehand') {
                 <path
-                  [attr.d]="path(markup.geometry.points ?? [])"
+                  [attr.d]="path(shape.points)"
                   fill="none"
                   [attr.stroke-width]="hairline() * 1.6"
                 />
-              }
-              @default {
-                <circle
-                  [attr.cx]="markup.geometry.x0"
-                  [attr.cy]="markup.geometry.y0"
-                  [attr.r]="6 / zoom()"
-                  [attr.stroke-width]="hairline()"
+              } @else if (shape.kind === 'arrow') {
+                <line
+                  [attr.x1]="shape.x0"
+                  [attr.y1]="shape.y0"
+                  [attr.x2]="shape.x1"
+                  [attr.y2]="shape.y1"
+                  [attr.stroke-width]="hairline() * 1.6"
+                  marker-end="url(#markup-arrow)"
+                />
+              } @else {
+                <rect
+                  [attr.x]="shape.x0 < shape.x1 ? shape.x0 : shape.x1"
+                  [attr.y]="shape.y0 < shape.y1 ? shape.y0 : shape.y1"
+                  [attr.width]="(shape.x1 > shape.x0 ? shape.x1 - shape.x0 : shape.x0 - shape.x1)"
+                  [attr.height]="(shape.y1 > shape.y0 ? shape.y1 - shape.y0 : shape.y0 - shape.y1)"
+                  [attr.stroke-width]="hairline() * 1.6"
                 />
               }
-            }
-          </g>
-        }
-
-        <!-- The shape under the cursor right now. -->
-        @if (draft(); as shape) {
-          <g class="markup draft" [attr.data-kind]="shape.kind" [style.--ink]="swatch(colour())">
-            @if (shape.kind === 'cloud') {
-              <path [attr.d]="cloud(shape)" fill="none" [attr.stroke-width]="hairline() * 1.6" />
-            } @else if (shape.kind === 'freehand') {
-              <path
-                [attr.d]="path(shape.points)"
-                fill="none"
-                [attr.stroke-width]="hairline() * 1.6"
-              />
-            } @else if (shape.kind === 'arrow') {
-              <line
-                [attr.x1]="shape.x0"
-                [attr.y1]="shape.y0"
-                [attr.x2]="shape.x1"
-                [attr.y2]="shape.y1"
-                [attr.stroke-width]="hairline() * 1.6"
-                marker-end="url(#markup-arrow)"
-              />
-            } @else {
-              <rect
-                [attr.x]="shape.x0 < shape.x1 ? shape.x0 : shape.x1"
-                [attr.y]="shape.y0 < shape.y1 ? shape.y0 : shape.y1"
-                [attr.width]="(shape.x1 > shape.x0 ? shape.x1 - shape.x0 : shape.x0 - shape.x1)"
-                [attr.height]="(shape.y1 > shape.y0 ? shape.y1 - shape.y0 : shape.y0 - shape.y1)"
-                [attr.stroke-width]="hairline() * 1.6"
-              />
-            }
-          </g>
-        }
-      </svg>
+            </g>
+          }
+        </svg>
+      </div>
     </div>
   </div>
 
@@ -282,12 +544,20 @@
        still a finding, and drawing it at a guessed position would put a marker
        on the wrong part of somebody's drawing. -->
   @if (unplaced(); as count) {
-    @if (count) {
+    @if (count && showFindings() && !burntIn()) {
       <p class="hint viewer-note">
         {{ count }} finding{{ count === 1 ? '' : 's' }} on this sheet could not be placed on
         the drawing — the text they cite is not in this page's text layer. They are listed
-        beside it.
+        beside it, and the reviewed copy shows what the review drew.
       </p>
     }
+  }
+
+  @if (burntIn()) {
+    <p class="hint viewer-note">
+      This is the reviewed copy: the review's markup is drawn into the page, and its
+      findings register is on the sheets past the end of the set. Switch back to see the
+      set as it was uploaded.
+    </p>
   }
 </div>

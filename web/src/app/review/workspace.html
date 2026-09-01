@@ -40,14 +40,21 @@
     <div class="workspace-split">
       <app-sheet-viewer
         [src]="url"
+        [markupSrc]="reviewed()"
         [findings]="findings() ?? []"
         [markups]="training.markups()"
         [markupKinds]="markupKinds()"
         [markupColours]="markupColours()"
+        [sheets]="sheetIndex()"
         [canDraw]="trainingOn()"
         [selectedFid]="selectedFinding()?.fid ?? ''"
+        [selectedMarkupId]="selectedMarkup()?.id ?? ''"
+        [selectedAnnotId]="selectedAnnot()?.id ?? ''"
+        [focus]="focus()"
         (findingPicked)="pickFinding($event)"
         (markupPicked)="pickMarkup($event)"
+        (annotationPicked)="pickAnnotation($event)"
+        (annotationsRead)="onAnnotationsRead($event)"
         (markupDrawn)="onDrawn($event)"
       />
 
@@ -179,6 +186,29 @@
                 </p>
               }
             }
+          } @else if (selectedAnnot(); as mark) {
+            <!-- ── a comment that came with the file ────────────────────── -->
+            <div class="side-card">
+              <p class="eyebrow">In the file · {{ mark.label }} · sheet {{ mark.page }}</p>
+              @if (mark.author) {
+                <h3>{{ mark.author }}</h3>
+              }
+              @if (mark.comment) {
+                <p class="side-line">{{ mark.comment }}</p>
+              } @else {
+                <p class="side-line dim">
+                  A mark with no text on it — it points at the drawing without saying
+                  anything.
+                </p>
+              }
+              <!-- Said plainly, because the whole value of this panel is that
+                   you can tell whose mark you are reading. -->
+              <p class="hint">
+                This was already inside the uploaded PDF. It is not something this
+                review found, and nothing you say about it is feedback on the review.
+              </p>
+              <button type="button" class="inline" (click)="clearSelection()">Close</button>
+            </div>
           } @else if (selectedMarkup(); as markup) {
             <div class="side-card">
               <p class="eyebrow">{{ markup.kind }} · sheet {{ markup.page }}</p>
@@ -284,6 +314,18 @@
             >
               Not checked ({{ abstentions().length }})
             </button>
+            @if (annotations().length) {
+              <button
+                type="button"
+                role="tab"
+                [attr.aria-selected]="tab() === 'comments'"
+                [class.on]="tab() === 'comments'"
+                (click)="tab.set('comments')"
+                title="Comments and markup that came with the uploaded file"
+              >
+                In the file ({{ annotations().length }})
+              </button>
+            }
             @if (trainingOn()) {
               <button
                 type="button"
@@ -306,7 +348,7 @@
                     class="side-row"
                     [class.on]="selectedFinding()?.fid === finding.fid"
                     [attr.data-severity]="finding.severity"
-                    (click)="pickFinding(finding)"
+                    (click)="openFinding(finding)"
                   >
                     <span class="side-sev">{{ finding.severity }}</span>
                     <span class="side-fid">{{ finding.fid }}</span>
@@ -355,6 +397,33 @@
               </div>
             }
 
+            @case ('comments') {
+              <!-- The marks that arrived with the drawing. They were invisible
+                   until now: pdf.js paints the page's content stream, and an
+                   annotation is not in it. -->
+              <div class="side-list">
+                <p class="hint">
+                  Written by whoever drew or last reviewed this set, not by this
+                  review. Pick one to go to it on the sheet.
+                </p>
+                @for (mark of annotations(); track mark.id) {
+                  <button
+                    type="button"
+                    class="side-row"
+                    [class.on]="selectedAnnot()?.id === mark.id"
+                    (click)="openAnnotation(mark)"
+                  >
+                    <span class="side-sev">{{ mark.label }}</span>
+                    <span class="side-fid">{{ mark.author || '—' }}</span>
+                    <span class="side-sheet">sheet {{ mark.page }}</span>
+                    <span class="side-title">{{ mark.comment || 'No text on this one' }}</span>
+                  </button>
+                } @empty {
+                  <p class="hint">This file carries no comments of its own.</p>
+                }
+              </div>
+            }
+
             @case ('markup') {
               <div class="side-list">
                 @for (markup of training.markups(); track markup.id) {
@@ -362,7 +431,7 @@
                     type="button"
                     class="side-row"
                     [class.on]="selectedMarkup()?.id === markup.id"
-                    (click)="pickMarkup(markup)"
+                    (click)="openMarkup(markup)"
                   >
                     <span class="side-sev">{{ markup.kind }}</span>
                     <span class="side-sheet">sheet {{ markup.page }}</span>

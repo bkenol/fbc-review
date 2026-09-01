@@ -35,7 +35,7 @@ import {
   MarkupRequest,
 } from '../api';
 import { FeedbackDraft, FeedbackPanel } from '../feedback/feedback-panel';
-import { SheetViewer } from '../viewer/sheet-viewer';
+import { FocusRequest, SheetAnnotation, SheetViewer } from '../viewer/sheet-viewer';
 import { TrainingService } from '../training/training-service';
 import { ReviewService } from './review-service';
 
@@ -57,11 +57,34 @@ export class Workspace {
   protected readonly selectedFinding = signal<Finding | null>(null);
   protected readonly selectedMarkup = signal<Markup | null>(null);
   protected readonly selectedAbstention = signal<Abstention | null>(null);
+  /** A comment that was already inside the uploaded file. */
+  protected readonly selectedAnnot = signal<SheetAnnotation | null>(null);
+  /** Every such comment the viewer found, across the whole set. */
+  protected readonly annotations = signal<SheetAnnotation[]>([]);
   /** Which kind of feedback the panel is collecting right now. */
   protected readonly subject = signal<FeedbackSubject>(FeedbackSubject.Finding);
   protected readonly commentDraft = signal('');
   /** Which side list is open. The sheet keeps the space when they are closed. */
-  protected readonly tab = signal<'findings' | 'notchecked' | 'markup'>('findings');
+  protected readonly tab = signal<'findings' | 'notchecked' | 'comments' | 'markup'>(
+    'findings',
+  );
+
+  /**
+   * What the viewer should be looking at.
+   *
+   * A row in a register that does not take you to the sheet it is about is a
+   * row you have to go and find, on a set where finding it means knowing which
+   * of thirty-five sheets it is on. So picking one sends the viewer a focus
+   * request, and the viewer pages to it, scrolls it into the middle and lights
+   * it for a couple of seconds.
+   *
+   * The nonce is what makes picking the same row twice work. Without it the
+   * input is unchanged on the second click and nothing happens — which is
+   * exactly when you want it to, because you have scrolled away from the mark
+   * and are asking to be taken back.
+   */
+  protected readonly focus = signal<FocusRequest | null>(null);
+  private nonce = 0;
   /** The hand-over form, opened from the markup tab. */
   protected readonly handingOver = signal(false);
   /**
@@ -96,6 +119,8 @@ export class Workspace {
     () => this.config()?.training?.enabled ?? false,
   );
   protected readonly source = computed(() => this.job()?.downloads?.source_pdf ?? '');
+  protected readonly reviewed = computed(() => this.job()?.downloads?.markup_pdf ?? '');
+  protected readonly sheetIndex = computed(() => this.job()?.summary?.sheet_index ?? []);
   protected readonly aspects = computed(() => this.config()?.feedback_aspects ?? []);
   protected readonly markupKinds = computed(() => this.config()?.markup_kinds ?? []);
   protected readonly markupColours = computed(() => this.config()?.markup_colours ?? []);
@@ -155,6 +180,8 @@ export class Workspace {
       // and markup on screen.
       this.clearSelection();
       this.handingOver.set(false);
+      this.annotations.set([]);
+      this.focus.set(null);
       this.training.clearExport();
       this.reviews.open(id);
     });
@@ -172,20 +199,62 @@ export class Workspace {
   }
 
   // ── selection ───────────────────────────────────────────────────────────
+  /**
+   * Picked on the drawing itself.
+   *
+   * No focus request: the sheet is already in front of you and scrolling it
+   * out from under the cursor you just clicked with is the opposite of helpful.
+   * Picking the same thing from a register does send one — see `openFinding`.
+   */
   protected pickFinding(finding: Finding): void {
     this.selectedFinding.set(finding);
     this.selectedMarkup.set(null);
     this.selectedAbstention.set(null);
+    this.selectedAnnot.set(null);
     this.subject.set(FeedbackSubject.Finding);
     this.training.clearAccepted();
+  }
+
+  /** Picked from the register: select it, and take the viewer to it. */
+  protected openFinding(finding: Finding): void {
+    this.pickFinding(finding);
+    this.lookAt('finding', finding.fid, finding.page);
   }
 
   protected pickMarkup(markup: Markup): void {
     this.selectedMarkup.set(markup);
     this.selectedFinding.set(null);
     this.selectedAbstention.set(null);
+    this.selectedAnnot.set(null);
     this.commentDraft.set(markup.comment ?? '');
     this.training.clearAccepted();
+  }
+
+  protected openMarkup(markup: Markup): void {
+    this.pickMarkup(markup);
+    this.lookAt('markup', markup.id, markup.page);
+  }
+
+  /** A comment that came with the file. Nothing here is feedback on the review. */
+  protected pickAnnotation(mark: SheetAnnotation): void {
+    this.selectedAnnot.set(mark);
+    this.selectedFinding.set(null);
+    this.selectedMarkup.set(null);
+    this.selectedAbstention.set(null);
+    this.training.clearAccepted();
+  }
+
+  protected openAnnotation(mark: SheetAnnotation): void {
+    this.pickAnnotation(mark);
+    this.lookAt('annotation', mark.id, mark.page);
+  }
+
+  protected onAnnotationsRead(marks: SheetAnnotation[]): void {
+    this.annotations.set(marks);
+  }
+
+  private lookAt(kind: FocusRequest['kind'], id: string, page: number): void {
+    this.focus.set({ kind, id, page, nonce: ++this.nonce });
   }
 
   /**
@@ -200,6 +269,7 @@ export class Workspace {
     this.selectedAbstention.set(abstention);
     this.selectedFinding.set(null);
     this.selectedMarkup.set(null);
+    this.selectedAnnot.set(null);
     this.subject.set(FeedbackSubject.Abstention);
     this.forceProposal.set(false);
     this.training.clearAccepted();
@@ -219,6 +289,7 @@ export class Workspace {
     this.selectedFinding.set(null);
     this.selectedMarkup.set(null);
     this.selectedAbstention.set(null);
+    this.selectedAnnot.set(null);
     this.subject.set(FeedbackSubject.Finding);
     this.forceProposal.set(false);
     this.training.clearAccepted();
@@ -229,6 +300,7 @@ export class Workspace {
     this.selectedMarkup.set(markup);
     this.selectedFinding.set(null);
     this.selectedAbstention.set(null);
+    this.selectedAnnot.set(null);
     this.subject.set(FeedbackSubject.Coverage);
     this.training.clearAccepted();
   }
