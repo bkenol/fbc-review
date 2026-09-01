@@ -1334,11 +1334,35 @@ curl -s -o /dev/null -w '%{http_code}\n' \
   -d '{}'
 ```
 
-`422` is the answer you want. `403` means the permission is missing; `404`
-almost always means the token's **resource owner** is not the account that owns
-the repository, or the repository was not in its selected list — a
-fine-grained token reports "not found" rather than "not allowed" for a
-repository it cannot see.
+In PowerShell, on one line, with the token in a variable — `curl` there is an
+alias for `Invoke-WebRequest`, which takes none of these flags, and `\` is not
+a line continuation:
+
+```powershell
+$t = 'github_pat_...'
+curl.exe -s -o NUL -w "%{http_code}\n" -X POST https://api.github.com/repos/OWNER/REPO/issues -H "Authorization: Bearer $t" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" -d "{}"
+```
+
+Read the answer as a question about the *credential* first and the
+*permission* second:
+
+| Code | What it means |
+| --- | --- |
+| **422** | What you want. The permission is there; the empty payload was rejected and nothing was created. |
+| **401** | GitHub did not accept the credential at all. Almost never the token's scopes — it is the token that arrived: a placeholder pasted literally, a truncated copy, or a shell variable that expanded to nothing. An unset `$FBC_GITHUB_TOKEN` sends `Bearer ` and reads exactly like a bad token. |
+| **403** | Valid token, missing permission. Set Issues to Read and write. |
+| **404** | Valid token that cannot see the repository — the **resource owner** is not the account that owns it, or it was not in the selected list. A fine-grained token says "not found" rather than "not allowed". |
+
+Isolate a 401 before touching anything else, because this call answers only for
+the credential:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "Authorization: Bearer $FBC_GITHUB_TOKEN" https://api.github.com/user
+```
+
+`200` means the token is fine and the problem was in the longer command;
+`401` means the token itself never arrived intact.
 
 ---
 
