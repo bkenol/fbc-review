@@ -305,6 +305,70 @@ a:hover {
   white-space: nowrap;
 }
 
+/* ── the masthead's own navigation ─────────────────────────────────────────
+ * Training and Feedback are the two destinations in this app that are not the
+ * upload form, and they used to sit inside the session line in the same 12px
+ * mono label as the signed-in address. Everything in that line is status —
+ * which build, which account — so two links set identically read as status
+ * too, and got looked past.
+ *
+ * Framed and set larger, they read as controls. Restraint still applies: this
+ * is a border and a size, not a colour the rest of the page does not use, and
+ * the current section is filled rather than merely tinted so it is legible
+ * before you read it.
+ */
+.masthead-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  pointer-events: auto;
+}
+
+.masthead-nav a {
+  display: inline-block;
+  padding: 0.4rem 0.95rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--text-strong);
+  background: var(--surface-card);
+  border: 1px solid var(--border-input);
+}
+
+.masthead-nav a:hover,
+.masthead-nav a:focus-visible {
+  color: var(--primary-ink);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+/* Where you already are. Named `on` to match every other current-state class
+   in this stylesheet rather than inventing a second word for it. */
+.masthead-nav a.on {
+  color: var(--primary-ink);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+@media (max-width: 60rem) {
+  .masthead-nav a {
+    padding: 0.35rem 0.7rem;
+    font-size: 12px;
+  }
+}
+
+/* On a screen whose whole job is a 36-inch drawing, the masthead gives back
+   the height the larger nav took. The links stay the same size — they are the
+   point — and the band around them tightens. */
+.masthead.compact {
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+
 .session {
   display: flex;
   flex-wrap: wrap;
@@ -319,10 +383,17 @@ a:hover {
  * Left-aligned throughout. The system forbids centred body text, and this screen is
  * dense with figures that are harder to compare off a ragged left edge.
  */
+/* The masthead is absolutely positioned — it overlays the page rather than
+   taking a band out of it — so the content column reserves its height by hand.
+   These two numbers are measured against the rendered masthead, not guessed:
+   grow the nav and they have to grow with it, or the header lands on top of
+   the first thing the page says. */
 .wrap {
   max-width: var(--page-max);
   margin: 0 auto;
-  padding: var(--space-10) var(--page-gutter) var(--space-10);
+  /* A measurement, not a spacing step: it has to clear the rendered masthead,
+     which is why `.wrap.full` states its reserve in pixels too. */
+  padding: 120px var(--page-gutter) var(--space-10);
 }
 
 @media (max-width: 720px) {
@@ -2396,11 +2467,24 @@ td.sev .chip.conflict {
 }
 
 /* Register rows. The left rule carries the severity, exactly as the findings
- * table does, so scanning the panel and scanning the table are the same act. */
+ * table does, so scanning the panel and scanning the table are the same act.
+ *
+ * Flex rather than a fixed grid, and that is a bug fix rather than a
+ * preference. Four registers share this row and they do not share a shape: a
+ * finding has a severity, an id, a sheet and a title; an abstention has no
+ * sheet; a markup has no id. A grid of five fixed columns assigns them by
+ * source order, so every row missing a cell shifted everything after it one
+ * column left — an abstention's reason was being laid out in the 2.6rem sheet
+ * column and painted straight over the rule id beside it.
+ *
+ * Flex-wrap has no such coupling: each row lays out the cells it actually has.
+ * The title takes a line of its own because it is the part that is long, and a
+ * rule id like DECL.BUILDING_AREA gets the width it needs rather than 3.2rem
+ * and an ellipsis. */
 .side-row {
-  display: grid;
-  grid-template-columns: 4.6rem 3.2rem 2.6rem 1fr auto;
-  gap: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.5rem;
   align-items: baseline;
   width: 100%;
   padding: 0.4rem 0.5rem;
@@ -2422,21 +2506,37 @@ td.sev .chip.conflict {
   border-left-color: var(--primary);
 }
 
+/* The identifying cells, on the first line, in whatever combination the row
+ * has. They size to their contents and wrap among themselves rather than
+ * overflowing a fixed box — a truncated rule id identifies nothing. */
+.side-sev,
+.side-fid,
+.side-sheet {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+}
+
 .side-sev,
 .side-fid {
-  font-family: var(--font-mono, monospace);
   color: var(--text-muted);
   text-transform: uppercase;
-  font-size: 0.7rem;
 }
 
 .side-sheet {
-  font-family: var(--font-mono, monospace);
   color: var(--text-faint);
-  font-size: 0.7rem;
 }
 
+/* Ordered after the flag so the flag finishes the first line and this starts
+ * the second. `order` rather than moving it in the template, because its
+ * position in the DOM is the reading order a screen reader should get:
+ * what the row is about, then whether it has been answered. */
 .side-title {
+  order: 1;
+  flex: 1 0 100%;
+  min-width: 0;
   color: var(--text-body);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2444,6 +2544,7 @@ td.sev .chip.conflict {
 }
 
 .side-flag {
+  margin-left: auto;
   color: var(--sev-verified, var(--annotation));
 }
 
@@ -2735,7 +2836,7 @@ td.sev .chip.conflict {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding: 54px var(--space-3) 0;
+  padding: 80px var(--space-3) 0;
 }
 
 /* Where the workspace puts the sheet and the panel side by side, the shell is
@@ -2758,7 +2859,7 @@ td.sev .chip.conflict {
 
 @media (max-width: 720px) {
   .wrap.full {
-    padding: 108px var(--space-2) 0;
+    padding: 128px var(--space-2) 0;
   }
 }
 
