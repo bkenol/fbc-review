@@ -85,6 +85,16 @@ if has ANTHROPIC_API_KEY; then
   ok 'ANTHROPIC_API_KEY'
   info 'Free-text feedback comments will be summarised before they reach the'
   info 'queue. The review path is unaffected and still makes zero model calls.'
+  if has ANTHROPIC_WORKSPACE_ID; then
+    ok 'ANTHROPIC_WORKSPACE_ID'
+  else
+    info ''
+    info 'ANTHROPIC_WORKSPACE_ID is not set. That is correct for a workspace'
+    info 'key and fatal for an identity-linked one, which the API refuses with'
+    info '400 until the request names a workspace. Check the Type column at'
+    info 'https://console.anthropic.com/settings/keys — if it does not say'
+    info 'Workspace, set the wrkspc_ id here too.'
+  fi
 else
   warn 'ANTHROPIC_API_KEY'
   info 'Comments route to a person unread, which is what they did before the'

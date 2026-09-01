@@ -1238,6 +1238,79 @@ one (`docs/TRAINING-MODE.md` §3.5).
 For Cloud Run, put the key in Secret Manager and mount it rather than setting it
 as a plain environment variable — see the block below §8.
 
+##### Two kinds of key, and only one works unaided
+
+The console issues both, and the difference is not cosmetic:
+
+| Type | What it is | Needs |
+| --- | --- | --- |
+| **Workspace** | Bound to one workspace. Survives its creator leaving. | `ANTHROPIC_API_KEY` |
+| **Identity-linked** | Belongs to the person or service account that made it, and can act in several workspaces. | `ANTHROPIC_API_KEY` **and** `ANTHROPIC_WORKSPACE_ID` |
+
+An identity-linked key with no workspace named is refused outright:
+
+```
+400  anthropic-workspace-id is required when authenticating with an
+     identity-linked API key
+```
+
+The SDK sends that header for a credentials-file profile and never for a key
+read out of the environment, which is how this service authenticates — so
+`webapp/assist.py` sets it as a default header when `ANTHROPIC_WORKSPACE_ID` is
+present, and sends nothing when it is not. An empty header is a 400 of its own,
+which is why "unset" and "empty" have to mean the same thing here.
+
+The type is in the **Type** column at
+<https://console.anthropic.com/settings/keys>. The workspace id starts
+`wrkspc_` and is on the workspace's page under **Organization settings →
+Workspaces**. `bash scripts/setup-secrets.sh --check` says whether you have set
+it, and warns when a key is present without one.
+
+#### Issues from escalated feedback
+
+`FBC_GITHUB_REPO` and `FBC_GITHUB_TOKEN` together let `/admin` open an escalated
+report as a GitHub issue — the same brief the prompt export produces, but
+tracked. Both are needed; either alone leaves the button unavailable.
+
+`webapp/notify.py` makes exactly one call, `POST /repos/{owner}/{repo}/issues`,
+with a `Bearer` token. So the token needs one permission and no more.
+
+**A fine-grained personal access token** (<https://github.com/settings/personal-access-tokens>):
+
+1. **Generate new token**, and set **Resource owner** to the account or
+   organisation that owns the repository. Getting this wrong is the usual
+   reason a token 404s on a repository that plainly exists.
+2. **Repository access → Only select repositories**, and pick the one you want
+   the issues in.
+3. **Repository permissions → Issues → Read and write.** Nothing else. Leave
+   Contents at "No access": this token opens issues, it does not push code.
+4. Set an expiry you will actually notice. The failure is quiet — the issue
+   button stops working and `/admin` says the channel is unconfigured.
+5. Copy the `github_pat_...` value once; GitHub will not show it again.
+
+A classic token works too and needs the `repo` scope, but that scope also
+grants read and write to your code on every repository you can reach. Prefer
+fine-grained.
+
+Then, in `secrets/local.env`:
+
+```
+FBC_GITHUB_REPO=owner/repo
+FBC_GITHUB_TOKEN=github_pat_...
+```
+
+`FBC_GITHUB_REPO` is `owner/repo` — no URL, no `.git`, no leading slash. It is
+interpolated straight into the API path.
+
+Two things worth doing before you rely on it. The issue is created with the
+labels `training-feedback` and `disposition/<disposition>`, where the
+disposition is one of `confirmation`, `auto_tunable`, `needs_component` or
+`escalate` — create those five labels in the repository first, so the first
+escalation is not the thing that finds out whether GitHub minds. And note that
+the token is never logged and a GitHub error is recorded by status code only,
+deliberately: an error body can echo the request back, and the request carries
+the report.
+
 ---
 
 ## 7. Operations

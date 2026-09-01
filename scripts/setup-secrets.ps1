@@ -90,6 +90,16 @@ if (Test-Set 'ANTHROPIC_API_KEY') {
     Write-Ok 'ANTHROPIC_API_KEY'
     Write-Info 'Free-text feedback comments will be summarised before they reach the'
     Write-Info 'queue. The review path is unaffected and still makes zero model calls.'
+    if (Test-Set 'ANTHROPIC_WORKSPACE_ID') {
+        Write-Ok 'ANTHROPIC_WORKSPACE_ID'
+    } else {
+        Write-Info ''
+        Write-Info 'ANTHROPIC_WORKSPACE_ID is not set. That is correct for a workspace'
+        Write-Info 'key and fatal for an identity-linked one, which the API refuses with'
+        Write-Info '400 until the request names a workspace. Check the Type column at'
+        Write-Info 'https://console.anthropic.com/settings/keys - if it does not say'
+        Write-Info 'Workspace, set the wrkspc_ id here too.'
+    }
 } else {
     Write-Miss 'ANTHROPIC_API_KEY'
     Write-Info 'Comments route to a person unread, which is what they did before the'
