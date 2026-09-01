@@ -52,6 +52,30 @@ def stages_for(convert_raster: bool) -> List[str]:
     return [STAGES[0], CONVERT_STAGE, *STAGES[1:]]
 
 
+def sheet_index(sheets) -> List[Dict[str, Any]]:
+    """The set's sheets in page order, for the viewer's navigator.
+
+    `fbcreview.extract.document` gives a sheet whose number could not be read
+    the code `p{n}`, which is how a rule reports it and how the register prints
+    it. That convention is preserved rather than translated — the client shows
+    the same string the marked-up PDF does — and `read` carries the distinction
+    so the navigator can say "sheet number not read" instead of implying the
+    drawing is called p7.
+    """
+    out: List[Dict[str, Any]] = []
+    for s in sheets:
+        page = s.index + 1
+        code = s.code or f"p{page}"
+        out.append({
+            "page": page,
+            "code": code,
+            "title": s.title or "",
+            "discipline": s.discipline or "",
+            "read": code != f"p{page}",
+        })
+    return out
+
+
 def run_review(
     *,
     job_id: str,
@@ -181,6 +205,7 @@ def run_review(
             "pdf_bytes": out_pdf.stat().st_size,
             "pdf_name": pdf_name,
             "findings_count": len(findings),
+            "sheet_index": sheet_index(facts.sheets),
         }
 
         out_json = workdir / "findings.json"

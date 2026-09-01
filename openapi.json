@@ -2957,6 +2957,45 @@
         "title": "SheetProfile",
         "type": "object"
       },
+      "SheetRef": {
+        "description": "One sheet of the set, as the title block names it.\n\nThe viewer's navigator is the reason this exists. `pages` alone gives it\n\"3 of 15\", which is not what anybody working through a permit set says to\nanybody else \u2014 they say M.001, or A-2. The engine already reads the sheet\nnumber off the title block to key its findings, so the labels are not a new\nclaim about the drawings; they are the same reading, carried far enough\nforward to be navigable.\n\nA sheet whose number could not be read keeps its page number, exactly as\n`fbcreview.facts.ProjectFacts.sheet_code` does \u2014 `p7` rather than a guess.",
+        "properties": {
+          "code": {
+            "description": "Sheet number off the title block, e.g. \"M.001\".",
+            "title": "Code",
+            "type": "string"
+          },
+          "discipline": {
+            "default": "",
+            "description": "G / A / M / E / P.",
+            "title": "Discipline",
+            "type": "string"
+          },
+          "page": {
+            "description": "1-based, as the viewer numbers pages.",
+            "title": "Page",
+            "type": "integer"
+          },
+          "read": {
+            "default": true,
+            "description": "False when the sheet number could not be read and `code` is a page number standing in for it.",
+            "title": "Read",
+            "type": "boolean"
+          },
+          "title": {
+            "default": "",
+            "description": "Sheet title, where one was read.",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "page",
+          "code"
+        ],
+        "title": "SheetRef",
+        "type": "object"
+      },
       "SourceProfile": {
         "description": "Whether this set is readable, and which sheets are not.\n\nA scanned sheet produces no findings, and no findings reads as a clean\nsheet. Publishing this lets the client say \"not checked\" where the truth is\n\"could not be read\".",
         "properties": {
@@ -3079,6 +3118,14 @@
           "scale_pages": {
             "title": "Scale Pages",
             "type": "integer"
+          },
+          "sheet_index": {
+            "description": "The set's sheets in page order. Empty on a review run before this was recorded, which the client treats as 'label the sheets by page number' rather than as an error.",
+            "items": {
+              "$ref": "#/components/schemas/SheetRef"
+            },
+            "title": "Sheet Index",
+            "type": "array"
           },
           "sheets": {
             "title": "Sheets",

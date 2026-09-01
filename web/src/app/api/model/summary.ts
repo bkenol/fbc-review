@@ -7,6 +7,7 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { SheetRef } from './sheet-ref';
 import { Abstention } from './abstention';
 
 
@@ -33,6 +34,10 @@ export interface Summary {
     pdf_name: string;
     rules_run: number;
     scale_pages: number;
+    /**
+     * The set\'s sheets in page order. Empty on a review run before this was recorded, which the client treats as \'label the sheets by page number\' rather than as an error.
+     */
+    sheet_index?: Array<SheetRef>;
     sheets: number;
     verified: number;
 }

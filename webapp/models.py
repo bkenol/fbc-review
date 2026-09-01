@@ -882,6 +882,31 @@ class AbstentionDiagnosis(BaseModel):
     )
 
 
+class SheetRef(BaseModel):
+    """One sheet of the set, as the title block names it.
+
+    The viewer's navigator is the reason this exists. `pages` alone gives it
+    "3 of 15", which is not what anybody working through a permit set says to
+    anybody else — they say M.001, or A-2. The engine already reads the sheet
+    number off the title block to key its findings, so the labels are not a new
+    claim about the drawings; they are the same reading, carried far enough
+    forward to be navigable.
+
+    A sheet whose number could not be read keeps its page number, exactly as
+    `fbcreview.facts.ProjectFacts.sheet_code` does — `p7` rather than a guess.
+    """
+
+    page: int = Field(description="1-based, as the viewer numbers pages.")
+    code: str = Field(description='Sheet number off the title block, e.g. "M.001".')
+    title: str = Field(default="", description="Sheet title, where one was read.")
+    discipline: str = Field(default="", description="G / A / M / E / P.")
+    read: bool = Field(
+        default=True,
+        description="False when the sheet number could not be read and `code` is "
+                    "a page number standing in for it.",
+    )
+
+
 class Summary(BaseModel):
     """Counts and provenance for a finished review.
 
@@ -909,6 +934,12 @@ class Summary(BaseModel):
     pdf_bytes: int
     pdf_name: str
     findings_count: int
+    sheet_index: List[SheetRef] = Field(
+        default_factory=list,
+        description="The set's sheets in page order. Empty on a review run before "
+                    "this was recorded, which the client treats as 'label the "
+                    "sheets by page number' rather than as an error.",
+    )
 
 
 # ── what kind of PDF was uploaded ─────────────────────────────────────────
