@@ -2,7 +2,10 @@
 rem  Meridian Rebuild Console — double-click this, or a shortcut to it.
 rem
 rem  Opens the console in your browser: Pull, Rebuild and Publish as buttons,
-rem  with their output streaming into the page.
+rem  with their output streaming into the page, plus Config and Doctor for
+rem  what this machine is actually set up to do - including whether mail and
+rem  the comment assist have their keys in secrets\local.env, and whether the
+rem  running container has picked them up.
 rem
 rem      "Rebuild Console.cmd"            open the console
 rem      "Rebuild Console.cmd" shortcut   put a shortcut on the Desktop

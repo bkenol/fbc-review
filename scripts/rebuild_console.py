@@ -5,9 +5,21 @@
 
 Starts a small server on 127.0.0.1, opens a browser at it, and gives you the
 whole local deployment as buttons with their output streaming into the page:
-Pull, Rebuild, Stop, Container logs, two Publish paths, and Doctor. The status
-strip says whether the container is running the commit in your working tree,
-so "did my rebuild take?" is answered on screen.
+Pull, Rebuild, Stop, Container logs, two Publish paths, Config and Doctor. The
+status strip says whether the container is running the commit in your working
+tree, so "did my rebuild take?" is answered on screen.
+
+WHAT IT WATCHES BESIDES THE BUILD
+Mail, the comment assist and GitHub issues are configured in secrets/local.env
+and every one of them fails *quietly* when it is not: a review still runs,
+feedback still queues, and nothing says otherwise. So the console reports on
+that file — which channels have their values, and, separately, whether the
+running container agrees. Those are different facts and the gap between them is
+the usual failure: the file is edited, nothing is rebuilt, and the container is
+still running with the environment it started with.
+
+Names only, never values. This page is served over HTTP on loopback and its log
+is scrolled past by whoever is standing there.
 
 TWO MACHINES, TWO PUBLISH PATHS
 A named Cloudflare tunnel serves fbc.omniflexfitness.com, but its credentials
@@ -48,6 +60,7 @@ import argparse
 import http.server
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -76,10 +89,24 @@ CONTAINER = "fbc-test"
 _LOG: List[str] = []
 _LOG_LOCK = threading.Lock()
 
+#: Colour escapes, removed on the way in.
+#
+# The scripts these buttons run are written for a terminal and colour their
+# output: share.sh has always done it, and setup-secrets.sh is almost entirely
+# colour. The page renders text, not a terminal, so an unstripped line arrives
+# as `[1msecrets/local.env[0m` — the information is there and it reads like
+# corruption. Stripped here rather than at each reader because this is the one
+# door every line comes through, including the console's own, where it is a
+# no-op.
+#
+# CSI sequences only. That is what colour and cursor movement use; the exotic
+# rest of the standard does not appear in the output of a shell script.
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
 
 def log_write(text: str) -> None:
     with _LOG_LOCK:
-        _LOG.append(text)
+        _LOG.append(_ANSI.sub("", text))
 
 
 def log_since(offset: int) -> Dict[str, object]:
@@ -275,6 +302,10 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
         if not training:
             rebuild += ["-NoTraining"]
         tunnel = ps + [str(repo / "scripts" / "tunnel.ps1")]
+        # --check only. The console never writes a secrets file: creating one
+        # is a deliberate act at a prompt, not something a page does because a
+        # button was near the cursor.
+        config = ps + [str(repo / "scripts" / "setup-secrets.ps1"), "-Check"]
     else:
         rebuild = ["bash", str(repo / "scripts" / "share.sh")]
         if port != 8060:
@@ -290,11 +321,13 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
         if not training:
             rebuild += ["--no-training"]
         tunnel = ["bash", str(repo / "scripts" / "tunnel.sh")]
+        config = ["bash", str(repo / "scripts" / "setup-secrets.sh"), "--check"]
 
     return {
         "pull": pull,
         "rebuild": rebuild,
         "tunnel": tunnel,
+        "config": config,
         "funnel": funnel,
         "funnel_off": funnel_off,
         "stop": stop,
@@ -355,6 +388,118 @@ def tailscale_ready() -> Dict[str, object]:
     return {"ok": True, "why": "signed in"}
 
 
+# ── local configuration ───────────────────────────────────────────────────
+# Mail, the comment assist and GitHub issues all read secrets/local.env, and all
+# three fail *quietly* without it: a review still runs, feedback still queues,
+# and nothing on this page said otherwise. That is exactly the class of problem
+# the console exists to make visible, so it reports on the file.
+#
+# Names, never values. This page is served over HTTP on loopback and its log is
+# scrolled past by whoever is standing there; a mail password and an API key
+# have no business in either.
+#
+# The parser is a second copy of the one in webapp/envfile.py, which is a real
+# duplication and a deliberate one: this script is standard library only and
+# runs outside the virtualenv, on a machine where the venv may not exist yet.
+# Importing the service to read a config file would make the console depend on
+# the thing it is meant to diagnose. The rule it copies is one line long — split
+# on the first `=`, keep the value verbatim — and `webapp/envfile.py` explains
+# why it is that and not more.
+CONFIG_CHANNELS = (
+    ("Mail", ("FBC_SMTP_HOST", "FBC_SMTP_USER", "FBC_SMTP_PASS", "FBC_MAIL_FROM")),
+    ("Comment assist", ("ANTHROPIC_API_KEY",)),
+    ("Issues", ("FBC_GITHUB_REPO", "FBC_GITHUB_TOKEN")),
+)
+
+
+def local_config(repo: Path) -> Dict[str, object]:
+    """Which names secrets/local.env gives a value to, and nothing else."""
+    path = repo / "secrets" / "local.env"
+    out: Dict[str, object] = {
+        "path": str(path), "exists": False, "readable": True,
+        "set": [], "quoted": [], "channels": {},
+    }
+    if not path.is_file():
+        return out
+    out["exists"] = True
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        out["readable"] = False
+        return out
+
+    names: List[str] = []
+    quoted: List[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if not key or not value:
+            continue
+        names.append(key)
+        # Docker's --env-file keeps the quotes, so a quoted value is wrong
+        # rather than merely untidy. Flagged by name.
+        if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
+            quoted.append(key)
+
+    out["set"] = names
+    out["quoted"] = quoted
+    out["channels"] = {
+        label: all(n in names for n in required) for label, required in CONFIG_CHANNELS
+    }
+    # An identity-linked API key is refused until the request names a
+    # workspace, and the console is the only place that would notice.
+    out["workspace_missing"] = (
+        "ANTHROPIC_API_KEY" in names and "ANTHROPIC_WORKSPACE_ID" not in names
+    )
+    return out
+
+
+#: The container is asked at most this often. The page polls faster than that,
+#: and one more loopback request per poll is a cost with no reader.
+_MAIL_TTL = 3.0
+_mail_seen: Dict[str, object] = {"at": 0.0, "port": 0, "value": None}
+
+
+def service_mail(port: int) -> Optional[Dict[str, object]]:
+    """What the *running container* says about mail, or None if it cannot say.
+
+    The file on disk and the container's environment are different facts, and
+    the gap between them is the most common way this goes wrong: the file is
+    edited, nothing is rebuilt, and the container is still running with the
+    environment it started with. Only asking the container can catch that.
+    """
+    now = time.monotonic()
+    if _mail_seen["port"] == port and now - float(_mail_seen["at"]) < _MAIL_TTL:
+        return _mail_seen["value"]  # type: ignore[return-value]
+
+    value: Optional[Dict[str, object]] = None
+    if port_open(port):
+        try:
+            with urllib.request.urlopen(
+                "http://127.0.0.1:{}/api/config".format(port), timeout=2
+            ) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            mail = body.get("mail") or {}
+            value = {"configured": bool(mail.get("configured")),
+                     "status": str(mail.get("status") or "")}
+        except urllib.error.HTTPError as exc:
+            # 401 is a real answer: sign-in is on, so the console cannot read
+            # the config without a token. /admin in a browser can.
+            value = {"unauthorised": exc.code in (401, 403)}
+        except (urllib.error.URLError, OSError, ValueError):
+            value = None
+
+    _mail_seen.update({"at": now, "port": port, "value": value})
+    return value
+
+
 def doctor(repo: Path, port: int) -> None:
     """Write a prerequisites report into the shared log."""
     def line(state: str, label: str, detail: str = "") -> None:
@@ -394,6 +539,51 @@ def doctor(repo: Path, port: int) -> None:
     live = container_version(port)
     line("ok" if live else "warn", "container",
          live or "nothing on 127.0.0.1:{}".format(port))
+
+    log_write("")
+    log_write("Configuration")
+    cfg = local_config(repo)
+    if not cfg["exists"]:
+        line("warn", "secrets/local.env", "absent - mail and the assist are off")
+        log_write("      Create it with:")
+        log_write("        {}".format(
+            "powershell -ExecutionPolicy Bypass -File scripts\\setup-secrets.ps1"
+            if WINDOWS else "bash scripts/setup-secrets.sh"))
+    elif not cfg["readable"]:
+        line("bad", "secrets/local.env", "present but could not be read")
+    else:
+        line("ok", "secrets/local.env", "{} value(s) set".format(len(cfg["set"])))
+        for label, ready in dict(cfg["channels"]).items():
+            line("ok" if ready else "warn", "  " + label,
+                 "configured" if ready else "not configured - stays inert, quietly")
+        if cfg.get("workspace_missing"):
+            line("warn", "  ANTHROPIC_WORKSPACE_ID",
+                 "unset - required for an identity-linked key")
+            log_write("      A workspace key needs nothing here. An identity-linked one")
+            log_write("      is refused with 400 until the request names a workspace.")
+        if cfg["quoted"]:
+            line("bad", "  quoted values",
+                 ", ".join(str(n) for n in cfg["quoted"]))
+            log_write("      Docker keeps the quotes, so they become part of the value.")
+
+    # The file and the container are different facts, and the gap between them
+    # is the usual failure: edited, not rebuilt.
+    said = service_mail(port)
+    # "says", not "agrees": it reports what the container has, which is not
+    # always what the file has and is not always wrong when it differs — a real
+    # environment variable outranks this file by design. The one direction
+    # worth calling out is the file being ahead of the container.
+    if said is None:
+        line("warn", "  container says", "cannot ask - nothing is running")
+    elif said.get("unauthorised"):
+        line("warn", "  container says", "sign-in is on; read /admin in a browser")
+    else:
+        agrees = bool(said.get("configured"))
+        line("ok" if agrees else "warn", "  container says",
+             str(said.get("status") or ("mail live" if agrees else "mail off")))
+        if dict(cfg["channels"]).get("Mail") and not agrees:
+            log_write("      The file has mail set and the container does not have it.")
+            log_write("      It reads its environment once, at start: press Rebuild.")
 
     log_write("")
     log_write("Publish")
@@ -503,7 +693,8 @@ def verdict(tree: Optional[str], live: Optional[str]) -> Dict[str, str]:
 # machine right now rather than written as general advice, because the two
 # machines need different answers to the same question and picking the wrong one
 # is what cost the time.
-def guidance(port: int, funnelport: int, publishing: str) -> List[Dict[str, object]]:
+def guidance(repo: Path, port: int, funnelport: int,
+             publishing: str) -> List[Dict[str, object]]:
     hints: List[Dict[str, object]] = []
     live = container_version(port)
     occupied = port_open(port)
@@ -537,6 +728,45 @@ def guidance(port: int, funnelport: int, publishing: str) -> List[Dict[str, obje
         "lines": ["Rebuild removes the old container and starts a new one; you do",
                   "not have to stop anything first. Requests fail for the few",
                   "seconds in between, and a publish stays up across it."]})
+
+    # The one configuration failure worth interrupting for: the file says mail
+    # is on and the container disagrees. A container reads its environment once,
+    # when it starts, so an edit made after that has changed nothing at all —
+    # and every symptom of it looks like a wrong password.
+    cfg = local_config(repo)
+    said = service_mail(port)
+    if cfg["exists"] and cfg["readable"]:
+        if cfg["quoted"]:
+            hints.append({"tone": "bad", "title": "Quoted values in secrets/local.env",
+                "lines": [
+                    "Docker's --env-file takes quotes literally, so these arrive with",
+                    "the quotes attached and will not authenticate:",
+                    "  " + ", ".join(str(n) for n in cfg["quoted"]),
+                    "Remove them. A value with spaces in it needs no quoting here.",
+                ]})
+        if (dict(cfg["channels"]).get("Mail") and said is not None
+                and not said.get("unauthorised") and not said.get("configured")):
+            hints.append({"tone": "warn",
+                "title": "The container has not picked up secrets/local.env",
+                "lines": [
+                    "The file has mail configured; the running container says mail is",
+                    "off. A container reads its environment once, when it starts, so",
+                    "an edit made since then has changed nothing.",
+                    "",
+                    "Press Rebuild. Then Config to re-check, and /admin to see what",
+                    "the server itself thinks.",
+                ]})
+        if cfg.get("workspace_missing"):
+            hints.append({"tone": "warn",
+                "title": "ANTHROPIC_API_KEY is set without a workspace",
+                "lines": [
+                    "Harmless for a workspace key. An identity-linked key is refused",
+                    "with 400 until the request names a workspace, and the assist",
+                    "reports that as \"no summary\" — the same as having no key.",
+                    "",
+                    "Check the Type column at console.anthropic.com/settings/keys. If",
+                    "it does not say Workspace, add ANTHROPIC_WORKSPACE_ID.",
+                ]})
 
     if publishing:
         hints.append({"tone": "ok", "title": "Published", "lines": [
@@ -660,6 +890,7 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
 <div class="row">
   <button id="tunnel">Publish &middot; Cloudflare</button>
   <button id="funnel">Publish &middot; Tailscale</button>
+  <button id="config" class="quiet">Config</button>
   <button id="doctor" class="quiet">Doctor</button>
   <button id="cancel" class="quiet">Cancel</button>
   <button id="clear" class="quiet">Clear log</button>
@@ -686,6 +917,7 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
   <span id="live">Container &mdash; ?</span>
   <span id="tun">Publishing &mdash; ?</span>
   <span id="paths">Publish paths &mdash; ?</span>
+  <span id="channels">Mail &amp; assist &mdash; ?</span>
 </div>
 <div id="verdict" class="idle"></div>
 <div id="hints"></div>
@@ -736,6 +968,7 @@ document.getElementById("stop").onclick = function () { run("stop"); };
 document.getElementById("logs").onclick = function () { run("logs"); };
 document.getElementById("tunnel").onclick = function () { run("tunnel"); };
 document.getElementById("funnel").onclick = function () { run("funnel"); };
+document.getElementById("config").onclick = function () { run("config"); };
 document.getElementById("doctor").onclick = function () { run("doctor"); };
 document.getElementById("cancel").onclick = function () { run("cancel"); };
 document.getElementById("clear").onclick = function () {
@@ -768,6 +1001,15 @@ function poll() {
       (s.tunnel_running ? kind + " (pid " + s.tunnel_pid + ")" : "no");
     document.getElementById("paths").textContent = "Publish paths — Cloudflare " +
       (s.cloudflare.ok ? "yes" : "no") + ", Tailscale " + (s.tailscale.ok ? "yes" : "no");
+    // Named for the two channels people actually notice missing. Reads the
+    // file, not the container - the container's own view is one line further
+    // down, in the hints, where it has room to say what to do about it.
+    var ch = s.config && s.config.channels ? s.config.channels : null;
+    document.getElementById("channels").textContent = "Mail & assist — " +
+      (!s.config || !s.config.exists ? "no local.env"
+       : !ch ? "unreadable"
+       : (ch["Mail"] ? "mail on" : "mail off") + ", " +
+         (ch["Comment assist"] ? "assist on" : "assist off"));
     var v = document.getElementById("verdict");
     v.textContent = s.verdict.text;
     v.className = s.verdict.state;
@@ -801,7 +1043,7 @@ function poll() {
       });
     }
 
-    ["all", "pull", "rebuild", "stop", "logs", "doctor"].forEach(function (id) {
+    ["all", "pull", "rebuild", "stop", "logs", "config", "doctor"].forEach(function (id) {
       document.getElementById(id).disabled = s.task_running;
     });
     document.getElementById("cancel").disabled = !s.task_running;
@@ -954,7 +1196,7 @@ class Console(http.server.BaseHTTPRequestHandler):
                 return {"ok": True}
             return {"ok": False}
 
-        if action in ("pull", "rebuild", "logs"):
+        if action in ("pull", "rebuild", "logs", "config"):
             return {"ok": TASK.start(action, commands[action], self.repo)}
 
         if action == "stop":
@@ -1056,7 +1298,8 @@ class Console(http.server.BaseHTTPRequestHandler):
             "tunnel_kind": TUNNEL_KIND if TUNNEL.running else "",
             "cloudflare": cloudflared_ready(),
             "tailscale": tailscale_ready(),
-            "hints": guidance(port, funnelport,
+            "config": local_config(self.repo),
+            "hints": guidance(self.repo, port, funnelport,
                               TUNNEL_KIND if TUNNEL.running else ""),
         })
         return payload
