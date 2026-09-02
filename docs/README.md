@@ -15,6 +15,7 @@ deterministic. `../CLAUDE.md` carries the standing rules.
 | File | What it is |
 | --- | --- |
 | `FEATURE-PROMPT-declaration.md` | The Project Declaration questionnaire — 12 optional fields answered before upload, reconciled against the drawings as a second independent source. Build after deployment, or in parallel if the engine work is separable from the infrastructure work. |
+| `FEATURE-PROMPT-inference-ladder.md` | **Proposal, not accepted.** Why "neither the drawings nor the declaration state this" is often false, and a six-phase plan to fix it: a resolution ladder from stated → tabulated → measured, lexicon-driven extraction instead of literal patterns, per-view scale attribution, and tracing a building footprint off vector geometry with no CAD layers. Touches `fbcreview/`, so it needs accepting before it is a task. |
 
 Training mode generates its own prompts. An escalated piece of feedback exports
 from the queue on `/refine` as a Markdown brief in the same shape as the files above — see
