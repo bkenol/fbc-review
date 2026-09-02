@@ -8,7 +8,7 @@ tags:
   - geometry
   - pdf-pipeline
   - source/cowork
-status: proposal
+status: accepted
 created: 2026-09-02
 source-session: Meridian Drafting
 ---
@@ -16,10 +16,15 @@ source-session: Meridian Drafting
 # Claude Code prompt — stop abstaining on values the sheet is holding up in front of us
 
 `CLAUDE.md` carries the standing rules and outranks anything here that contradicts
-it. In particular: **`fbcreview/` is not casually editable, and the review path
-makes zero LLM calls.** This document proposes changes inside `fbcreview/`, so it
-is a proposal to be accepted before it is a task to be done. Nothing here has
-been implemented.
+it. Read *Refining the engine* there before starting: it names the five
+properties that have to survive this work.
+
+**Status.** Written as a proposal, because `fbcreview/` was outside the editable
+boundary. That boundary was lifted on 2026-09-02 and this is now the standing
+plan for the extraction and geometry work — §11 is the order to build it in.
+None of it is implemented yet.
+
+The one rule that did not move: **the review path makes zero LLM calls.** See §0.
 
 ---
 
@@ -503,7 +508,9 @@ Phase 5 is where the interesting work is and where it can go wrong.
 ## 12. Do not
 
 - **Do not add a model call to the review path.** Not for extraction, not for
-  "just this one hard field", not behind a flag.
+  "just this one hard field", not behind a flag. This is the one property
+  `CLAUDE.md` still calls non-negotiable, and it survived the boundary change
+  that made the rest of this document actionable.
 - **Do not let a measured value reach a `CRITICAL` finding**, silently become a
   declared one, or serve as the drawn half of a declared-vs-drawn check.
 - **Do not widen `_PATTERNS` in place** as a shortcut. The literals are the
@@ -512,9 +519,10 @@ Phase 5 is where the interesting work is and where it can go wrong.
 - **Do not weaken an abstention into a guess.** If the gates fail, abstain — but
   abstain with the *specific* reason, which is itself most of what this
   document buys.
-- **Do not touch `fbcreview/` until this proposal is accepted.** It is outside
-  this repo's editable boundary per `CLAUDE.md`, and phases 1–5 are all inside
-  it.
+- **Do not re-baseline the reference sets to make a change look clean.** A
+  finding that moved severity or citation is a result to explain, not noise to
+  absorb. `tests/` is the only thing that tells you a refinement did what you
+  meant and nothing else.
 
 ---
 

@@ -24,11 +24,52 @@ for one, you have misread the problem.
 
 | Directory | Rule |
 | --- | --- |
-| `fbcreview/` | Engine, rules, code corpus, renderer. If something here genuinely blocks you, stop and report it rather than editing it. |
+| `fbcreview/` | Engine, rules, code corpus, renderer. **Yours to refine** — see *Refining the engine* below for what has to survive the refinement. |
 | `webapp/` | The FastAPI service. Yours to harden and extend. |
 | `web/` | The Angular client. Yours to build. |
 | `tests/` | **Do not edit a test to make a change pass.** Fix the change. |
 | `samples/` | Test permit sets. Git-ignored. Never commit a client PDF. |
+
+## Refining the engine
+
+The engine is the product and it is not finished. Extraction is too literal, most
+abstentions say "the set does not state this" about values the set is holding up in front
+of us, and geometry is unreachable unless somebody guessed the CAD layer name correctly.
+Refining that is wanted work, not a boundary violation.
+
+**Go and improve it.** Specifically:
+
+- **Feedback is the input.** What reviewers submit through Refine analysis, and what comes
+  out of sessions like this one, is evidence about where the engine is wrong. Read
+  `docs/TRAINING-MODE.md` §6 and the feedback queue; a recurring complaint about a rule is
+  a reason to change the rule, not only a reason to move a calibration lever.
+- **Reproduce before you change.** A fix begins with the failing input written down — the
+  sheet text, the phrasing, the geometry — and a test carrying it. "It seems better" is not
+  a reason to ship anything.
+- **`docs/FEATURE-PROMPT-inference-ladder.md`** is the standing plan for the extraction and
+  geometry work. Six phases, each independently shippable. Work it in order unless you have
+  a better reason than convenience.
+
+### What has to survive every refinement
+
+These are not style preferences. Each one is the reason somebody can act on what this tool
+says, and a refinement that breaks one has made the product worse however much it improves
+the numbers.
+
+1. **Abstention stays honest.** "Not checked" must never become indistinguishable from
+   "checked and passed". Widening a rule's reach is good; widening it by lowering the bar
+   for what counts as an answer is not.
+2. **Every value carries its provenance.** `Evidence` records where a number came from and
+   how much to trust it. A refinement that produces a value without a derivation somebody
+   can check on the sheet in thirty seconds is not an improvement.
+3. **An inferred value never masquerades as a stated one.** Estimation is welcome; laundering
+   an estimate into a fact is not. Anything measured or inferred says so, in the finding.
+4. **The code corpus stays hand-transcribed.** `fbcreview/codes/` is checked by hand rather
+   than scraped, which is why it is trusted. Adding a row is deliberate work with a citation.
+   Never generate it.
+5. **The regression gate holds.** `tests/` on the reference sets is what tells you a change
+   did what you meant and nothing else. A finding that changes severity or citation is a
+   result to explain, not noise to re-baseline.
 
 ## Stack — decided, do not relitigate
 
