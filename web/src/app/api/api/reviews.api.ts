@@ -27,6 +27,8 @@ import { PrefillResponse } from '../model/prefill-response';
 // @ts-ignore
 import { ProjectDeclaration } from '../model/project-declaration';
 // @ts-ignore
+import { RerunRequest } from '../model/rerun-request';
+// @ts-ignore
 import { ReviewAccepted } from '../model/review-accepted';
 
 // @ts-ignore
@@ -380,6 +382,77 @@ export class ReviewsApi extends BaseService {
             {
                 context: localVarHttpContext,
                 body: localVarConvertFormParamsToString ? localVarFormParams.toString() : localVarFormParams,
+                responseType: <any>responseType_,
+                ...(withCredentials ? { withCredentials } : {}),
+                headers: localVarHeaders,
+                observe: observe,
+                ...(localVarTransferCache !== undefined ? { transferCache: localVarTransferCache } : {}),
+                reportProgress: reportProgress
+            }
+        );
+    }
+
+    /**
+     * Review the same set again with more of the declaration answered.
+     * A second review of a set already in the bucket.  The point of it is the abstention register. &#x60;DECL.BUILDING_AREA — neither the drawings nor the declaration state this&#x60; is a rule waiting on one number, and before this the only way to give it that number was to upload the file again and re-answer every other question with it. So the remedy cost more than the finding was worth and nobody took it.  A new job rather than an amendment of the old one, and deliberately so. A review is a dated statement about a set under a stated set of assertions; editing one in place would rewrite what somebody was already told. The two sit side by side in the history, and &#x60;rerun_of&#x60; says which came first.  The file is not re-sent and not re-probed: &#x60;upload_blob&#x60; still points at the PDF and &#x60;source&#x60; still holds what admission measured, so this costs one run of the engine. Rate limits still apply — it is a review.
+     * @endpoint post /api/jobs/{job_id}/rerun
+     * @param jobId 
+     * @param rerunRequest 
+     * @param observe set whether or not to return the data Observable as the body, response or events. defaults to returning the body.
+     * @param reportProgress flag to report request and response progress.
+     * @param options additional options
+     */
+    public rerunReview(jobId: string, rerunRequest: RerunRequest, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<ReviewAccepted>;
+    public rerunReview(jobId: string, rerunRequest: RerunRequest, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<ReviewAccepted>>;
+    public rerunReview(jobId: string, rerunRequest: RerunRequest, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<ReviewAccepted>>;
+    public rerunReview(jobId: string, rerunRequest: RerunRequest, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'application/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+        if (jobId === null || jobId === undefined) {
+            throw new Error('Required parameter jobId was null or undefined when calling rerunReview.');
+        }
+        if (rerunRequest === null || rerunRequest === undefined) {
+            throw new Error('Required parameter rerunRequest was null or undefined when calling rerunReview.');
+        }
+
+        let localVarHeaders = this.defaultHeaders;
+
+        const localVarHttpHeaderAcceptSelected: string | undefined = options?.httpHeaderAccept ?? this.configuration.selectHeaderAccept([
+            'application/json'
+        ]);
+        if (localVarHttpHeaderAcceptSelected !== undefined) {
+            localVarHeaders = localVarHeaders.set('Accept', localVarHttpHeaderAcceptSelected);
+        }
+
+        const localVarHttpContext: HttpContext = options?.context ?? new HttpContext();
+
+        const localVarTransferCache: boolean = options?.transferCache ?? true;
+
+
+        // to determine the Content-Type header
+        const consumes: string[] = [
+            'application/json'
+        ];
+        const httpContentTypeSelected: string | undefined = this.configuration.selectHeaderContentType(consumes);
+        if (httpContentTypeSelected !== undefined) {
+            localVarHeaders = localVarHeaders.set('Content-Type', httpContentTypeSelected);
+        }
+
+        let responseType_: 'text' | 'json' | 'blob' = 'json';
+        if (localVarHttpHeaderAcceptSelected) {
+            if (localVarHttpHeaderAcceptSelected.startsWith('text')) {
+                responseType_ = 'text';
+            } else if (this.configuration.isJsonMime(localVarHttpHeaderAcceptSelected)) {
+                responseType_ = 'json';
+            } else {
+                responseType_ = 'blob';
+            }
+        }
+
+        let localVarPath = `/api/jobs/${this.configuration.encodeParam({name: "jobId", value: jobId, in: "path", style: "simple", explode: false, dataType: "string", dataFormat: undefined})}/rerun`;
+        const { basePath, withCredentials } = this.configuration;
+        return this.httpClient.request<ReviewAccepted>('post', `${basePath}${localVarPath}`,
+            {
+                context: localVarHttpContext,
+                body: rerunRequest,
                 responseType: <any>responseType_,
                 ...(withCredentials ? { withCredentials } : {}),
                 headers: localVarHeaders,

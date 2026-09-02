@@ -1,0 +1,74 @@
+@if (asking().length) {
+  <div class="side-card answer-now">
+    <p class="eyebrow">Answer it and check again</p>
+    <p class="side-line">
+      The rule is waiting on
+      {{ asking().length === 1 ? 'this value' : 'one of these values' }}. State it and the
+      set is reviewed again with it — the file is already here, so nothing is uploaded
+      twice.
+    </p>
+
+    @for (field of asking(); track field.key) {
+      <div class="q">
+        <label class="f" [attr.for]="'now-' + field.key">
+          {{ labelFor(field) }}
+          @if (field.unit) {
+            <span class="unit">({{ field.unit }})</span>
+          }
+        </label>
+
+        @switch (field.kind) {
+          @case ('enum') {
+            <select
+              [id]="'now-' + field.key"
+              [value]="valueOf(field.key)"
+              (change)="onInput(field.key, $event)"
+            >
+              <option value="">Not answered</option>
+              @for (choice of field.choices ?? []; track choice) {
+                <option [value]="choice">{{ choiceLabel(field, choice) }}</option>
+              }
+            </select>
+          }
+          @case ('bool') {
+            <!-- Three states, as the full form has them. A checkbox cannot say
+                 "I did not answer", and here unanswered is the status quo. -->
+            <select
+              [id]="'now-' + field.key"
+              [value]="valueOf(field.key)"
+              (change)="onInput(field.key, $event)"
+            >
+              <option value="">Not answered</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          }
+          @default {
+            <input
+              [id]="'now-' + field.key"
+              [type]="field.kind === 'text' ? 'text' : 'number'"
+              [value]="valueOf(field.key)"
+              [attr.inputmode]="field.kind === 'text' ? null : 'decimal'"
+              [attr.step]="field.kind === 'integer' ? '1' : 'any'"
+              [attr.min]="field.kind === 'text' ? null : '0'"
+              (input)="onInput(field.key, $event)"
+              autocomplete="off"
+            />
+          }
+        }
+        <p class="hint">{{ field.pro_help }}</p>
+      </div>
+    }
+
+    <div class="side-actions">
+      <button type="button" class="btn" [disabled]="busy() || !anyTyped()" (click)="submit()">
+        {{ busy() ? 'Starting…' : 'State it and review again' }}
+      </button>
+    </div>
+    <p class="hint">
+      This starts a second review rather than editing this one. Both stay in the history,
+      and the new one says which it followed — a review is a dated statement about a set,
+      and what you were already told is not rewritten.
+    </p>
+  </div>
+}

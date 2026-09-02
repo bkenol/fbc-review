@@ -354,10 +354,16 @@ a:hover {
   border-color: var(--primary);
 }
 
+/* "Training & feedback" is the honest name for one page that carries both. It
+   is also four words of uppercase mono, so the second half goes when the
+   masthead has to share the line — the entry is still the same entry. */
 @media (max-width: 60rem) {
   .masthead-nav a {
     padding: 0.35rem 0.7rem;
     font-size: 12px;
+  }
+  .nav-and {
+    display: none;
   }
 }
 
@@ -699,19 +705,40 @@ button.ghost:hover:not(:disabled),
   border-color: var(--text-strong);
   color: var(--text-reverse);
 }
-/* Sits inline in the masthead, so it reads as a link rather than a control. */
-button.inline {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border-hairline);
-  letter-spacing: 0.06em;
+/* The secondary verb: smaller than `.btn`, and a control rather than a phrase.
+ *
+ * It used to have no border, no fill and a hairline under it in muted grey —
+ * which is the same treatment as a disabled label, and it was carrying real
+ * work: Send the digest now, Dismiss, Report it anyway, Close, Confirm, Show
+ * all, Hand over. Everything you could do that was not the primary action was
+ * drawn as though it were a caption, so people read past it.
+ *
+ * Now it is what it is: a framed control in ink, at label size, with the same
+ * decisive colour swap on hover as every other button. It still sits inline in
+ * a sentence — the padding is small and the box does not break the line — but
+ * it can no longer be mistaken for prose. */
+button.inline,
+a.inline {
+  display: inline-block;
+  padding: 4px 10px;
+  border: 1px solid var(--border-input);
+  background: transparent;
+  color: var(--text-strong);
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-decoration: none;
+  vertical-align: baseline;
 }
-button.inline:hover:not(:disabled) {
-  background: none;
-  color: var(--link-hover);
-  border-bottom-color: var(--link-hover);
+button.inline:hover:not(:disabled),
+a.inline:hover {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+button.inline:disabled {
+  border-color: var(--border-hairline);
+  background: transparent;
+  color: var(--text-faint);
 }
 
 /* ── progress — the traverse ───────────────────────────────────────────────
@@ -1208,6 +1235,22 @@ td.sev {
   color: var(--sev, var(--text-body));
   transition: var(--transition-colour);
 }
+/* A chip that goes somewhere. Same shape as the label it sits beside, so the
+   header still reads as one run of facts — but it takes the link ink and the
+   hover swap, because underlined blue is what says "this one you can click". */
+a.chip-link {
+  color: var(--link);
+  border-color: color-mix(in srgb, var(--link) 45%, transparent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+a.chip-link:hover {
+  border-color: var(--link-hover);
+  background: var(--link-hover);
+  color: var(--paper-white);
+  text-decoration: none;
+}
+
 /* CRITICAL is the only severity that reverses. One row on a sheet reads as a stamp;
    more than one and the register would go to plaid. */
 td.sev.CRITICAL .chip {
@@ -1430,9 +1473,25 @@ tbody tr.LOW td:first-child {
 .annotations li:first-child {
   border-top: 0;
 }
+/* A callout label: the name of a thing, in survey blue, the way it is lettered
+ * beside a leader line on a drawing.
+ *
+ * It used to carry an underline in `currentColor`, and `--annotation` and
+ * `--link` are the same blue family — so `Mail`, `Issues` and `Comment assist`
+ * on the queue's status line were blue underlined text that did nothing when
+ * clicked, sitting a few pixels from links that did. Underlined blue is the one
+ * piece of formatting the whole web agrees means "follow this", and spending it
+ * on a label is how you teach somebody that clicking here does not work.
+ *
+ * So: the ink stays, the underline goes, and the mono annotation face plus the
+ * letter-spacing carry the distinction instead. `a.annot-name` keeps the
+ * underline, because there it is telling the truth. */
 .annot-name {
   font: var(--type-annotation);
   color: var(--annotation);
+  letter-spacing: 0.04em;
+}
+a.annot-name {
   border-bottom: 1px solid currentColor;
   padding-bottom: 1px;
 }
@@ -2544,8 +2603,87 @@ td.sev .chip.conflict {
 }
 
 .side-flag {
+  /* Last on the row whatever else is on it: `.side-tag` also sits after the
+     title, and the "you have reported this" tick belongs at the far end. */
+  order: 3;
   margin-left: auto;
   color: var(--sev-verified, var(--annotation));
+}
+
+/* ── the queue's channel list ──────────────────────────────────────────────
+ * Mail, issues, the comment assist: what each one is and where it stands, one
+ * per line. It was a single paragraph running all three together with the
+ * digest button on the end of it. */
+.channels {
+  list-style: none;
+  margin: var(--space-3, 1rem) 0;
+  padding: 0;
+}
+.channels li {
+  display: grid;
+  grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
+  gap: var(--space-2, 0.5rem);
+  align-items: baseline;
+  padding: var(--space-2, 0.5rem) 0;
+  border-top: var(--hairline);
+}
+.channels li:first-child {
+  border-top: 0;
+}
+.channel-state {
+  font: var(--type-small);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+/* Configured, and therefore able to do something. Said in ink rather than in
+   the same grey as the sentence explaining how to switch it on. */
+.channel-state.live {
+  color: var(--text-body);
+}
+@media (max-width: 40rem) {
+  .channels li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* "answerable" on a not-checked row: this rule stood down waiting on a question
+   you can answer from here. A framed word rather than another grey one, because
+   it is the difference between a register you act on and one you scroll.
+
+   Ordered after the title, which claims the full row width — otherwise it lands
+   between the rule id and the reason and breaks the sentence in half. */
+.side-tag {
+  order: 2;
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--annotation) 55%, transparent);
+  background: color-mix(in srgb, var(--annotation) 12%, transparent);
+  color: var(--annotation);
+  font: var(--type-annotation);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+/* A selected row reverses to a filled ground, and survey blue on it is
+   unreadable. The tag takes the row's own foreground there. */
+.side-row.on .side-tag {
+  border-color: currentColor;
+  background: transparent;
+  color: inherit;
+}
+
+/* ── answering what a rule stood down for ──────────────────────────────────
+ * The one or two questions the rule named, on the panel where it stood down.
+ * Fields at panel width, and one primary verb: nothing here is a second
+ * questionnaire. */
+.answer-now .q {
+  margin-top: var(--space-3, 1rem);
+}
+.answer-now .q input,
+.answer-now .q select {
+  width: 100%;
+}
+.answer-now .hint {
+  margin-top: 6px;
 }
 
 /* ── the feedback form ─────────────────────────────────────────────────── */

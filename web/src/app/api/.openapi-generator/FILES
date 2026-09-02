@@ -65,6 +65,7 @@ model/project-declaration.ts
 model/prompt-export.ts
 model/raster-region.ts
 model/reconciled-field.ts
+model/rerun-request.ts
 model/review-accepted.ts
 model/review-options.ts
 model/rule-calibration.ts

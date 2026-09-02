@@ -4,30 +4,33 @@
   <section class="step">
     <div class="step-head">
       <span class="mark"><span class="xtick" aria-hidden="true"></span></span>
-      <h2>Training is off on this deployment</h2>
+      <h2>Refinement is off on this deployment</h2>
     </div>
     <p class="hint">
       Nothing is collected and nothing is calibrated — the service reviews exactly as it
-      did before any of this existed. Set <code>FBC_TRAINING</code> to switch it on.
+      did before any of this existed. Set <code>FBC_TRAINING_MODE</code> to switch it on.
     </p>
     <div class="row">
       <a class="btn" routerLink="/">Review a set</a>
     </div>
   </section>
 } @else {
-  <!-- ── 01 · what training mode actually is ─────────────────────────────
-       Said plainly and up front, because the word "training" promises
-       something this cannot do and the gap between the two is the thing most
-       likely to be misunderstood. -->
+  <!-- ── 01 · what refining actually does ────────────────────────────────
+       Said plainly and up front. This page was called "Training", and that
+       word promises something the tool cannot do — a model learning a check
+       from examples. What it really does is refine the analysis: move named,
+       versioned levers on rules somebody wrote by hand. The gap between those
+       two is the thing most likely to be misunderstood, so the name and the
+       first paragraph both address it. -->
   <section class="step">
     <div class="step-head">
       <span class="mark">01</span>
-      <h2>Training</h2>
+      <h2>Refine the analysis</h2>
     </div>
 
     <p class="lede">
-      Feedback here does not retrain a model — there is no model in the review path, and
-      there is not going to be. What it does is move a named, versioned set of per-rule
+      Nothing here retrains a model — there is no model in the review path, and there is
+      not going to be. What your feedback moves is a named, versioned set of per-rule
       levers: which rules run, what severity they report at, which occupancies they govern.
       Every change is diffable, reversible, and attributable to the feedback that argued
       for it.
@@ -52,19 +55,27 @@
       <div class="dim" [class.zero]="!openable().length">
         <b class="fig">{{ openable().length }}</b>
         <span class="rule" aria-hidden="true"><span class="slash"></span></span>
-        <span class="lab">Sets to work on</span>
+        <span class="lab">Sets to refine</span>
       </div>
     </div>
 
+    <!-- The profile only. The state of the optional channels used to be dragged
+         in here as well, which on an unconfigured deployment is two sentences
+         of "not configured — set FBC_GITHUB_REPO and…" in the middle of an
+         explanation of what refinement is. The queue below says it properly,
+         one row per channel, and that is the one place it belongs. -->
     <p class="figures">
       Production reviews against <b>{{ status?.profile_label }}</b> v{{
         status?.profile_version
-      }}. Comment assist: {{ status?.assist }}. Issues: {{ status?.github }}.
+      }}.
     </p>
 
     @if (isOwner()) {
       <div class="row">
-        <a class="btn" routerLink="/admin">Open the feedback queue</a>
+        <!-- Same page, further down. It used to be a second route reached from
+             a second entry in the masthead, which put a navigation step between
+             a proposal and the decision on it. -->
+        <a class="btn" href="#queue">Go to the queue ({{ waiting() }} waiting)</a>
       </div>
     }
   </section>
@@ -87,7 +98,7 @@
       <p class="hint">
         Opening one fetches its findings back out of storage — nothing is re-run. Inside,
         you can read every finding, mark up the sheets, argue with a rule that declined to
-        run, and hand the whole pass over.
+        run, answer the question a rule stood down for, and hand the whole pass over.
       </p>
       <ul class="pastlist">
         @for (entry of recent(); track entry.id) {
@@ -118,8 +129,9 @@
       </ul>
     } @else {
       <p class="hint">
-        No finished reviews yet. Training works on reviews that already exist, so run one
-        first — it does not have to be run in training mode to be worked on afterwards.
+        No finished reviews yet. Refinement works on reviews that already exist, so run
+        one first — it does not have to have been run against your own levers to be worked
+        on afterwards.
       </p>
       <div class="row">
         <a class="btn" routerLink="/">Review a set</a>
@@ -127,11 +139,11 @@
     }
   </section>
 
-  <!-- ── 03 · how a review runs in training mode ─────────────────────────── -->
+  <!-- ── 03 · running a set against your own candidate ───────────────────── -->
   <section class="step">
     <div class="step-head">
       <span class="mark">03</span>
-      <h2>Running one in training mode</h2>
+      <h2>Running one against your own levers</h2>
     </div>
     <p class="hint">
       The checkbox on the upload form decides which profile a <i>new</i> review runs
@@ -144,4 +156,14 @@
       <a class="btn" routerLink="/">Upload a set</a>
     </div>
   </section>
+
+  <!-- ── 04 · the queue ───────────────────────────────────────────────────
+       The other half of the same loop, on the same page. A reviewer argues
+       with a rule up there, the argument lands here, and what is approved here
+       is what the next review runs against. Owners only — every path behind it
+       answers 404 for anybody else, so this is convenience rather than the
+       control. -->
+  @if (isOwner()) {
+    <app-admin />
+  }
 }

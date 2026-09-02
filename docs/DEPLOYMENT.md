@@ -1174,7 +1174,7 @@ the service is a container `scripts/share.sh` starts from whatever shell is
 open, and exporting five SMTP variables and an API key before every start is a
 step that gets skipped. The failure is silent — mail and the comment assist are
 both inert without their keys, a review still runs, feedback still queues, and
-the only place that says otherwise is `/admin`.
+the only place that says otherwise is the queue on `/refine`.
 
 So there is one git-ignored file, and both paths read it: the container gets it
 as `docker run --env-file`, and a bare `uvicorn` gets it through
@@ -1216,7 +1216,7 @@ Three rules, and the second one is the one that bites:
   nobody, so mail can be fully configured and still have nowhere to go —
   `setup-secrets` calls that out.
 
-Prove it end to end from `/admin`: **send the digest now** returns what the SMTP
+Prove it end to end from the queue on `/refine`: **send the digest now** returns what the SMTP
 server said, including the failure text when it said no.
 
 #### The comment assist
@@ -1274,7 +1274,7 @@ the key, so the same `wrkspc_` value serves every key acting in it.
 
 #### Issues from escalated feedback
 
-`FBC_GITHUB_REPO` and `FBC_GITHUB_TOKEN` together let `/admin` open an escalated
+`FBC_GITHUB_REPO` and `FBC_GITHUB_TOKEN` together let the queue open an escalated
 report as a GitHub issue — the same brief the prompt export produces, but
 tracked. Both are needed; either alone leaves the button unavailable.
 
@@ -1291,7 +1291,7 @@ with a `Bearer` token. So the token needs one permission and no more.
 3. **Repository permissions → Issues → Read and write.** Nothing else. Leave
    Contents at "No access": this token opens issues, it does not push code.
 4. Set an expiry you will actually notice. The failure is quiet — the issue
-   button stops working and `/admin` says the channel is unconfigured.
+   button stops working and the queue says the channel is unconfigured.
 5. Copy the `github_pat_...` value once; GitHub will not show it again.
 
 A classic token works too and needs the `repo` scope, but that scope also
@@ -1715,7 +1715,7 @@ gcloud run services update fbc-review --region=us-east1 \
   --update-env-vars="FBC_TRAINING_MODE=1,FBC_OWNER_EMAILS=you@example.com"
 ```
 
-`FBC_OWNER_EMAILS` is what makes `/admin` reachable and what gates every
+`FBC_OWNER_EMAILS` is what makes the queue section of `/refine` visible and what gates every
 `/api/admin/*` route. It is deliberately not derived from
 `FBC_ALLOWED_EMAILS`: running a review and re-levelling a rule for every future
 applicant are different privileges, and an unset variable must not grant the
@@ -1744,7 +1744,7 @@ Each is inert unless configured and each says so on `/api/admin/overview`.
 
 | Channel | Needs | Without it |
 | --- | --- | --- |
-| Immediate mail on an escalation, and the digest | `FBC_SMTP_*`, `FBC_MAIL_FROM`, `FBC_OWNER_EMAILS` | Feedback still queues; you read `/admin` |
+| Immediate mail on an escalation, and the digest | `FBC_SMTP_*`, `FBC_MAIL_FROM`, `FBC_OWNER_EMAILS` | Feedback still queues; you read the queue on `/refine` |
 | A GitHub issue from a report | `FBC_GITHUB_REPO`, `FBC_GITHUB_TOKEN` | The prompt export still works; copy it by hand |
 | Free-text comments summarised before they reach you | `ANTHROPIC_API_KEY` | Any comment routes to you unread, which is what it did before |
 

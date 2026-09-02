@@ -20,36 +20,49 @@
  *    submitted as one piece for the owner.
  */
 import { DatePipe, LowerCasePipe } from '@angular/common';
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  computed,
+  effect,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { map } from 'rxjs';
 
 import {
   Abstention,
   AbstentionKindInfo,
+  DeclarationField,
   Feedback,
   FeedbackSubject,
   Finding,
   Markup,
   MarkupRequest,
+  ProjectDeclaration,
 } from '../api';
 import { FeedbackDraft, FeedbackPanel } from '../feedback/feedback-panel';
 import { FocusRequest, SheetAnnotation, SheetViewer } from '../viewer/sheet-viewer';
 import { TrainingService } from '../training/training-service';
+import { AnswerNow } from './declaration/answer-now';
 import { ReviewService } from './review-service';
 
 @Component({
   selector: 'app-workspace',
-  imports: [SheetViewer, FeedbackPanel, RouterLink, DatePipe, LowerCasePipe],
+  imports: [SheetViewer, FeedbackPanel, AnswerNow, RouterLink, DatePipe, LowerCasePipe],
   templateUrl: './workspace.html',
 })
 export class Workspace {
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly reviews = inject(ReviewService);
   protected readonly training = inject(TrainingService);
 
   protected readonly job = this.reviews.job;
+  protected readonly rerunning = this.reviews.rerunning;
   protected readonly findings = this.reviews.findings;
   protected readonly config = this.reviews.config;
   protected readonly failure = this.reviews.failure;
@@ -85,6 +98,8 @@ export class Workspace {
    */
   protected readonly focus = signal<FocusRequest | null>(null);
   private nonce = 0;
+  /** The scrolling side column, so a card that opens can be scrolled to. */
+  private readonly side = viewChild<ElementRef<HTMLElement>>('side');
   /** The hand-over form, opened from the markup tab. */
   protected readonly handingOver = signal(false);
   /**
@@ -138,6 +153,17 @@ export class Workspace {
   /** Abstentions worth offering a proposal for, most useful first. */
   protected readonly proposable = computed(() =>
     this.abstentions().filter((a) => a.proposable),
+  );
+
+  /**
+   * How many stood down waiting on a question somebody can answer here.
+   *
+   * Counted rather than listed at the top of the register: the remedy is the
+   * same sentence for all of them, and saying it once above the list is the
+   * difference between a hint and twelve copies of a hint.
+   */
+  protected readonly answerableCount = computed(
+    () => this.abstentions().filter((a) => (a.unlocked_by ?? []).length).length,
   );
 
   private readonly kindIndex = computed(() => {
@@ -218,6 +244,7 @@ export class Workspace {
   /** Picked from the register: select it, and take the viewer to it. */
   protected openFinding(finding: Finding): void {
     this.pickFinding(finding);
+    this.showPanelTop();
     this.lookAt('finding', finding.fid, finding.page);
   }
 
@@ -232,6 +259,7 @@ export class Workspace {
 
   protected openMarkup(markup: Markup): void {
     this.pickMarkup(markup);
+    this.showPanelTop();
     this.lookAt('markup', markup.id, markup.page);
   }
 
@@ -246,6 +274,7 @@ export class Workspace {
 
   protected openAnnotation(mark: SheetAnnotation): void {
     this.pickAnnotation(mark);
+    this.showPanelTop();
     this.lookAt('annotation', mark.id, mark.page);
   }
 
@@ -255,6 +284,20 @@ export class Workspace {
 
   private lookAt(kind: FocusRequest['kind'], id: string, page: number): void {
     this.focus.set({ kind, id, page, nonce: ++this.nonce });
+  }
+
+  /**
+   * Put the card that just opened where somebody can see it.
+   *
+   * The panel is one scrolling column: the detail card on top, the register
+   * underneath. Picking a row inserts the card *above* the row, and the browser
+   * keeps the button you clicked where it is — so the card you asked for opens
+   * off the top of the panel and the panel looks like it did nothing. It is
+   * worst on the abstention register, where the card carries the question that
+   * would let the rule run.
+   */
+  private showPanelTop(): void {
+    this.side()?.nativeElement.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   /**
@@ -273,11 +316,47 @@ export class Workspace {
     this.subject.set(FeedbackSubject.Abstention);
     this.forceProposal.set(false);
     this.training.clearAccepted();
+    // An abstention has no mark on the drawing to page to, so this is the only
+    // thing that happens when you pick one — and it is the case where the card
+    // matters most, because it carries the question that unlocks the rule.
+    this.showPanelTop();
   }
 
   /** Open the form on an abstention this build thinks was correct. */
   protected reportAnyway(): void {
     this.forceProposal.set(true);
+  }
+
+  // ── answering what the rule was waiting on ──────────────────────────────
+  /**
+   * The declaration questions the selected abstention named.
+   *
+   * `unlocked_by` is inverted on the server from the schema's own `unlocks`, so
+   * this is the rule's own account of what it wanted rather than a guess made
+   * here. The metadata — label, kind, choices, help — comes from `/api/config`,
+   * which is the same source the full questionnaire renders from, so a retitled
+   * question is retitled in both places at once.
+   */
+  protected readonly answerable = computed<DeclarationField[]>(() => {
+    const keys = new Set(this.selectedAbstention()?.unlocked_by ?? []);
+    if (!keys.size) return [];
+    return (this.config()?.declaration_fields ?? []).filter((f) => keys.has(f.key));
+  });
+
+  /**
+   * Start a second review with the answer folded in.
+   *
+   * Navigating to the new id rather than staying put: the review in front of
+   * you is not the one that now has the answer, and leaving it on screen while
+   * a different review runs is how somebody ends up reading a stale register
+   * and believing it.
+   */
+  protected answerAndRerun(declaration: ProjectDeclaration): void {
+    const id = this.jobId();
+    if (!id) return;
+    this.reviews.rerun(id, declaration, (next) => {
+      void this.router.navigate(['/review', next]);
+    });
   }
 
   /** Whether to show the proposal form for the abstention in hand. */

@@ -49,6 +49,7 @@ verified off, measured off     ->  7 findings {CRITICAL 1, HIGH 2, MEDIUM 4}   (
 | `GET` | `/api/config` | Groups, editions, limits, whether mail is configured |
 | `POST` | `/api/review` | multipart: `file` + `options` JSON → `202 {"id": …}` |
 | `GET` | `/api/jobs/{id}` | State, stage, and the full summary when done |
+| `POST` | `/api/jobs/{id}/rerun` | Review the same set again with more of the declaration answered. The PDF is not re-sent — it is already in the bucket — so this costs one pass of the engine. Answers merge over the original's; the result is a **new** review carrying `rerun_of`. |
 | `GET` | `/api/jobs/{id}/markup.pdf` | The marked-up set |
 | `GET` | `/api/jobs/{id}/findings.json` | Machine-readable findings |
 | `GET` | `/healthz` | Liveness, and the version this build reports. Cloud Run's startup probe. |

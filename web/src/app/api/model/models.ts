@@ -54,6 +54,7 @@ export * from './project-declaration';
 export * from './prompt-export';
 export * from './raster-region';
 export * from './reconciled-field';
+export * from './rerun-request';
 export * from './review-accepted';
 export * from './review-options';
 export * from './rule-calibration';

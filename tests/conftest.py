@@ -43,11 +43,11 @@ class FakeJobStore:
         self._lock = threading.Lock()
         self.done = threading.Event()
 
-    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob, stages, source=None, declaration=None):
+    def create(self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob, stages, source=None, declaration=None, rerun_of=None):
         record = {
             "id": job_id, "uid": uid, "email": email, "filename": filename,
             "bytes": size_bytes, "pages": pages, "state": jobs_mod.QUEUED, "stage": 0,
-            "options": options, "declaration": declaration,
+            "options": options, "declaration": declaration, "rerun_of": rerun_of,
             "upload_blob": upload_blob, "source": source, "summary": None, "conversion": None,
             "stages": list(stages),
             "error": None, "error_code": None,

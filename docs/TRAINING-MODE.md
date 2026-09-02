@@ -197,18 +197,43 @@ Two consequences worth knowing:
 
 ## 5. What the reviewer sees
 
-### `/training` — the way in
+### `/refine` — the way in, and the whole loop
 
-Training is a destination, not a checkbox. It used to be only a review option,
+**On the name.** This page said "Training" and the word was doing damage. It
+promises a model learning a check from examples, which is exactly what this
+cannot do — the review path makes zero model calls and is not going to make
+one. What actually happens is that a reviewer's argument moves a named,
+versioned lever on a rule somebody wrote by hand, and the next review's analysis
+is sharper for it. The page is called **Refine analysis** and says that.
+
+The mechanism keeps its old name wherever the old name is accurate:
+`FBC_TRAINING_MODE`, `options.mode == "training"`, `TrainingStatus` and
+`/api/admin/*` are unchanged. Renaming a wire field to improve a heading is how
+a client and a server stop agreeing.
+
+**It is a destination, not a checkbox.** It used to be only a review option,
 which meant the one way to reach any of it was to have a permit set in hand and
 be willing to wait forty seconds — while the questions people actually have
 (what have I told it, what did it do with that, what is still waiting on
 somebody) have nothing to do with the document in front of them.
 
-`/training` needs no upload. It shows the live profile version, how many rules
-it has moved, and every finished review as something you can open and work
-through. There is genuinely nothing to train on without a document; there is no
-reason it has to be a *new* one.
+`/refine` needs no upload. It shows the live profile version, how many rules it
+has moved, every finished review as something you can open and work through,
+and — for an owner — the queue those arguments land in. There is genuinely
+nothing to refine without a document; there is no reason it has to be a *new*
+one.
+
+**The queue is a section of this page, not a second route.** It was `/admin`,
+behind a second entry in the masthead, and that split described the permission
+by putting a navigation step in the middle of one loop: a reviewer argues with a
+rule here, the argument lands in the queue, and what is approved there is what
+the next review runs against. Somewhere you have to remember to go is somewhere
+you stop going. `/admin` and `/training` both still resolve — they redirect —
+because both URLs were handed out.
+
+Nothing about who may decide has moved. It was never the route guard that
+enforced it: every `/api/admin/*` path answers 404 to anybody who is not an
+owner, and that is untouched.
 
 The checkbox on the upload form still exists and still means one thing: which
 profile a **new** review runs against — your own candidate, so you see the
@@ -379,6 +404,68 @@ the coupling runs the other way: a new reason over there fails a test here and
 somebody decides what it means, rather than a reviewer being told
 "unclassified" about something the engine was perfectly clear about.
 
+### Answering what the rule was waiting on
+
+Classifying an abstention says whether it was *right*. It does not make the
+rule run. On a real submittal the commonest line in the register is
+
+> `DECL.BUILDING_AREA` — neither the drawings nor the declaration state this
+
+and that rule is correct, and it is waiting on one number. Until now the only
+way to give it that number was to upload the permit set a second time and
+re-answer the whole questionnaire alongside it — so the remedy cost more than
+the finding was worth, and every one of these stayed in the register forever.
+
+Three pieces close that:
+
+1. **The rule names its own questions.** `fbcreview/declaration_schema.py`
+   already states, per field, which rules answering it enables — the form uses
+   `unlocks` to say what completing a question buys you. `abstentions.py`
+   inverts that map and puts `unlocked_by` on every classified abstention. Two
+   readings of one fact, so they cannot drift; nothing is written out twice.
+   `building_area_sf` and `total_area_sf` unlock `DECL.BUILDING_AREA`;
+   `code_edition` unlocks `CODE.EDITION_CURRENT`; a geometric rule that could
+   not find its linework names nothing, because no questionnaire would help it
+   and an offer there would be a dead end dressed as a remedy.
+
+2. **The workspace asks them, and only them.** Picking an abstention shows the
+   named questions on the panel, rendered from the same `/api/config` metadata
+   the full form uses. A field the review already declared is not asked again —
+   the rule did not stand down for want of *that*, and re-asking invites
+   somebody to overwrite an answer they gave deliberately.
+
+3. **`POST /api/jobs/{id}/rerun` reviews the set again.** The PDF is already in
+   the bucket and the admission profile is already on the record, so the file is
+   never re-sent and never re-probed: this costs one pass of the engine. The new
+   declaration is *merged over* the original's, because the browser only sends
+   the questions it asked about and a field it omitted is unanswered-in-this-
+   request rather than withdrawn.
+
+It creates a **new** review rather than amending the old one. A review is a
+dated statement about a set under stated assertions; editing one in place would
+rewrite what somebody was already told. Both stay in the history, and the second
+carries `rerun_of` and links back to the first from its header.
+
+Measured on a stand-in set: 31 abstentions before, 25 after seven fields were
+answered, with six checks that had nothing to work from now returning
+`VERIFIED`.
+
+### Making the controls look like controls
+
+Not cosmetic, and worth recording. Every secondary action in the application —
+*Send the digest now*, *Dismiss*, *Report it anyway*, *Close*, *Confirm*,
+*Show all*, *Hand over* — was drawn with no border, no fill and a hairline in
+muted grey, which is the same treatment this stylesheet gives a disabled label.
+Meanwhile `.annot-name`, which labels things and links to nothing, carried an
+underline in `--annotation` — the same blue family as `--link`. So the queue's
+status line had three blue underlined words that did nothing when clicked,
+inches from real controls that looked like captions.
+
+Both are fixed the same way: a control is framed, in ink, at label size, with
+the colour swap on hover every other button has; a label keeps the survey-blue
+annotation ink and loses the underline, which is reserved for `a.annot-name`
+where it tells the truth.
+
 Three viewer decisions worth recording:
 
 - **It opens the source set, not the marked-up PDF.** The marked-up PDF has
@@ -404,7 +491,7 @@ Three viewer decisions worth recording:
 
 ## 6. What the owner sees
 
-`/admin`, gated on `FBC_OWNER_EMAILS`. Every report with its verdict, the
+The queue, section 04 of `/refine`, gated on `FBC_OWNER_EMAILS`. Every report with its verdict, the
 finding it is about, the markup, the comment, and the proposed diff. Three ways
 out:
 
@@ -426,7 +513,11 @@ local deployment through one git-ignored file, `secrets/local.env`. See
 needs, and why the parser deliberately refuses to be cleverer than Docker's.
 `bash scripts/setup-secrets.sh --check` says where you stand; the value of that
 is that both channels fail *quietly* when unconfigured — the review still runs
-and the feedback still queues, so nothing tells you but `/admin`.
+and the feedback still queues, so nothing tells you but the queue's own status
+rows. Those are now one line per channel — mail, issues, the comment assist —
+each saying where it stands, with the digest button on a row of its own. They
+were a single run-on paragraph with three blue underlined names in it, none of
+which was a link.
 
 ---
 

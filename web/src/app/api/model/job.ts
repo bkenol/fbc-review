@@ -52,6 +52,10 @@ export interface Job {
     options: ReviewOptions;
     pages?: number | null;
     /**
+     * The review this one re-ran, when it re-ran one. Set by `POST /api/jobs/{id}/rerun`; null on a review of a freshly uploaded set. The two are separate reviews on purpose — a review is a dated statement, and the earlier one is not edited.
+     */
+    rerun_of?: string | null;
+    /**
      * What kind of PDF was uploaded, measured at admission.
      */
     source?: SourceProfile | null;

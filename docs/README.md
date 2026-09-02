@@ -17,7 +17,7 @@ deterministic. `../CLAUDE.md` carries the standing rules.
 | `FEATURE-PROMPT-declaration.md` | The Project Declaration questionnaire — 12 optional fields answered before upload, reconciled against the drawings as a second independent source. Build after deployment, or in parallel if the engine work is separable from the infrastructure work. |
 
 Training mode generates its own prompts. An escalated piece of feedback exports
-from `/admin` as a Markdown brief in the same shape as the files above — see
+from the queue on `/refine` as a Markdown brief in the same shape as the files above — see
 `TRAINING-MODE.md` §6.
 
 Order: `DEPLOYMENT-PROMPT.md` first. The declaration feature touches `webapp/`, the Angular

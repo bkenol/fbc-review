@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import os
 import shutil
 import threading
 from pathlib import Path
@@ -51,19 +52,34 @@ class LocalJobStore:
         return self.dir / f"{job_id}.json"
 
     def _write(self, record: Dict[str, Any]) -> None:
-        self._path(record["id"]).write_text(
-            json.dumps(record, default=_encode, indent=2), encoding="utf-8"
-        )
+        """Write the whole record or none of it.
+
+        `write_text` truncates and then fills, so there is a window in which the
+        file on disk is empty or half a record — and a reader in that window
+        raises `JSONDecodeError`, which the API reports as a 500. The window is
+        small and the browser polls a running job every second, so it is not
+        theoretical: it was hit on the first re-run driven through the UI, where
+        a job is created and polled immediately.
+
+        `os.replace` is atomic on POSIX and on Windows, so a reader sees either
+        the previous record or the new one. The lock this is called under
+        serialises writers within one process; it does nothing for a reader in
+        another thread, which is exactly who was affected.
+        """
+        path = self._path(record["id"])
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(record, default=_encode, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
 
     def create(
         self, *, job_id, uid, email, filename, size_bytes, pages, options, upload_blob,
-        stages: List[str], source=None, declaration=None,
+        stages: List[str], source=None, declaration=None, rerun_of=None,
     ) -> Dict[str, Any]:
         record = {
             "id": job_id, "uid": uid, "email": email, "filename": filename,
             "bytes": size_bytes, "pages": pages, "state": QUEUED, "stage": 0,
             "stages": list(stages), "options": options, "declaration": declaration,
-            "upload_blob": upload_blob,
+            "upload_blob": upload_blob, "rerun_of": rerun_of,
             "source": source, "summary": None, "conversion": None,
             "error": None, "error_code": None,
             "created_at": utcnow(), "started_at": None, "finished_at": None,

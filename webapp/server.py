@@ -789,6 +789,7 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
             if record.get("declaration")
             else None
         ),
+        rerun_of=record.get("rerun_of") or None,
         bytes=int(record.get("bytes", 0) or 0),
         pages=record.get("pages"),
         source=(
@@ -836,6 +837,155 @@ def get_job_declaration(
     if not record or record.get("uid") != user.uid:
         raise ApiError(404, errors.NOT_FOUND, "No such review.")
     return models.ProjectDeclaration.model_validate(record.get("declaration") or {})
+
+
+@app.post(
+    "/api/jobs/{job_id}/rerun",
+    response_model=models.ReviewAccepted,
+    status_code=202,
+    tags=["reviews"],
+    operation_id="rerunReview",
+    summary="Review the same set again with more of the declaration answered.",
+)
+def rerun_review(
+    job_id: str,
+    body: models.RerunRequest,
+    user: User = Depends(current_user),
+    store: JobStore = Depends(job_store),
+    files: Storage = Depends(file_store),
+    feedback: FeedbackStore = Depends(feedback_store),
+) -> JSONResponse:
+    """A second review of a set already in the bucket.
+
+    The point of it is the abstention register. `DECL.BUILDING_AREA — neither
+    the drawings nor the declaration state this` is a rule waiting on one
+    number, and before this the only way to give it that number was to upload
+    the file again and re-answer every other question with it. So the remedy
+    cost more than the finding was worth and nobody took it.
+
+    A new job rather than an amendment of the old one, and deliberately so.
+    A review is a dated statement about a set under a stated set of assertions;
+    editing one in place would rewrite what somebody was already told. The two
+    sit side by side in the history, and `rerun_of` says which came first.
+
+    The file is not re-sent and not re-probed: `upload_blob` still points at the
+    PDF and `source` still holds what admission measured, so this costs one run
+    of the engine. Rate limits still apply — it is a review.
+    """
+    record = store.get(job_id)
+    if not record or record.get("uid") != user.uid:
+        raise ApiError(404, errors.NOT_FOUND, "No such review.")
+
+    blob = record.get("upload_blob")
+    if not blob:
+        raise ApiError(
+            409,
+            errors.INVALID_REQUEST,
+            "This review has no stored set to re-run. Upload it again.",
+        )
+
+    previous = dict(record.get("declaration") or {})
+    # Merged rather than replaced: the browser sends the questions it asked
+    # about, and a field it left out is unanswered-in-this-request, not
+    # withdrawn. Losing an answer the applicant already gave, silently, on a
+    # request whose whole purpose is to add one, would be the wrong default.
+    supplied = {
+        k: v for k, v in body.declaration.model_dump().items()
+        if v is not None and v != ""
+    }
+    merged = {**{k: v for k, v in previous.items() if v is not None}, **supplied}
+
+    problems = declaration_schema.validate(merged)
+    if problems:
+        raise ApiError(400, errors.INVALID_REQUEST, " ".join(problems))
+    declared = ProjectDeclaration.from_dict(
+        models.ProjectDeclaration.model_validate(merged).model_dump()
+    )
+
+    try:
+        parsed = models.ReviewOptions.model_validate(record.get("options") or {})
+    except Exception as exc:
+        raise ApiError(
+            409, errors.INVALID_REQUEST, f"This review's options cannot be replayed: {exc}"
+        )
+    if body.convert_raster is not None:
+        parsed = parsed.model_copy(update={"convert_raster": body.convert_raster})
+    if parsed.mode == "training":
+        _require_training()
+
+    try:
+        store.enforce_limits(user.uid)
+    except RateLimited as exc:
+        raise ApiError(429, errors.RATE_LIMITED, exc.message)
+
+    source = record.get("source") or {}
+    raster_pages = [int(p) for p in (source.get("raster_pages") or [])]
+    # Rebuilt from the stored profile rather than re-measured. `probe` reads the
+    # PDF, and re-reading a file to recover a fact already written down would
+    # make the cheap path expensive for nothing.
+    raster_regions: Dict[int, List[tuple]] = {}
+    for sheet in source.get("sheets") or []:
+        regions = sheet.get("raster_regions") or []
+        if regions and sheet.get("kind") in ("vector", "hybrid"):
+            raster_regions[int(sheet.get("page") or 0)] = [
+                (float(r["x0"]), float(r["y0"]), float(r["x1"]), float(r["y1"]))
+                for r in regions
+            ]
+    needs_rebuild = parsed.convert_raster and bool(raster_pages or raster_regions)
+
+    new_id = uuid.uuid4().hex[:12]
+    store.create(
+        job_id=new_id,
+        uid=user.uid,
+        email=user.email,
+        filename=record.get("filename") or "",
+        size_bytes=int(record.get("bytes") or 0),
+        pages=int(record.get("pages") or 0),
+        options=parsed.model_dump(),
+        # The same object in the bucket, under the first review's id. Reviews do
+        # not delete their upload, and copying a permit set to give the second
+        # run its own path would double the storage for one file.
+        upload_blob=blob,
+        stages=stages_for(needs_rebuild),
+        source=source or None,
+        declaration=declared.to_dict(),
+        rerun_of=job_id,
+    )
+
+    log.info(
+        "review re-run accepted",
+        extra={
+            "job_id": new_id,
+            "rerun_of": job_id,
+            "uid": user.uid,
+            "declared_fields": declared.answered_count(),
+            "added_fields": len(supplied),
+        },
+    )
+
+    engine_fields = {f.name for f in dataclasses.fields(ReviewOptions)}
+    engine_options = ReviewOptions(
+        **{k: v for k, v in parsed.model_dump().items() if k in engine_fields}
+    )
+
+    assert _pool is not None
+    _pool.submit(
+        run_review,
+        job_id=new_id,
+        uid=user.uid,
+        email=user.email,
+        filename=record.get("filename") or "",
+        upload_blob=blob,
+        options=engine_options,
+        declaration=declared,
+        store=store,
+        store_files=files,
+        convert_raster=parsed.convert_raster,
+        raster_pages=raster_pages,
+        raster_regions=raster_regions,
+        profile=_profile_for(parsed.mode, user, feedback),
+    )
+    return JSONResponse({"id": new_id}, status_code=202)
 
 
 # ══ training mode ═════════════════════════════════════════════════════════

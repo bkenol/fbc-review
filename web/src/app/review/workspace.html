@@ -8,7 +8,20 @@
     @if (job(); as review) {
       <span class="dim">{{ review.pages }} sheets</span>
       @if (review.options.mode === 'training') {
-        <span class="chip">Training run</span>
+        <!-- Ran against this reviewer's own candidate profile rather than the
+             approved one. Worth saying on the review itself: two reviews of one
+             set can differ for this reason alone. -->
+        <span class="chip" title="Reviewed against your own calibration levers, not the approved profile">
+          Your levers
+        </span>
+      }
+      <!-- Which review this one followed. Two reviews of one set that say
+           different things is a fact somebody will have to account for, and the
+           account is that the second was given more to work with. -->
+      @if (review.rerun_of; as earlier) {
+        <a class="chip chip-link" [routerLink]="['/review', earlier]">
+          Re-run · see the first
+        </a>
       }
       @if (review.calibration; as calibration) {
         <span class="dim">
@@ -58,7 +71,7 @@
         (markupDrawn)="onDrawn($event)"
       />
 
-      <aside class="workspace-side">
+      <aside class="workspace-side" #side>
         @if (training.failure(); as problem) {
           <p class="hint" role="alert">
             {{ problem.message }}
@@ -158,6 +171,24 @@
               }
               <button type="button" class="inline" (click)="clearSelection()">Close</button>
             </div>
+
+            <!-- ── the cheap remedy, offered first ──────────────────────────
+                 Most of these rules stood down waiting on one number that
+                 nobody ever went back to supply, because supplying it meant
+                 uploading the set again and re-answering the whole
+                 questionnaire. Asking for the value here — and only the value
+                 the rule named — is the difference between a register somebody
+                 acts on and one they scroll past.
+
+                 Deliberately outside `trainingOn()`: this is not feedback. It
+                 is the applicant stating a fact about their own building, and
+                 it works on a deployment that collects no feedback at all. -->
+            <app-answer-now
+              [fields]="answerable()"
+              [declared]="job()?.declaration ?? null"
+              [busy]="rerunning()"
+              (answered)="answerAndRerun($event)"
+            />
 
             @if (trainingOn()) {
               @if (saidAboutRule().get(abstention.rule); as already) {
@@ -376,17 +407,31 @@
                     say what the reviewer should have been able to see.
                   </p>
                 }
+                <!-- The cheaper remedy, said once at the top of the list rather
+                     than repeated on every row: most of these are a rule
+                     waiting on a value, and the value can be typed in here. -->
+                @if (answerableCount(); as waiting) {
+                  <p class="hint">
+                    <b>{{ waiting }}</b> of them are waiting on a value you can state.
+                    Open one and the question it wants is on the panel.
+                  </p>
+                }
                 @for (abstention of abstentions(); track abstention.rule) {
                   <button
                     type="button"
                     class="side-row"
                     [class.on]="selectedAbstention()?.rule === abstention.rule"
-                    [class.quiet]="!abstention.proposable"
+                    [class.quiet]="!abstention.proposable && !(abstention.unlocked_by ?? []).length"
                     (click)="pickAbstention(abstention)"
                   >
                     <span class="side-sev">{{ kindOf(abstention)?.label || abstention.kind }}</span>
                     <span class="side-fid">{{ abstention.rule }}</span>
                     <span class="side-title">{{ abstention.reason }}</span>
+                    @if ((abstention.unlocked_by ?? []).length) {
+                      <span class="side-tag" title="A declaration answer would let this run">
+                        answerable
+                      </span>
+                    }
                     @if (saidAboutRule().has(abstention.rule)) {
                       <span class="side-flag" title="You have reported this one">✓</span>
                     }

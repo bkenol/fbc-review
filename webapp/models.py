@@ -854,6 +854,15 @@ class Abstention(BaseModel):
                     "abstention that was correct — most 'the set does not state it' "
                     "abstentions are.",
     )
+    unlocked_by: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Keys of the `DeclarationField`s whose answer would let this rule run. "
+            "Inverted from the schema's own `unlocks`, so it cannot drift from it. "
+            "Empty where no question would help — a geometric rule that could not "
+            "find its linework is not waiting on a questionnaire."
+        ),
+    )
 
 
 class AbstentionDiagnosis(BaseModel):
@@ -1111,6 +1120,38 @@ class ReviewAccepted(BaseModel):
     id: str
 
 
+class RerunRequest(BaseModel):
+    """Review the same set again, having answered more of the declaration.
+
+    The commonest abstention on a real submittal is a rule standing down for
+    want of a value that neither the drawings nor the declaration carry. Until
+    this existed the only remedy was to upload the file again and re-answer the
+    whole questionnaire, which is why nobody did it and the abstention stayed.
+
+    The set itself is never re-sent: the PDF is already in the bucket and the
+    admission profile is already on the record, so this costs a re-run of the
+    engine and nothing else.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    declaration: ProjectDeclaration = Field(
+        default_factory=lambda: ProjectDeclaration(),
+        description=(
+            "The declaration for the new review. Merged over the original's — a "
+            "field omitted here keeps whatever the first review was given, and "
+            "nothing that was already answered has to be typed again."
+        ),
+    )
+    convert_raster: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Override the rebuild-scanned-sheets option. Omitted keeps what the "
+            "original review ran with."
+        ),
+    )
+
+
 class Job(BaseModel):
     id: str
     filename: str = Field(description="Basename as uploaded. Never a path.")
@@ -1121,6 +1162,15 @@ class Job(BaseModel):
     options: ReviewOptions
     declaration: Optional[ProjectDeclaration] = Field(
         default=None, description="What was submitted with the review, if anything."
+    )
+    rerun_of: Optional[str] = Field(
+        default=None,
+        description=(
+            "The review this one re-ran, when it re-ran one. Set by "
+            "`POST /api/jobs/{id}/rerun`; null on a review of a freshly uploaded "
+            "set. The two are separate reviews on purpose — a review is a dated "
+            "statement, and the earlier one is not edited."
+        ),
     )
     bytes: int
     pages: Optional[int] = None

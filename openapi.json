@@ -28,6 +28,14 @@
           "rule": {
             "title": "Rule",
             "type": "string"
+          },
+          "unlocked_by": {
+            "description": "Keys of the `DeclarationField`s whose answer would let this rule run. Inverted from the schema's own `unlocks`, so it cannot drift from it. Empty where no question would help \u2014 a geometric rule that could not find its linework is not waiting on a questionnaire.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Unlocked By",
+            "type": "array"
           }
         },
         "required": [
@@ -1902,6 +1910,18 @@
             ],
             "title": "Pages"
           },
+          "rerun_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The review this one re-ran, when it re-ran one. Set by `POST /api/jobs/{id}/rerun`; null on a review of a freshly uploaded set. The two are separate reviews on purpose \u2014 a review is a dated statement, and the earlier one is not edited.",
+            "title": "Rerun Of"
+          },
           "source": {
             "anyOf": [
               {
@@ -2709,6 +2729,30 @@
           "state"
         ],
         "title": "ReconciledField",
+        "type": "object"
+      },
+      "RerunRequest": {
+        "additionalProperties": false,
+        "description": "Review the same set again, having answered more of the declaration.\n\nThe commonest abstention on a real submittal is a rule standing down for\nwant of a value that neither the drawings nor the declaration carry. Until\nthis existed the only remedy was to upload the file again and re-answer the\nwhole questionnaire, which is why nobody did it and the abstention stayed.\n\nThe set itself is never re-sent: the PDF is already in the bucket and the\nadmission profile is already on the record, so this costs a re-run of the\nengine and nothing else.",
+        "properties": {
+          "convert_raster": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Override the rebuild-scanned-sheets option. Omitted keeps what the original review ran with.",
+            "title": "Convert Raster"
+          },
+          "declaration": {
+            "$ref": "#/components/schemas/ProjectDeclaration",
+            "description": "The declaration for the new review. Merged over the original's \u2014 a field omitted here keeps whatever the first review was given, and nothing that was already answered has to be typed again."
+          }
+        },
+        "title": "RerunRequest",
         "type": "object"
       },
       "ReviewAccepted": {
@@ -5780,6 +5824,139 @@
         "summary": "Edit a markup's comment or geometry.",
         "tags": [
           "training"
+        ]
+      }
+    },
+    "/api/jobs/{job_id}/rerun": {
+      "post": {
+        "description": "A second review of a set already in the bucket.\n\nThe point of it is the abstention register. `DECL.BUILDING_AREA \u2014 neither\nthe drawings nor the declaration state this` is a rule waiting on one\nnumber, and before this the only way to give it that number was to upload\nthe file again and re-answer every other question with it. So the remedy\ncost more than the finding was worth and nobody took it.\n\nA new job rather than an amendment of the old one, and deliberately so.\nA review is a dated statement about a set under a stated set of assertions;\nediting one in place would rewrite what somebody was already told. The two\nsit side by side in the history, and `rerun_of` says which came first.\n\nThe file is not re-sent and not re-probed: `upload_blob` still points at the\nPDF and `source` still holds what admission measured, so this costs one run\nof the engine. Rate limits still apply \u2014 it is a review.",
+        "operationId": "rerunReview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Review the same set again with more of the declaration answered.",
+        "tags": [
+          "reviews"
         ]
       }
     },

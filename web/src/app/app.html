@@ -16,18 +16,25 @@
     }
   </div>
 
-  <!-- Navigation, and deliberately not part of the session line. Training and
-       Feedback are the two places in this app that are not the upload form, and
-       they were set in the same 12px label type as the signed-in address — so
-       they read as status rather than as somewhere to go, and people did not
-       find them. They are their own element, at their own size, with the
-       current one marked. -->
+  <!-- Navigation, and deliberately not part of the session line. It was set in
+       the same 12px label type as the signed-in address, so it read as status
+       rather than as somewhere to go and people did not find it. It is its own
+       element now, at its own size, with the current one marked.
+
+       One entry rather than two. Training and the feedback queue were separate
+       destinations, which described the permission — everyone may propose, one
+       person decides — by putting a navigation step in the middle of a single
+       loop. They are one page now; the queue is a section of it, and an owner
+       is the only person who sees that section.
+
+       "Refine analysis" rather than "Training": what the page does is sharpen
+       what the reviewer says about a set, and "training" promises a model
+       learning from examples, which is precisely what this cannot do. -->
   <nav class="masthead-nav" aria-label="Sections">
-    @if (trainingAvailable()) {
-      <a routerLink="/training" routerLinkActive="on">Training</a>
-    }
-    @if (isOwner()) {
-      <a routerLink="/admin" routerLinkActive="on">Feedback</a>
+    @if (trainingAvailable() || isOwner()) {
+      <a routerLink="/refine" routerLinkActive="on">
+        Refine<span class="nav-and">&nbsp;analysis</span>
+      </a>
     }
   </nav>
 

@@ -50,11 +50,12 @@ export class App {
   );
 
   /**
-   * Whether to offer the feedback queue at all.
+   * Whether this account can see the queue.
    *
-   * Convenience only — `ownerGuard` decides the route and the API answers 404
-   * on every admin path for anyone else. A link nobody can follow is worse than
-   * no link, which is the only reason this is here.
+   * Only decides whether the masthead offers the page at all on a deployment
+   * that collects no feedback — an owner still has a queue to read there. The
+   * queue itself is gated where it renders, and enforced where it counts: every
+   * `/api/admin/*` path answers 404 to anybody who is not an owner.
    */
   protected readonly isOwner = computed(
     () => this.reviews.config()?.training?.is_owner ?? false,
@@ -63,9 +64,9 @@ export class App {
   /**
    * Whether this deployment collects feedback at all.
    *
-   * The training console needs no permit set, so the masthead link is the
-   * whole entry point — but on a deployment with training switched off every
-   * route behind it 400s, and a link to that is worse than none.
+   * Refine analysis needs no permit set, so the masthead link is the whole
+   * entry point — but on a deployment with refinement switched off every route
+   * behind it 400s, and a link to that is worse than none.
    */
   protected readonly trainingAvailable = computed(
     () => this.reviews.config()?.training?.enabled ?? false,

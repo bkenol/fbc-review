@@ -1,11 +1,13 @@
-<section class="step admin">
+<section class="step admin" id="queue">
   <div class="step-head">
-    <span class="mark">06</span>
-    <h2>Feedback</h2>
+    <span class="mark">04</span>
+    <h2>The queue</h2>
   </div>
 
   <p class="hint">
-    <a routerLink="/">← Back to reviews</a>
+    Everything anybody has sent lands here with the triage's verdict already attached, so
+    the work is deciding rather than reading. This section is yours alone — every path
+    behind it answers 404 for anyone who is not an owner.
   </p>
 
   @if (overview(); as summary) {
@@ -28,14 +30,45 @@
       </div>
     </div>
 
-    <p class="hint annotations">
-      <span class="annot-name">Mail</span> {{ summary.mail.status }} ·
-      <span class="annot-name">Issues</span> {{ summary.github }} ·
-      <span class="annot-name">Comment assist</span> {{ summary.assist }}
-      <button type="button" class="inline" (click)="training.sendDigest()">
+    <!-- The three channels, one per line.
+         They used to be one run-on paragraph — three names, three sentences of
+         "not configured — set FBC_SMTP_HOST, FBC_SMTP_PORT…", and the digest
+         button wedged on the end of it. Every name was blue and underlined and
+         none of them was a link, and the one thing on the line you could
+         actually press looked like the least of it. Each channel is now a row
+         that says what it is and where it stands, and the button is a button on
+         a row of its own. -->
+    <ul class="channels">
+      <li>
+        <span class="annot-name">Mail</span>
+        <span class="channel-state" [class.live]="summary.mail.configured">
+          {{ summary.mail.status }}
+        </span>
+      </li>
+      <li>
+        <span class="annot-name">Issues</span>
+        <span class="channel-state">{{ summary.github }}</span>
+      </li>
+      <li>
+        <span class="annot-name">Comment assist</span>
+        <span class="channel-state">{{ summary.assist }}</span>
+      </li>
+    </ul>
+    <div class="side-actions">
+      <button
+        type="button"
+        class="inline"
+        [disabled]="!summary.mail.configured"
+        [title]="
+          summary.mail.configured
+            ? 'Send the waiting queue to the owners now'
+            : 'Mail is not configured, so there is nowhere to send it'
+        "
+        (click)="training.sendDigest()"
+      >
         Send the digest now
       </button>
-    </p>
+    </div>
   }
 
   @if (training.failure(); as problem) {
