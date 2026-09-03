@@ -665,9 +665,32 @@ textarea:focus {
  *
  * Primary rests in drafting blue and swaps to engineer red, which is the hover colour
  * colors.css reserves for it. Secondary inverts to filled graphite, per the system.
+ *
+ * THE RULE FOR EVERY VARIANT BELOW: a button type that sets its own resting
+ * colours sets its hover colours in the same declaration block, as the three
+ * --hover-* variables. The engineer red is the *fallback* — what a button
+ * hovers to when nothing else said — not something each variant has to fight
+ * off.
+ *
+ * It used to be exactly that fight, and the variants were losing it. The hover
+ * rule below is `button:hover:not(:disabled)`, which is specificity (0,2,1); a
+ * variant's natural `.state-btn:hover` is (0,2,0), so the type selector won and
+ * green ACCEPTED, blue ACTIONED and a hovered queue row all turned the same red.
+ * Out-specifying it works and is unreadable: every variant would carry a
+ * `:not(:disabled)` that exists for the cascade rather than for the meaning, and
+ * the next variant added would quietly be red again.
+ *
+ * Custom properties do not have that problem. `.state-btn { --hover-bg: … }` is
+ * a plain (0,1,0) declaration that beats the (0,0,1) default, and the one hover
+ * rule below reads whatever won. Colour and its hover live together, which is
+ * the only way to read a variant and know what it does.
  */
 button,
 .btn {
+  --hover-edge: var(--primary-hover);
+  --hover-bg: var(--primary-hover);
+  --hover-ink: var(--paper-white);
+
   display: inline-block;
   padding: 12px 22px;
   border: 1px solid var(--primary);
@@ -680,11 +703,18 @@ button,
   cursor: pointer;
   transition: var(--transition-colour);
 }
+/* The one place a hover colour is applied. The two anchors are named because
+   they share a button's resting block but are not buttons, so `button:hover`
+   never reaches them — and `.pastrow` is a `<button>` on the tool page and an
+   `<a>` in the training console, which is how its hover went missing on one of
+   the two the moment the rule stopped saying `:not(:disabled)`. */
 button:hover:not(:disabled),
-.btn:hover {
-  border-color: var(--primary-hover);
-  background: var(--primary-hover);
-  color: var(--paper-white);
+.btn:hover,
+a.inline:hover,
+a.pastrow:hover {
+  border-color: var(--hover-edge);
+  background: var(--hover-bg);
+  color: var(--hover-ink);
 }
 button:disabled,
 .btn[aria-disabled='true'] {
@@ -695,15 +725,13 @@ button:disabled,
 }
 button.ghost,
 .btn.ghost {
+  --hover-edge: var(--text-strong);
+  --hover-bg: var(--text-strong);
+  --hover-ink: var(--text-reverse);
+
   background: transparent;
   border-color: var(--border-input);
   color: var(--text-strong);
-}
-button.ghost:hover:not(:disabled),
-.btn.ghost:hover {
-  background: var(--text-strong);
-  border-color: var(--text-strong);
-  color: var(--text-reverse);
 }
 /* The secondary verb: smaller than `.btn`, and a control rather than a phrase.
  *
@@ -719,6 +747,10 @@ button.ghost:hover:not(:disabled),
  * it can no longer be mistaken for prose. */
 button.inline,
 a.inline {
+  --hover-edge: var(--primary);
+  --hover-bg: var(--primary);
+  --hover-ink: var(--primary-ink);
+
   display: inline-block;
   padding: 4px 10px;
   border: 1px solid var(--border-input);
@@ -728,12 +760,6 @@ a.inline {
   letter-spacing: var(--ls-label);
   text-decoration: none;
   vertical-align: baseline;
-}
-button.inline:hover:not(:disabled),
-a.inline:hover {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: var(--primary-ink);
 }
 button.inline:disabled {
   border-color: var(--border-hairline);
@@ -1617,6 +1643,10 @@ footer {
 /* A pair of pressed states, not a switch: both wordings are equally valid and
    neither is the "off" position. */
 .vocab-btn {
+  --hover-edge: var(--text-strong);
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   padding: 4px 12px;
   font: var(--type-label);
   letter-spacing: var(--ls-label);
@@ -1626,12 +1656,14 @@ footer {
   border: 1px solid var(--border-input);
   transition: var(--transition-colour);
 }
-.vocab-btn:hover {
-  color: var(--text-strong);
-  border-color: var(--text-strong);
-  background: transparent;
-}
+/* Already filled, so hovering nudges its own graphite toward the page rather
+   than swapping colour. Before the --hover-* variables this had no hover of its
+   own at all and the pressed wording turned engineer red under the cursor. */
 .vocab-btn.on {
+  --hover-edge: var(--surface-inverse);
+  --hover-bg: color-mix(in srgb, var(--surface-inverse) 85%, var(--surface-page));
+  --hover-ink: var(--text-reverse);
+
   color: var(--text-reverse);
   background: var(--surface-inverse);
   border-color: var(--surface-inverse);
@@ -1824,9 +1856,13 @@ input[type='number']:hover {
   color: var(--text-body);
   cursor: pointer;
   transition: var(--transition-colour);
-}
-.pastrow:hover:not(:disabled) {
-  background: var(--surface-sunk);
+
+  /* Hover, beside the resting colours. `--hover-edge` carries the severity
+     forward: the left rule is the row's only colour-coded channel and losing it
+     under the pointer would recolour the finding. */
+  --hover-edge: var(--sev, var(--border-hairline));
+  --hover-bg: var(--surface-sunk);
+  --hover-ink: var(--text-body);
 }
 .pastrow:hover:not(:disabled) .name {
   color: var(--accent-dimension);
@@ -2025,6 +2061,10 @@ td.sev .chip.conflict {
 }
 
 .tool {
+  --hover-edge: var(--border-input);
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   font: inherit;
   font-size: 0.78rem;
   padding: 0.25rem 0.6rem;
@@ -2034,12 +2074,15 @@ td.sev .chip.conflict {
   cursor: pointer;
 }
 
-.tool:hover {
-  color: var(--text-strong);
-  border-color: var(--border-input);
-}
-
+/* Pressed, and already wearing the primary. The red is the *primary verb's*
+   hover, not every blue thing's: a pressed toggle that swaps hue under the
+   cursor reads as a different button. It nudges its own blue toward the page
+   instead, the same way `.state-btn.on` and `.vocab-btn.on` do. */
 .tool.on {
+  --hover-edge: var(--primary);
+  --hover-bg: color-mix(in srgb, var(--primary) 85%, var(--surface-page));
+  --hover-ink: var(--primary-ink);
+
   color: var(--primary-ink);
   background: var(--primary);
   border-color: var(--primary);
@@ -2076,6 +2119,13 @@ td.sev .chip.conflict {
 }
 
 .rail-step {
+  /* Its hover only ever set colour and border, so the base rule was filling
+     the sheet-rail arrows with engineer red on the way past. Found by the
+     contract test in tests/test_button_hover.py, not by looking. */
+  --hover-edge: var(--border-input);
+  --hover-bg: var(--surface-card);
+  --hover-ink: var(--text-strong);
+
   flex: 0 0 auto;
   width: 2.1rem;
   font: inherit;
@@ -2085,11 +2135,6 @@ td.sev .chip.conflict {
   background: var(--surface-card);
   border: 1px solid var(--border-hairline);
   cursor: pointer;
-}
-
-.rail-step:hover:not(:disabled) {
-  color: var(--text-strong);
-  border-color: var(--border-input);
 }
 
 .rail-step:disabled {
@@ -2114,6 +2159,10 @@ td.sev .chip.conflict {
 /* Wide enough for a real sheet number — M.001, A-101 — at a readable size,
    rather than sized to the digits of a page count. */
 .rail-chip {
+  --hover-edge: var(--border-input);
+  --hover-bg: var(--surface-card);
+  --hover-ink: var(--text-strong);
+
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
@@ -2129,12 +2178,11 @@ td.sev .chip.conflict {
   cursor: pointer;
 }
 
-.rail-chip:hover {
-  color: var(--text-strong);
-  border-color: var(--border-input);
-}
-
 .rail-chip.on {
+  --hover-edge: var(--primary);
+  --hover-bg: color-mix(in srgb, var(--primary) 85%, var(--surface-page));
+  --hover-ink: var(--primary-ink);
+
   color: var(--primary-ink);
   background: var(--primary);
   border-color: var(--primary);
@@ -2231,6 +2279,13 @@ td.sev .chip.conflict {
 }
 
 .stage-arrow {
+  /* It had no hover of its own, so the base rule filled a nav arrow with the
+     engineer red — the colour this system reserves for a primary verb, on a
+     control that only turns a page. It lifts off the sheet instead. */
+  --hover-edge: var(--border-input);
+  --hover-bg: var(--surface-card);
+  --hover-ink: var(--text-strong);
+
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
@@ -2551,16 +2606,26 @@ td.sev .chip.conflict {
   font-size: 0.78rem;
   text-align: left;
   background: var(--surface-card);
+  /* Stated rather than inherited: the base `button` rule sets `--primary-ink`,
+     and `.side-row.on .side-tag` takes `color: inherit` from here — which put
+     white on the light scheme's grey ground. */
+  color: var(--text-body);
   border: 0;
   border-left: 2px solid var(--sev, var(--border-hairline));
   cursor: pointer;
-}
 
-.side-row:hover {
-  background: var(--surface-sunk);
+  /* Hover, beside the resting colours. The left rule is the severity, so it is
+     what `--hover-edge` carries. */
+  --hover-edge: var(--sev, var(--border-hairline));
+  --hover-bg: var(--surface-sunk);
+  --hover-ink: var(--text-body);
 }
 
 .side-row.on {
+  --hover-edge: var(--primary);
+  --hover-bg: var(--surface-sunk);
+  --hover-ink: var(--text-body);
+
   background: var(--surface-sunk);
   border-left-color: var(--primary);
 }
@@ -2726,6 +2791,10 @@ td.sev .chip.conflict {
  * opening anything, which is the difference between a form somebody answers
  * accurately and one they answer with whatever was already showing. */
 .verdict {
+  --hover-edge: var(--border-input);
+  --hover-bg: transparent;
+  --hover-ink: var(--text-body);
+
   font: inherit;
   font-size: 0.76rem;
   padding: 0.28rem 0.55rem;
@@ -2736,25 +2805,35 @@ td.sev .chip.conflict {
   cursor: pointer;
 }
 
-.verdict:hover {
-  border-color: var(--border-input);
-}
-
 /* The "this was right" answer is drawn in survey green and the rest in the
  * ordinary ink. Praise is a real answer here, not an escape from the question,
  * and it needs to look like one. */
 .verdict[data-polarity='good'] {
+  --hover-edge: var(--sev-verified, var(--border-input));
+  --hover-bg: transparent;
+  --hover-ink: var(--sev-verified, var(--text-body));
+
   color: var(--sev-verified, var(--text-body));
   border-color: color-mix(in srgb, var(--sev-verified, var(--border-hairline)) 45%, transparent);
 }
 
 .verdict.on {
+  --hover-edge: var(--primary);
+  --hover-bg: color-mix(in srgb, var(--primary) 85%, var(--surface-page));
+  --hover-ink: var(--primary-ink);
+
   color: var(--primary-ink);
   background: var(--primary);
   border-color: var(--primary);
 }
 
+/* Filled with the survey green, so hovering nudges that green toward the page
+   rather than swapping it for the red — same treatment as `.state-btn.on`. */
 .verdict[data-polarity='good'].on {
+  --hover-edge: var(--sev-verified, var(--primary));
+  --hover-bg: color-mix(in srgb, var(--sev-verified, var(--primary)) 85%, var(--surface-page));
+  --hover-ink: var(--primary-ink);
+
   background: var(--sev-verified, var(--primary));
   border-color: var(--sev-verified, var(--primary));
 }
@@ -2859,6 +2938,10 @@ td.sev .chip.conflict {
    caught by `font: inherit`, because colour and text-transform are not part of
    the font shorthand. */
 .queue-head {
+  --hover-edge: transparent;
+  --hover-bg: var(--surface-sunk);
+  --hover-ink: var(--text-strong);
+
   display: grid;
   grid-template-columns: 14rem 12rem 1fr auto;
   gap: 0.75rem;
@@ -2874,13 +2957,6 @@ td.sev .chip.conflict {
   background: none;
   border: 0;
   cursor: pointer;
-}
-.queue-head:hover {
-  color: var(--text-strong);
-}
-
-.queue-head:hover {
-  background: var(--surface-sunk);
 }
 
 @media (max-width: 52rem) {
@@ -3139,6 +3215,10 @@ footer.terse .build-line {
 }
 
 .ink {
+  --hover-edge: transparent;
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -3159,11 +3239,13 @@ footer.terse .build-line {
   box-shadow: 0 0 0 1px rgb(0 0 0 / 25%) inset;
 }
 
-.ink:hover {
-  color: var(--text-strong);
-}
-
+/* Pressed: the swatch's own colour becomes the frame, and stays the frame under
+   the pointer — it is what says which ink this button is for. */
 .ink.on {
+  --hover-edge: var(--ink, var(--annotation));
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   color: var(--text-strong);
   border-color: var(--ink, var(--annotation));
 }
@@ -3194,12 +3276,10 @@ footer.terse .build-line {
 
 /* An `<a class="pastrow">` in the training console does what the button does on
    the tool page. Same geometry, no underline, and the link colour does not
-   override the row's own ink. */
+   override the row's own ink — on hover that is the consumer rule's job, which
+   is why this anchor is named in it. */
 a.pastrow {
   text-decoration: none;
-  color: var(--text-body);
-}
-a.pastrow:hover {
   color: var(--text-body);
 }
 
@@ -3216,6 +3296,10 @@ a.pastrow:hover {
 }
 
 .side-tabs button {
+  --hover-edge: transparent;
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   font: inherit;
   font-size: 0.74rem;
   letter-spacing: 0.04em;
@@ -3228,11 +3312,14 @@ a.pastrow:hover {
   cursor: pointer;
 }
 
-.side-tabs button:hover {
-  color: var(--text-strong);
-}
-
+/* The underline is which tab you are on. `--hover-edge` keeps it there under
+   the pointer — the rest of the border is 0, so colouring all four sides only
+   ever shows on the bottom. */
 .side-tabs button.on {
+  --hover-edge: var(--primary);
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   color: var(--text-strong);
   border-bottom-color: var(--primary);
 }
@@ -3326,6 +3413,18 @@ a.pastrow:hover {
   border: 1px solid var(--border-hairline);
   border-left: 3px solid var(--border-hairline);
   transition: var(--transition-colour);
+
+  /* Hover, beside the resting colours. A lift off the ink rather than a swap:
+     this is a filter, not a verb, and it should not shout.
+
+     Four values, because `border-color` is one property and the left rule is
+     not the same channel as the other three: it is the disposition accent, and
+     a tile that drops its accent the moment you point at it stops matching the
+     rows it opens. */
+  --hover-edge: var(--text-strong) var(--text-strong) var(--text-strong)
+    var(--accent, var(--border-hairline));
+  --hover-bg: color-mix(in srgb, var(--text-strong) 7%, var(--surface-card));
+  --hover-ink: var(--text-body);
 }
 .qstat-n {
   font: var(--type-dimension);
@@ -3343,35 +3442,37 @@ a.pastrow:hover {
 /* The same three accents the queue rows already carry on their left rule, so
    a tile and the rows it opens are visibly the same thing. */
 .qstat[data-disposition='auto_tunable'] {
-  border-left-color: var(--annotation);
+  --accent: var(--annotation);
+  border-left-color: var(--accent);
 }
 .qstat[data-disposition='needs_component'],
 .qstat[data-disposition='escalate'] {
-  border-left-color: var(--accent-dimension);
+  --accent: var(--accent-dimension);
+  border-left-color: var(--accent);
 }
 .qstat[data-disposition='confirmation'] {
-  border-left-color: var(--verified);
+  --accent: var(--verified);
+  border-left-color: var(--accent);
 }
 /* `--surface-raised` does not exist, so this fell back to --surface-card, which
    is what the tile already rests on: a clickable tile with no hover response at
    all. Mixed off the ink instead, which lifts in the light scheme and in the
    dark one alike. */
-.qstat:not(:disabled):hover,
-.qstat:not(:disabled):focus-visible {
-  /* Restated for the same reason as the state buttons: on hover the base rule
-     is (0,2,1) and the plain `.qstat` colour above is (0,1,0), so without this
-     the tile's own ink goes --paper-white under the cursor. Its two children
-     set their own colour so nothing shows it, which is exactly why it would
-     have survived until somebody added a third. */
-  color: var(--text-body);
-  border-color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 7%, var(--surface-card));
+.qstat:focus-visible {
+  border-color: var(--hover-edge);
+  background: var(--hover-bg);
+  color: var(--hover-ink);
 }
 .qstat:not(:disabled):hover .qstat-l,
 .qstat:not(:disabled):focus-visible .qstat-l {
   color: var(--text-strong);
 }
+/* Pressed: an ink frame all the way round, the accent included, so the tile you
+   are filtered to reads as one object rather than one with a coloured edge. It
+   keeps that frame under the pointer. */
 .qstat.on {
+  --hover-edge: var(--text-strong);
+
   border-color: var(--text-strong);
   box-shadow: inset 0 0 0 1px var(--text-strong);
 }
@@ -3410,6 +3511,10 @@ a.pastrow:hover {
 }
 .state-btn {
   --state: var(--text-muted);
+  --hover-edge: var(--state);
+  --hover-bg: color-mix(in srgb, var(--state) 14%, transparent);
+  --hover-ink: var(--state);
+
   padding: 0.6rem 1.1rem;
   font: var(--type-label);
   font-size: 0.8125rem;
@@ -3438,38 +3543,29 @@ a.pastrow:hover {
 .state-btn[data-state='actioned'] {
   --state: var(--annotation);
 }
-/* `:not(:disabled)` is not decoration — it is what wins the cascade.
- *
- * The base rule is `button:hover:not(:disabled)`, which fills any hovered
- * button with --primary-hover, the engineer red the system reserves for a
- * primary. That selector is (0,2,1); a plain `.state-btn:hover` is (0,2,0), so
- * the type selector beat it and all four states turned the same red on hover —
- * erasing the one distinction this row exists to draw. Measured in both
- * schemes, not guessed. Matching the base rule's own shape takes these to
- * (0,3,0), and `color` has to be restated too, because the base sets that as
- * well. */
-.state-btn:hover:not(:disabled),
-.state-btn:focus-visible:not(:disabled) {
-  color: var(--state);
-  border-color: var(--state);
-  background: color-mix(in srgb, var(--state) 14%, transparent);
-}
+/* Already filled with its own colour, so hovering nudges that colour toward the
+   page rather than swapping it: darker in the dark scheme, lighter in the
+   light one, and the same hue in both. */
 .state-btn.on {
+  --hover-edge: var(--state);
+  --hover-bg: color-mix(in srgb, var(--state) 85%, var(--surface-page));
+  --hover-ink: var(--text-reverse);
+
   color: var(--text-reverse);
   background: var(--state);
   border-color: var(--state);
 }
-/* Already filled with its own colour, so hovering nudges that colour toward the
-   page rather than swapping it: darker in the dark scheme, lighter in the
-   light one, and the same hue in both. */
-.state-btn.on:hover:not(:disabled),
-.state-btn.on:focus-visible:not(:disabled) {
-  color: var(--text-reverse);
-  border-color: var(--state);
-  background: color-mix(in srgb, var(--state) 85%, var(--surface-page));
+.state-btn:focus-visible {
+  border-color: var(--hover-edge);
+  background: var(--hover-bg);
+  color: var(--hover-ink);
 }
 /* The narrowing a count applied, and the way back out of it. */
 .state-clear {
+  --hover-edge: var(--text-strong);
+  --hover-bg: color-mix(in srgb, var(--text-strong) 7%, transparent);
+  --hover-ink: var(--text-strong);
+
   padding: 0.6rem 1.1rem;
   font: var(--type-label);
   letter-spacing: var(--ls-label);
@@ -3477,10 +3573,9 @@ a.pastrow:hover {
   background: transparent;
   border: 1px dashed var(--border-input);
 }
-.state-clear:hover:not(:disabled),
-.state-clear:focus-visible:not(:disabled) {
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 7%, transparent);
-  border-color: var(--text-strong);
+/* The one thing the variables cannot carry: the dashes go solid, so the way out
+   of a narrowing reads as a real control the moment you reach for it. */
+.state-clear:hover,
+.state-clear:focus-visible {
   border-style: solid;
 }
