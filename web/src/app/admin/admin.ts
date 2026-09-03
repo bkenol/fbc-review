@@ -28,7 +28,7 @@
  *   one session.
  */
 import { DatePipe, KeyValuePipe } from '@angular/common';
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, inject, input, signal } from '@angular/core';
 
 import { Decision, Disposition, Feedback } from '../api';
 import { ReviewService } from '../review/review-service';
@@ -43,7 +43,14 @@ export class Admin {
   protected readonly training = inject(TrainingService);
   private readonly reviews = inject(ReviewService);
 
-  protected readonly state = signal('new');
+  /** Which step this is on the page. The queue is 02 for an owner and absent
+   *  for anybody else, so the number is the parent's to decide. */
+  readonly mark = input('02');
+
+  /** Both filters are the service's, because the counts above the queue drive
+   *  them as well as the buttons below it. */
+  protected readonly state = this.training.queueState;
+  protected readonly disposition = this.training.queueDisposition;
   protected readonly expanded = signal<string>('');
   protected readonly note = signal('');
 
@@ -68,13 +75,51 @@ export class Admin {
 
   constructor() {
     this.reviews.loadConfig();
-    this.training.loadQueue(this.state());
+    this.training.loadQueue(this.state(), this.disposition());
     this.training.loadCalibration();
   }
 
+  /** Show one state, clearing any disposition narrowing. */
   protected show(state: string): void {
-    this.state.set(state);
-    this.training.loadQueue(state);
+    this.training.loadQueue(state, '');
+  }
+
+  /** Everything still waiting on a decision — what the counts call "waiting". */
+  protected showWaiting(): void {
+    this.training.loadQueue('new', '');
+  }
+
+  /**
+   * Narrow the waiting items to one disposition.
+   *
+   * The counts are of open feedback by disposition, so the state goes back to
+   * `new` alongside: a count of two "needs a new component" that lands you on a
+   * list of none, because the filter was still on `actioned`, is worse than not
+   * being able to click it at all.
+   */
+  protected showDisposition(key: string): void {
+    this.training.loadQueue('new', key);
+  }
+
+  /**
+   * How many open items carry one disposition.
+   *
+   * A method rather than `summary.counts[key]` in the template, because the
+   * generated type is a plain index signature: TypeScript says the lookup is a
+   * `number` and at runtime a disposition nobody has used is `undefined`, which
+   * rendered as an empty tile where a zero belonged.
+   */
+  protected countFor(counts: { [key: string]: number }, key: string): number {
+    return counts[key] ?? 0;
+  }
+
+  /** A disposition's own words, for the line saying what the queue is narrowed to. */
+  protected dispositionLabel(key: string): string {
+    return this.dispositions().find((d) => d.key === key)?.label ?? key;
+  }
+
+  protected scrollTo(id: string): void {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   protected toggle(item: Feedback): void {

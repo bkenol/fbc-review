@@ -109,6 +109,33 @@ is one page and `webapp/static/index.html` is about 200 lines of CSS. Port that 
 - Authenticate with Workload Identity Federation in CI, never a downloaded key JSON.
 - The email allowlist is checked server-side. A client-side check is decoration.
 
+## Operating the live deployment
+
+Running against the deployed service is **allowed and expected** — marking feedback
+actioned, promoting a calibration profile, reading the queue, sending a digest. These are
+ordinary operations, not a boundary to stop at, and needing a person to click a button in
+a browser for every one of them is a bottleneck rather than a safeguard.
+
+What holds instead of a prohibition:
+
+- **Go through the API, not the database.** `POST /api/admin/feedback/{id}/decision` also
+  stamps `decided_at`, `decided_by` and `decision_note`; a document written straight into
+  Firestore records a decision made by nobody at no time. Reach for the collection only
+  when the service itself is unreachable, and then write every field the endpoint would
+  have.
+- **Short-lived credentials only.** A Firebase ID token or `gcloud` ADC is fine. A
+  downloaded service-account key is not — that is the same rule as the one above about CI,
+  for the same reason.
+- **A credential in a chat transcript is disclosed.** Treat anything pasted into a session
+  as burned: use it, say so, and say it should be rotated. Never write one into the repo,
+  a commit message, a log line or a test fixture.
+- **Confirm before anything irreversible or outward-facing.** Promoting a profile changes
+  what every future review tells a permit applicant; sending a digest mails people.
+  Marking one piece of feedback actioned, after doing the work it asked for, does not need
+  asking twice.
+- **Say what you did.** Name the endpoint, the ids and the outcome, so the action is
+  auditable from the conversation as well as from the record.
+
 ## Working discipline
 
 - Run `pytest tests/ -v` before every commit. It is the regression gate.

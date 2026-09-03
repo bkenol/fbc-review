@@ -72,20 +72,35 @@
 
     @if (isOwner()) {
       <div class="row">
-        <!-- Same page, further down. It used to be a second route reached from
-             a second entry in the masthead, which put a navigation step between
-             a proposal and the decision on it. -->
-        <a class="btn" href="#queue">Go to the queue ({{ waiting() }} waiting)</a>
+        <!-- Scrolled to, not navigated to. `href="#queue"` looks like a
+             fragment link and behaves like one everywhere except inside a
+             router: Angular's default location strategy resolved it as a route
+             and put you back on the home page, which is the one place the
+             button was not meant to go. -->
+        <button type="button" class="btn" (click)="goToQueue()">
+          Go to the queue ({{ waiting() }} waiting)
+        </button>
       </div>
     }
   </section>
+
+  <!-- ── 02 · the queue ───────────────────────────────────────────────────
+       The other half of the same loop, and now directly under the paragraph
+       explaining it rather than four screens below. A reviewer argues with a
+       rule in the workspace, the argument lands here, and what is approved here
+       is what the next review runs against — so the decisions come before the
+       reading. Owners only: every path behind it answers 404 for anybody else,
+       so this is convenience rather than the control. -->
+  @if (isOwner()) {
+    <app-admin [mark]="marks().queue" />
+  }
 
   <!-- ── 02 · pick something to work on ──────────────────────────────────
        The whole point of this route: no upload required. Every finished review
        is already in storage with its findings and its set. -->
   <section class="step">
     <div class="step-head">
-      <span class="mark">02</span>
+      <span class="mark">{{ marks().sets }}</span>
       <h2>Work on a set</h2>
       @if (openable().length > 8) {
         <button type="button" class="inline" (click)="toggleAll()">
@@ -142,7 +157,7 @@
   <!-- ── 03 · running a set against your own candidate ───────────────────── -->
   <section class="step">
     <div class="step-head">
-      <span class="mark">03</span>
+      <span class="mark">{{ marks().levers }}</span>
       <h2>Running one against your own levers</h2>
     </div>
     <p class="hint">
@@ -157,13 +172,4 @@
     </div>
   </section>
 
-  <!-- ── 04 · the queue ───────────────────────────────────────────────────
-       The other half of the same loop, on the same page. A reviewer argues
-       with a rule up there, the argument lands here, and what is approved here
-       is what the next review runs against. Owners only — every path behind it
-       answers 404 for anybody else, so this is convenience rather than the
-       control. -->
-  @if (isOwner()) {
-    <app-admin />
-  }
 }

@@ -1,6 +1,6 @@
 <section class="step admin" id="queue">
   <div class="step-head">
-    <span class="mark">04</span>
+    <span class="mark">{{ mark() }}</span>
     <h2>The queue</h2>
   </div>
 
@@ -11,23 +11,49 @@
   </p>
 
   @if (overview(); as summary) {
-    <div class="tally admin-tally">
-      <div class="figures">
-        <span class="pct">{{ summary.open_feedback }}</span>
-        <span class="dim">waiting</span>
-      </div>
+    <!-- The counts, and the way into what they count.
+         They used to be three lines of small mono stacked down the left of a
+         very wide section, saying "2 Needs a new component" with no way to see
+         which two. A count you cannot open is a number you have to go looking
+         for by hand. Each tile is now the filter that produces it, and a count
+         of nothing is inert rather than a dead end you can press. -->
+    <div class="queue-stats" role="group" aria-label="Filter the queue">
+      <button
+        type="button"
+        class="qstat"
+        [disabled]="!summary.open_feedback"
+        [class.on]="state() === 'new' && !disposition()"
+        [attr.aria-pressed]="state() === 'new' && !disposition()"
+        (click)="showWaiting()"
+      >
+        <b class="qstat-n">{{ summary.open_feedback }}</b>
+        <span class="qstat-l">waiting</span>
+      </button>
+
       @for (row of dispositions(); track row.key) {
-        @if (summary.counts[row.key]; as count) {
-          <div class="figures">
-            <span class="pct">{{ count }}</span>
-            <span class="dim">{{ row.label }}</span>
-          </div>
-        }
+        <button
+          type="button"
+          class="qstat"
+          [attr.data-disposition]="row.key"
+          [disabled]="!countFor(summary.counts, row.key)"
+          [class.on]="disposition() === row.key"
+          [attr.aria-pressed]="disposition() === row.key"
+          (click)="showDisposition(row.key)"
+        >
+          <b class="qstat-n">{{ countFor(summary.counts, row.key) }}</b>
+          <span class="qstat-l">{{ row.label }}</span>
+        </button>
       }
-      <div class="figures">
-        <span class="pct">v{{ summary.active_version }}</span>
-        <span class="dim">{{ summary.calibrated_rules }} rules calibrated</span>
-      </div>
+
+      <button
+        type="button"
+        class="qstat"
+        [disabled]="!summary.calibrated_rules"
+        (click)="scrollTo('in-force')"
+      >
+        <b class="qstat-n">v{{ summary.active_version }}</b>
+        <span class="qstat-l">{{ summary.calibrated_rules }} rules calibrated</span>
+      </button>
     </div>
 
     <!-- The three channels, one per line.
@@ -54,10 +80,10 @@
         <span class="channel-state">{{ summary.assist }}</span>
       </li>
     </ul>
-    <div class="side-actions">
+    <div class="side-actions channel-actions">
       <button
         type="button"
-        class="inline"
+        class="btn"
         [disabled]="!summary.mail.configured"
         [title]="
           summary.mail.configured
@@ -78,15 +104,27 @@
     </p>
   }
 
-  <div class="vocab" role="group" aria-label="Filter by state">
+  <!-- The four states. Larger than the old chips, and each carrying its own
+       ink so that "rejected" and "accepted" are not the same grey word in the
+       same grey box. The colours are the system's own — the survey green it
+       already uses for VERIFIED, the red it uses for CRITICAL, and the two
+       accents — rather than four new hues invented for this row. -->
+  <div class="states" role="group" aria-label="Filter by state">
     @for (option of ['new', 'accepted', 'rejected', 'actioned']; track option) {
       <button
         type="button"
-        class="vocab-btn"
+        class="state-btn"
+        [attr.data-state]="option"
         [class.on]="state() === option"
+        [attr.aria-pressed]="state() === option"
         (click)="show(option)"
       >
         {{ option }}
+      </button>
+    }
+    @if (disposition(); as narrowed) {
+      <button type="button" class="state-clear" (click)="showWaiting()">
+        {{ dispositionLabel(narrowed) }} only — clear
       </button>
     }
   </div>
@@ -240,7 +278,7 @@
 
   <!-- ── what is in force ──────────────────────────────────────────────── -->
   @if (calibration(); as view) {
-    <div class="side-list">
+    <div class="side-list" id="in-force">
       <p class="eyebrow">
         In force — {{ view.active.label }} v{{ view.active.version }}
       </p>

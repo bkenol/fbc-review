@@ -87,6 +87,39 @@ export class Training {
     () => this.training.overview()?.open_feedback ?? 0,
   );
 
+  /**
+   * The step numbers, which depend on who is reading.
+   *
+   * The queue is section 02 for an owner and absent for everybody else, so the
+   * two sections after it cannot carry a number written into the template — a
+   * reviewer would read 01, 03, 04 and reasonably wonder what they were not
+   * being shown.
+   */
+  protected readonly marks = computed(() => {
+    const owner = this.isOwner();
+    return {
+      queue: '02',
+      sets: owner ? '03' : '02',
+      levers: owner ? '04' : '03',
+    };
+  });
+
+  /**
+   * Scroll to the queue rather than navigate to it.
+   *
+   * The button was `href="#queue"`, which reads as a fragment link and is one
+   * everywhere except inside a router: Angular's default location strategy
+   * resolved it as a route and landed on the home page instead. Selecting the
+   * waiting state on the way means the button arrives at the items that are
+   * actually asking for a decision, whatever was last filtered.
+   */
+  protected goToQueue(): void {
+    this.training.loadQueue('new');
+    document
+      .getElementById('queue')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   /** Reviews you can open and work through. Finished ones only. */
   protected readonly openable = computed(() =>
     (this.history() ?? []).filter((entry) => entry.state === 'done'),

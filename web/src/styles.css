@@ -2850,6 +2850,14 @@ td.sev .chip.conflict {
   border-left-color: var(--sev-verified, var(--border-hairline));
 }
 
+/* A row of the queue is a button, and the base `button` rule fills one with
+   --primary and writes it in --primary-ink, uppercase and letter-spaced. This
+   row overrode the background and the border and stopped there, so the triage
+   verdict — the whole reason the section says the work is "deciding rather than
+   reading" — was white text on a white card, and the rationale beside it was a
+   sentence of prose shouted in capitals. Both are inherited, and neither is
+   caught by `font: inherit`, because colour and text-transform are not part of
+   the font shorthand. */
 .queue-head {
   display: grid;
   grid-template-columns: 14rem 12rem 1fr auto;
@@ -2859,10 +2867,16 @@ td.sev .chip.conflict {
   padding: 0.55rem 0.75rem;
   font: inherit;
   font-size: 0.8rem;
+  letter-spacing: normal;
+  text-transform: none;
   text-align: left;
+  color: var(--text-body);
   background: none;
   border: 0;
   cursor: pointer;
+}
+.queue-head:hover {
+  color: var(--text-strong);
 }
 
 .queue-head:hover {
@@ -2877,6 +2891,7 @@ td.sev .chip.conflict {
 
 .queue-verdict {
   font-weight: 600;
+  color: var(--text-strong);
 }
 
 .queue-what {
@@ -3276,4 +3291,157 @@ a.pastrow:hover {
    legible — "not checked" stays visible whatever kind it is. */
 .annotations li.quiet {
   opacity: 0.68;
+}
+
+/* ── the queue's counts, and the way into what they count ──────────────────
+ * Three lines of small mono down the left of a very wide section, saying
+ * "2 Needs a new component" with no way to see which two. A count you cannot
+ * open is a number you go looking for by hand, and most of the row was empty.
+ *
+ * Each tile is now the filter that produces it. A count of nothing is disabled
+ * rather than a dead end you can press — the register's own rule, that "not
+ * checked" must not look like "checked and passed", applied to a control: a
+ * button that looks pressable and does nothing teaches you not to press any of
+ * them.
+ */
+.queue-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-2, 0.5rem);
+  margin: var(--space-4, 1.5rem) 0 var(--space-5, 2rem);
+}
+.qstat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: var(--space-3, 1rem);
+  text-align: left;
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+  border-left: 3px solid var(--border-hairline);
+  transition: var(--transition-colour);
+}
+.qstat-n {
+  font: var(--type-dimension);
+  font-size: clamp(1.75rem, 3.4vw, 2.75rem);
+  line-height: 1;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+.qstat-l {
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* The same three accents the queue rows already carry on their left rule, so
+   a tile and the rows it opens are visibly the same thing. */
+.qstat[data-disposition='auto_tunable'] {
+  border-left-color: var(--annotation);
+}
+.qstat[data-disposition='needs_component'],
+.qstat[data-disposition='escalate'] {
+  border-left-color: var(--accent-dimension);
+}
+.qstat[data-disposition='confirmation'] {
+  border-left-color: var(--verified);
+}
+.qstat:not(:disabled):hover,
+.qstat:not(:disabled):focus-visible {
+  border-color: var(--text-strong);
+  background: var(--surface-raised, var(--surface-card));
+}
+.qstat:not(:disabled):hover .qstat-l,
+.qstat:not(:disabled):focus-visible .qstat-l {
+  color: var(--text-strong);
+}
+.qstat.on {
+  border-color: var(--text-strong);
+  box-shadow: inset 0 0 0 1px var(--text-strong);
+}
+.qstat:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.qstat:disabled .qstat-n {
+  color: var(--text-muted);
+}
+
+/* The digest sits on a row of its own, and that row needs a bottom margin.
+   Without one it butted straight into the state filters below and read as one
+   overlapping stack of boxes rather than two separate controls. */
+.channel-actions {
+  margin-top: var(--space-3, 1rem);
+  margin-bottom: var(--space-5, 2rem);
+}
+
+/* ── the four states ───────────────────────────────────────────────────────
+ * Bigger than the chips they replace, and each in its own ink. Four grey words
+ * in four grey boxes made "rejected" and "accepted" the same object, which is
+ * the one distinction this row exists to draw.
+ *
+ * No new hues: the survey green is the one already spent on VERIFIED, the red
+ * is CRITICAL's, and the two accents are the system's own. The colour is the
+ * left rule and the text; the fill only arrives on the pressed one, so at most
+ * one of the four is ever shouting.
+ */
+.states {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  margin: var(--space-4, 1.5rem) 0 var(--space-4, 1.5rem);
+}
+.state-btn {
+  --state: var(--text-muted);
+  padding: 0.6rem 1.1rem;
+  font: var(--type-label);
+  font-size: 0.8125rem;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--state);
+  background: transparent;
+  border: 1px solid var(--border-input);
+  border-left: 3px solid var(--state);
+  transition: var(--transition-colour);
+}
+/* Four states, four treatments, and no fifth hue: the system owns a red, a
+   blue, the survey green and the ink ramp, and that is exactly four. Measured
+   rather than assumed — `--accent-dimension` and `--sev-critical` resolve to
+   the same red in the dark scheme, so spending both would have left "new" and
+   "rejected" identical, which is the one distinction this row is for. */
+.state-btn[data-state='new'] {
+  --state: var(--accent-dimension);
+}
+.state-btn[data-state='accepted'] {
+  --state: var(--verified);
+}
+.state-btn[data-state='rejected'] {
+  --state: var(--text-strong);
+}
+.state-btn[data-state='actioned'] {
+  --state: var(--annotation);
+}
+.state-btn:hover {
+  border-color: var(--state);
+  background: color-mix(in srgb, var(--state) 10%, transparent);
+}
+.state-btn.on {
+  color: var(--text-reverse);
+  background: var(--state);
+  border-color: var(--state);
+}
+/* The narrowing a count applied, and the way back out of it. */
+.state-clear {
+  padding: 0.6rem 1.1rem;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px dashed var(--border-input);
+}
+.state-clear:hover {
+  border-color: var(--text-strong);
+  border-style: solid;
 }
