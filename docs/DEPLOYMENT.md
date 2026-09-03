@@ -111,12 +111,21 @@ builds the client and runs the tests.
 Then put the console on the Desktop and use that from here on:
 
 ```powershell
-& ".\Rebuild Console.cmd" shortcut
+& ".\Rebuild Console.cmd" app-shortcut
 ```
 
 Pull, Rebuild and Publish become buttons, their output streams into the page,
 and a line says whether the running container is on the commit in your working
 tree. `bash scripts/rebuild-console.sh` is the same thing from Git Bash.
+
+That shortcut opens the console as **its own Chrome window** — no tab strip, no
+address bar, its own taskbar button and Chrome's icon — because the console is a
+control panel and a control panel that lives in a tab gets lost among thirty
+others. It targets `pythonw.exe` directly rather than the `.cmd`, so no console
+window flashes on launch. Edge and Brave work too; with none of them installed
+the page opens in the default browser instead. `& ".\Rebuild Console.cmd" app`
+does the same thing once, without writing a shortcut, and
+`& ".\Rebuild Console.cmd" shortcut` still writes the older default-browser one.
 
 To confirm a machine is running what you think it is, read the version in the
 masthead and the footer of the page itself — locally it carries the commit and

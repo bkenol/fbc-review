@@ -141,12 +141,14 @@ try {
 
     Write-Host @'
   START HERE — put the Rebuild Console on the Desktop, then use that:
-      & ".\Rebuild Console.cmd" shortcut
+      & ".\Rebuild Console.cmd" app-shortcut
 
   It opens a page with Pull, Rebuild and Publish as buttons, their output
   streaming into it, and a line saying whether the running container is on the
-  commit in your working tree. From Git Bash instead:
-      bash scripts/rebuild-console.sh
+  commit in your working tree. The shortcut opens it as its own Chrome window
+  rather than as a tab, and flashes no console window on the way. From Git Bash
+  instead:
+      bash scripts/rebuild-console.sh --browser app
 
   What the buttons run, if you would rather run it by hand:
       powershell -ExecutionPolicy Bypass -File scripts\share.ps1

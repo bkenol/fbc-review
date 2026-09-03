@@ -166,3 +166,123 @@ def test_colour_escapes_are_stripped_out_of_the_log(console):
         "plain — untouched, em dash and all",
     ]
     console.log_clear()
+
+
+# ── opening the console in a window of its own ────────────────────────────
+# The console is a control panel, not a document. Chrome's `--app=` mode gives
+# it its own window, taskbar button and icon, which is what stops it getting
+# lost among thirty tabs. Only Chromium-family browsers have it, so the whole
+# path has to degrade to the default browser rather than fail.
+def test_app_mode_is_off_unless_asked_for(console, monkeypatch):
+    """Double-clicking the .cmd must behave exactly as it always has."""
+    calls = []
+    monkeypatch.setattr(console.webbrowser, "open", lambda u: calls.append(u))
+    monkeypatch.setattr(console, "open_app_window", lambda *a, **k: 1 / 0)
+
+    console.open_console("http://127.0.0.1:9/?token=x", "default")
+    assert calls == ["http://127.0.0.1:9/?token=x"]
+
+
+def test_none_opens_nothing_at_all(console, monkeypatch):
+    monkeypatch.setattr(console.webbrowser, "open", lambda u: 1 / 0)
+    monkeypatch.setattr(console, "open_app_window", lambda *a, **k: 1 / 0)
+    console.open_console("http://127.0.0.1:9/", "none")
+
+
+def test_app_mode_launches_the_browser_with_the_url_as_its_own_window(
+        console, monkeypatch, tmp_path):
+    fake = tmp_path / "chrome.exe"
+    fake.write_text("")
+    seen = {}
+
+    def popen(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(console, "app_browser", lambda: str(fake))
+    monkeypatch.setattr(console.subprocess, "Popen", popen)
+
+    assert console.open_app_window("http://127.0.0.1:9/?token=x") is True
+    assert seen["argv"][0] == str(fake)
+    assert "--app=http://127.0.0.1:9/?token=x" in seen["argv"]
+    # No --user-data-dir: a private profile would sign the user out of
+    # everything and start a second copy of Chrome to show one local page.
+    assert not any(a.startswith("--user-data-dir") for a in seen["argv"])
+
+
+def test_app_mode_falls_back_to_the_default_browser_when_there_is_no_chrome(
+        console, monkeypatch, capsys):
+    """A machine with only Firefox still gets the console, and is told why it
+    did not get a window of its own."""
+    calls = []
+    monkeypatch.setattr(console, "app_browser", lambda: None)
+    monkeypatch.setattr(console.webbrowser, "open", lambda u: calls.append(u))
+
+    console.open_console("http://127.0.0.1:9/", "app")
+    assert calls == ["http://127.0.0.1:9/"]
+    assert "default browser" in capsys.readouterr().out
+
+
+def test_a_browser_that_will_not_start_is_not_a_crash(console, monkeypatch, tmp_path):
+    fake = tmp_path / "chrome.exe"
+    fake.write_text("")
+    monkeypatch.setattr(console, "app_browser", lambda: str(fake))
+    monkeypatch.setattr(console.subprocess, "Popen",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("nope")))
+    assert console.open_app_window("http://127.0.0.1:9/") is False
+
+
+def test_an_unset_windows_variable_never_looks_like_a_real_path(console, monkeypatch):
+    """os.path.expandvars leaves %ProgramFiles(x86)% alone when it is not set,
+    and a literal like that must not be handed to Popen as a browser."""
+    monkeypatch.setattr(console, "WINDOWS", True)
+    monkeypatch.setattr(console.shutil, "which", lambda name: None)
+    for var in ("LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"):
+        monkeypatch.delenv(var, raising=False)
+    assert console.app_browser() is None
+
+
+def test_the_browser_choice_is_a_command_line_option(console):
+    import argparse
+    parser = argparse.ArgumentParser()
+    # Mirrors main(); asserting the parser accepts what the shortcut passes.
+    parser.add_argument("--browser", choices=("default", "app", "none"),
+                        default="default")
+    assert parser.parse_args(["--browser", "app"]).browser == "app"
+    assert parser.parse_args([]).browser == "default"
+
+
+# ── the launchers agree about what exists ─────────────────────────────────
+def test_the_cmd_offers_the_app_shortcut_and_points_at_the_script():
+    """`Rebuild Console.cmd app-shortcut` is what DEPLOYMENT.md tells people to
+    run, so the branch and the file it calls both have to be there."""
+    cmd = (ROOT / "Rebuild Console.cmd").read_text(encoding="utf-8")
+    assert '"%~1"=="app-shortcut"' in cmd
+    assert '"%~1"=="app"' in cmd
+    assert "scripts\\app-shortcut.ps1" in cmd
+    assert "--browser app" in cmd
+    assert (ROOT / "scripts" / "app-shortcut.ps1").exists()
+
+
+def test_the_shortcut_targets_pythonw_rather_than_the_cmd():
+    """The whole point over the older shortcut: a .cmd opens a console window
+    however briefly, and a black window flashing on every launch is what stops
+    people using a shortcut at all."""
+    ps1 = (ROOT / "scripts" / "app-shortcut.ps1").read_text(encoding="utf-8")
+    assert "pythonw.exe" in ps1
+    assert "rebuild_console.py" in ps1
+    assert "--browser app" in ps1
+    assert "$s.TargetPath = $python" in ps1
+
+
+def test_the_shortcut_and_the_console_look_for_the_same_browsers():
+    """The .ps1 borrows the browser's icon and the .py launches it. If they
+    disagree, the shortcut wears Chrome's icon and opens Firefox."""
+    ps1 = (ROOT / "scripts" / "app-shortcut.ps1").read_text(encoding="utf-8")
+    for exe in ("chrome.exe", "msedge.exe", "brave.exe"):
+        assert exe in ps1, exe
+
+    py = CONSOLE.read_text(encoding="utf-8")
+    for exe in ("chrome.exe", "msedge.exe", "brave.exe"):
+        assert exe in py, exe

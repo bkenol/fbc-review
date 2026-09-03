@@ -104,6 +104,97 @@ _LOG_LOCK = threading.Lock()
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
+#: Chromium browsers that understand `--app=URL`, most preferred first.
+#
+# App mode opens the console as its own window: no tab strip, no address bar,
+# its own taskbar button and its own icon. For a page that is a control panel
+# rather than a document that is the right frame, and it stops the console
+# getting lost among thirty tabs.
+#
+# Only Chromium-family browsers have it. Firefox dropped `-ssb` and Safari's
+# equivalent cannot be driven from a command line, so on a machine with neither
+# Chrome nor Edge this falls back to the default browser rather than failing.
+_APP_BROWSER_PATHS = {
+    "nt": (
+        r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe",
+        r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+        r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+        r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+        r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+        r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe",
+    ),
+    "darwin": (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ),
+}
+
+#: Names to try on PATH when no install in a known place turned up.
+_APP_BROWSER_NAMES = ("google-chrome", "google-chrome-stable", "chromium",
+                      "chromium-browser", "microsoft-edge", "chrome")
+
+
+def app_browser() -> Optional[str]:
+    """A Chromium binary that can open a URL as its own window, or None."""
+    if WINDOWS:
+        candidates = _APP_BROWSER_PATHS["nt"]
+    elif sys.platform == "darwin":
+        candidates = _APP_BROWSER_PATHS["darwin"]
+    else:
+        candidates = ()
+
+    for raw in candidates:
+        path = os.path.expandvars(raw)
+        # An unset variable is left as the literal %NAME% on Windows; that path
+        # cannot exist, so the check below discards it without a special case.
+        if os.path.isfile(path):
+            return path
+
+    for name in _APP_BROWSER_NAMES:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def open_app_window(url: str, size: str = "1280,900") -> bool:
+    """Open `url` as a Chromium app window. False if there is no such browser.
+
+    The user's normal profile is used deliberately — a private `--user-data-dir`
+    would give a cleaner window at the price of signing them out of everything
+    and starting a second copy of Chrome. When Chrome is already running this
+    hands the window to it and returns at once.
+    """
+    exe = app_browser()
+    if not exe:
+        return False
+    argv = [exe, "--app={}".format(url), "--window-size={}".format(size)]
+    try:
+        kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        if not WINDOWS:
+            kwargs["start_new_session"] = True
+        subprocess.Popen(argv, **kwargs)
+    except OSError:
+        return False
+    return True
+
+
+def open_console(url: str, mode: str) -> None:
+    """Show the console, by whichever route was asked for."""
+    if mode == "none":
+        return
+    if mode == "app" and open_app_window(url):
+        return
+    if mode == "app":
+        print("No Chrome, Edge or Chromium found for --app mode; using the "
+              "default browser instead.")
+    try:
+        webbrowser.open(url)
+    except Exception:  # a headless box has no browser; the URL is printed
+        pass
+
+
 def log_write(text: str) -> None:
     with _LOG_LOCK:
         _LOG.append(_ANSI.sub("", text))
@@ -1311,7 +1402,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--port", type=int, default=0,
                         help="console port (0 picks a free one)")
     parser.add_argument("--no-browser", action="store_true",
-                        help="do not open a browser")
+                        help="do not open a browser (same as --browser none)")
+    parser.add_argument("--browser", choices=("default", "app", "none"),
+                        default="default",
+                        help="'default' uses the system browser; 'app' opens a "
+                             "Chrome/Edge window of its own, with no tab strip "
+                             "or address bar; 'none' opens nothing")
     args = parser.parse_args(argv)
 
     repo = Path(args.repo).resolve()
@@ -1334,11 +1430,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("Ctrl-C, or the link in the page, stops it.")
     log_write("Ready. {}".format(repo))
 
-    if not args.no_browser:
-        try:
-            webbrowser.open(url)
-        except Exception:  # a headless box has no browser; the URL is printed
-            pass
+    open_console(url, "none" if args.no_browser else args.browser)
 
     try:
         while not Console.quit_event.wait(0.4):
