@@ -3317,6 +3317,11 @@ a.pastrow:hover {
   gap: 0.35rem;
   padding: var(--space-3, 1rem);
   text-align: left;
+  /* Explicit, because the base `button` rule writes in --primary-ink: without
+     this the tile is white text on a white card, exactly as the queue rows
+     were. Nothing shows it today — both children set their own colour — but a
+     third child would inherit the fault. */
+  color: var(--text-body);
   background: var(--surface-card);
   border: 1px solid var(--border-hairline);
   border-left: 3px solid var(--border-hairline);
@@ -3347,10 +3352,20 @@ a.pastrow:hover {
 .qstat[data-disposition='confirmation'] {
   border-left-color: var(--verified);
 }
+/* `--surface-raised` does not exist, so this fell back to --surface-card, which
+   is what the tile already rests on: a clickable tile with no hover response at
+   all. Mixed off the ink instead, which lifts in the light scheme and in the
+   dark one alike. */
 .qstat:not(:disabled):hover,
 .qstat:not(:disabled):focus-visible {
+  /* Restated for the same reason as the state buttons: on hover the base rule
+     is (0,2,1) and the plain `.qstat` colour above is (0,1,0), so without this
+     the tile's own ink goes --paper-white under the cursor. Its two children
+     set their own colour so nothing shows it, which is exactly why it would
+     have survived until somebody added a third. */
+  color: var(--text-body);
   border-color: var(--text-strong);
-  background: var(--surface-raised, var(--surface-card));
+  background: color-mix(in srgb, var(--text-strong) 7%, var(--surface-card));
 }
 .qstat:not(:disabled):hover .qstat-l,
 .qstat:not(:disabled):focus-visible .qstat-l {
@@ -3423,14 +3438,35 @@ a.pastrow:hover {
 .state-btn[data-state='actioned'] {
   --state: var(--annotation);
 }
-.state-btn:hover {
+/* `:not(:disabled)` is not decoration — it is what wins the cascade.
+ *
+ * The base rule is `button:hover:not(:disabled)`, which fills any hovered
+ * button with --primary-hover, the engineer red the system reserves for a
+ * primary. That selector is (0,2,1); a plain `.state-btn:hover` is (0,2,0), so
+ * the type selector beat it and all four states turned the same red on hover —
+ * erasing the one distinction this row exists to draw. Measured in both
+ * schemes, not guessed. Matching the base rule's own shape takes these to
+ * (0,3,0), and `color` has to be restated too, because the base sets that as
+ * well. */
+.state-btn:hover:not(:disabled),
+.state-btn:focus-visible:not(:disabled) {
+  color: var(--state);
   border-color: var(--state);
-  background: color-mix(in srgb, var(--state) 10%, transparent);
+  background: color-mix(in srgb, var(--state) 14%, transparent);
 }
 .state-btn.on {
   color: var(--text-reverse);
   background: var(--state);
   border-color: var(--state);
+}
+/* Already filled with its own colour, so hovering nudges that colour toward the
+   page rather than swapping it: darker in the dark scheme, lighter in the
+   light one, and the same hue in both. */
+.state-btn.on:hover:not(:disabled),
+.state-btn.on:focus-visible:not(:disabled) {
+  color: var(--text-reverse);
+  border-color: var(--state);
+  background: color-mix(in srgb, var(--state) 85%, var(--surface-page));
 }
 /* The narrowing a count applied, and the way back out of it. */
 .state-clear {
@@ -3441,7 +3477,10 @@ a.pastrow:hover {
   background: transparent;
   border: 1px dashed var(--border-input);
 }
-.state-clear:hover {
+.state-clear:hover:not(:disabled),
+.state-clear:focus-visible:not(:disabled) {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--text-strong) 7%, transparent);
   border-color: var(--text-strong);
   border-style: solid;
 }
