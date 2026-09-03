@@ -201,7 +201,10 @@ def run_review(
             "conflicts": sum(1 for f in result.findings if f.status == "CONFLICT"),
             "abstentions": abstentions,
             "rules_run": len(registered()),
-            "scale_pages": sum(1 for g in facts.geometry.values() if g.scale_pt_per_ft),
+            # Counts a sheet whose views each resolved their own scale, not only
+            # one with a single page-wide scale — on a multi-view sheet the
+            # latter is always absent and the geometry is still measurable.
+            "scale_pages": sum(1 for g in facts.geometry.values() if g.scale_resolved),
             "pdf_bytes": out_pdf.stat().st_size,
             "pdf_name": pdf_name,
             "findings_count": len(findings),

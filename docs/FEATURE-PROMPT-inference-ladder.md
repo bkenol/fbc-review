@@ -493,7 +493,7 @@ of them without leaving the engine half-built.
 
 | Phase | Work | Unlocks |
 | --- | --- | --- |
-| **1** | §7 per-view scale attribution | `MEASURE.EGRESS_EXTENT` on multi-view sheets, today |
+| ~~**1**~~ | ~~§7 per-view scale attribution~~ — **built**: `extract/views.py`, `ViewScale`, `PageGeometry.scale_for()` | `MEASURE.EGRESS_EXTENT` on multi-view sheets |
 | **2** | §4 lexicon + §4.4 scoping | §1.1 partly, §1.2 and §1.3 fully. Pure text; no geometry risk |
 | **3** | §5 table reading | §1.1 fully; occupant-load cross-check |
 | **4** | §3.1 basis and band on `Evidence` | the safety rails, before anything can be measured |

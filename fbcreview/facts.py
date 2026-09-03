@@ -6,7 +6,7 @@ normalised structure and are therefore pure functions with no model in the loop.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from .confidence import Evidence
 
 
@@ -90,10 +90,79 @@ class Schedule:
 
 
 @dataclass
+class ViewScale:
+    """One drawing view on a sheet, and the scale that governs that view.
+
+    A sheet is several drawings at several scales.  `PageGeometry.scale_pt_per_ft`
+    can only speak for the whole page and therefore abstains whenever a sheet
+    prints more than one scale, which is most architectural sheets.  This says
+    which box on the page a scale applies to, so geometry inside that box can be
+    measured while the rest of the sheet stays unmeasured.
+    """
+    rect: Tuple[float, float, float, float]   # unrotated PDF points, x0 y0 x1 y1
+    scale: Evidence
+    paths: int = 0
+
+    def contains(self, other: Tuple[float, float, float, float],
+                 slack: float = 2.0) -> bool:
+        return (other[0] >= self.rect[0] - slack and other[1] >= self.rect[1] - slack
+                and other[2] <= self.rect[2] + slack and other[3] <= self.rect[3] + slack)
+
+    def overlaps(self, other: Tuple[float, float, float, float]) -> bool:
+        return (self.rect[0] <= other[2] and other[0] <= self.rect[2]
+                and self.rect[1] <= other[3] and other[1] <= self.rect[3])
+
+
+@dataclass
 class PageGeometry:
     page: int
     scale_pt_per_ft: Evidence
     layers: Dict[str, int] = field(default_factory=dict)   # layer name -> path count
+    views: List[ViewScale] = field(default_factory=list)
+
+    @property
+    def scale_resolved(self) -> bool:
+        """Did any scale resolve on this page — page-wide or for one view?"""
+        return bool(self.scale_pt_per_ft) or any(bool(v.scale) for v in self.views)
+
+    def scale_for(self, rect: Tuple[float, float, float, float]) -> Evidence:
+        """The scale governing a box of geometry, or an abstention saying why not.
+
+        A page-wide scale governs everything on the page.  Failing that the box
+        has to sit wholly inside one view: geometry spanning two views is drawn
+        at two scales and there is no single number to convert it at, which is a
+        refusal rather than an average.
+        """
+        if self.scale_pt_per_ft:
+            return self.scale_pt_per_ft
+
+        src = f"page {self.page + 1}"
+        if not self.views:
+            return self.scale_pt_per_ft
+
+        holding = [v for v in self.views if v.contains(rect)]
+        if len(holding) == 1:
+            return holding[0].scale
+        if len(holding) > 1:
+            resolved = {v.scale.value for v in holding if v.scale}
+            if len(resolved) == 1:
+                return next(v.scale for v in holding if v.scale)
+            return Evidence.abstain(
+                src, f"this geometry sits inside {len(holding)} nested views and they do "
+                     f"not agree on a scale", self.page)
+
+        touching = [v for v in self.views if v.overlaps(rect)]
+        if len(touching) > 1:
+            return Evidence.abstain(
+                src, f"this geometry spans {len(touching)} views drawn at different scales; "
+                     f"no single conversion applies to it", self.page)
+        if touching:
+            return Evidence.abstain(
+                src, "this geometry runs outside the bounds of the view it starts in, so the "
+                     "view's scale cannot be assumed to govern all of it", self.page)
+        return Evidence.abstain(
+            src, "this geometry falls outside every view the sheet was segmented into",
+            self.page)
 
 
 @dataclass

@@ -9,7 +9,7 @@ import pymupdf
 from ..confidence import Abstention
 from ..facts import PageGeometry, ProjectFacts, Sheet
 from ..rules import Finding, RuleResult, rule
-from .scale import page_scale
+from .scale import resolve
 
 #: A sheet number: a discipline prefix, an optional separator, a number.
 #:
@@ -208,12 +208,17 @@ def sheet_index(doc: pymupdf.Document, text_by_page: Dict[int, str]) -> List[She
 
 
 def page_geometry(doc: pymupdf.Document, pno: int, text: str) -> PageGeometry:
+    # Fetched once and passed on: get_drawings() is the most expensive call in
+    # extraction — about a second on a densely plotted sheet — and view
+    # segmentation needs the same paths this histogram walks.
+    paths = doc[pno].get_drawings()
     layers: Dict[str, int] = {}
-    for p in doc[pno].get_drawings():
+    for p in paths:
         lay = p.get("layer")
         if lay:
             layers[lay] = layers.get(lay, 0) + 1
-    return PageGeometry(pno, page_scale(doc, pno, text), layers)
+    scale, views = resolve(doc, pno, text, paths=paths)
+    return PageGeometry(pno, scale, layers, views)
 
 
 def ocg_names(doc: pymupdf.Document) -> List[str]:

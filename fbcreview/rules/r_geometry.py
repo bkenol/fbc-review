@@ -38,6 +38,13 @@ def _segments(page: pymupdf.Page, layer_sub: str) -> List[Tuple[float, float, fl
     return out
 
 
+def _bounds(segs) -> Tuple[float, float, float, float]:
+    """The box the traced geometry occupies, for attributing it to a view."""
+    xs = [c for x0, _y0, x1, _y1 in segs for c in (x0, x1)]
+    ys = [c for _x0, y0, _x1, y1 in segs for c in (y0, y1)]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def longest_run_pt(segs) -> float:
     """Longest continuous straight run, after merging collinear segments.
 
@@ -92,17 +99,23 @@ def egress_extent(f: ProjectFacts, out: RuleResult):
                 "is named differently in this office's standard"))
             return
         pno, geo = target
-        if not geo.scale_pt_per_ft:
-            out.abstentions.append(Abstention(
-                "MEASURE.EGRESS_EXTENT",
-                f"scale unresolved on {f.sheet_code(pno)} — {geo.scale_pt_per_ft.note}", pno))
-            return
-        scale = geo.scale_pt_per_ft.value
         segs = _segments(doc[pno], EGRESS_LAYER)
         if not segs:
             out.abstentions.append(Abstention(
                 "MEASURE.EGRESS_EXTENT", "egress layer present but carries no line geometry", pno))
             return
+
+        # The scale governing THIS geometry, not the sheet. A sheet printing a
+        # plan at 1/4" beside a wall section at 1-1/2" has no page-wide scale and
+        # abstains as a page; the egress path is inside one of those views and is
+        # measurable at that view's scale.
+        ev = geo.scale_for(_bounds(segs))
+        if not ev:
+            out.abstentions.append(Abstention(
+                "MEASURE.EGRESS_EXTENT",
+                f"scale unresolved on {f.sheet_code(pno)} — {ev.note}", pno))
+            return
+        scale = ev.value
         run_ft = longest_run_pt(segs) / scale
 
         d = f.datum("1017.2")
@@ -123,13 +136,14 @@ def egress_extent(f: ProjectFacts, out: RuleResult):
             f"Longest egress run measured off the drawing — {run_ft:.1f} ft",
             f"Every segment on the '{EGRESS_LAYER}' CAD layer of {f.sheet_code(pno)} was traced, "
             f"collinear dashes were merged back into continuous runs, and the longest run was "
-            f"converted at the scale recorded in the file itself "
-            f"({scale:g} pt/ft, {geo.scale_pt_per_ft.confidence} confidence).",
+            f"converted at the scale the sheet itself states for this drawing "
+            f"({scale:g} pt/ft, {ev.confidence} confidence — {ev.source}).",
             f"{len(segs)} segments traced; longest continuous run {run_ft:.2f} ft "
             f"({_ft_in(run_ft)})." + cmp_txt +
             (f" Limit is {limit:g} ft." if limit else "") +
             (" THE MEASURED RUN EXCEEDS THE LIMIT." if over else " Inside the limit."),
-            "FBC-B Table 1017.2 · scale from the PDF's own /Measure dictionary",
+            "FBC-B Table 1017.2 · scale from the sheet's own label and the PDF's "
+            "/Measure dictionary",
             "Confirm the travel path and re-dimension." if over else "None."))
     finally:
         doc.close()
