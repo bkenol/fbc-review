@@ -349,3 +349,51 @@ def multiview(views=None, rotate: int = 0, border: bool = True,
     buf = doc.tobytes()
     doc.close()
     return buf
+
+
+# ── an MEP-only submittal, the shape of SUB1-JSP_Naples ───────────────────
+#: The OCCUPANCY CALCULATION table on M.001. Reported through Refine analysis
+#: (feedback feac59646e6c) against the real set: no G-series sheet anywhere, no
+#: sheet phrasing an area as "BUILDING AREA: n SF", and these rows carrying the
+#: only areas the set states. DECL.BUILDING_AREA stood down saying "neither the
+#: drawings nor the declaration state this", which is false — the components are
+#: printed right there.
+MEP_AREA_ROWS = [("LOBBY/RECEPTION", 400), ("STUDIO AREA", 1300)]
+MEP_AREA_TOTAL = sum(sf for _label, sf in MEP_AREA_ROWS)
+
+
+def mep_only(pages: int = 6, area_rows=None, stated_total: bool = False,
+             heading: str = "OCCUPANCY CALCULATION") -> bytes:
+    """A mechanical/plumbing/electrical submittal with no architectural sheets.
+
+    The case the declaration exists to cover, and the case where every read
+    scoped to the general sheets finds nothing to read: there is no G series in
+    this set at all.
+    """
+    doc = pymupdf.open()
+    sheets = [("M.001", "MECHANICAL COVER"), ("M.101", "MECHANICAL PLAN"),
+              ("M.501", "MECHANICAL DETAILS"), ("P.101", "PLUMBING PLAN"),
+              ("E.101", "ELECTRICAL PLAN"), ("E.501", "PANEL SCHEDULE")][:pages]
+
+    rows = MEP_AREA_ROWS if area_rows is None else area_rows
+    for code, title in sheets:
+        page = doc.new_page(width=1224, height=792)
+        _linework(page)
+        page.insert_text((40, 545), "JSP NAPLES, FL   1/4\" = 1'-0\"", fontsize=8)
+
+        if code == "M.001":
+            y = 580
+            page.insert_text((40, y), heading, fontsize=9)
+            y += 15
+            for label, sf in rows:
+                page.insert_text((40, y), f"{label}   {sf:,} SQ. FT.", fontsize=9)
+                y += 15
+            if stated_total:
+                page.insert_text((40, y), f"TOTAL   {sum(s for _l, s in rows):,} SQ. FT.",
+                                 fontsize=9)
+
+        _titleblock(page, code, title)
+
+    buf = doc.tobytes()
+    doc.close()
+    return buf

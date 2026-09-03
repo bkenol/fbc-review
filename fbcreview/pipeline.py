@@ -5,6 +5,7 @@ from typing import Dict, List
 import pymupdf
 
 from .facts import ProjectFacts, Door, VentilationRow
+from .extract.areas import find_tally
 from .extract.document import sheet_index, page_geometry, ocg_names
 from .extract.blocks import code_data_block, labelled_values, normalise, to_feet, to_inches
 from .extract.schedules import find_schedule, split_merged_row
@@ -212,6 +213,15 @@ def build_facts(path: str) -> ProjectFacts:
     for key in ("area_g0_sf", "area_g1_sf", "risk_category"):
         if facts.meta[key] is None:
             del facts.meta[key]
+
+    # An area the set tabulates rather than states. Searched across the whole
+    # set, general sheets first — unlike the three reads above, which are scoped
+    # to the general series and on a submittal with no G sheets never run at
+    # all. This is a sum of listed spaces and deliberately does not become
+    # `building_area_sf`; see `extract/areas.py`.
+    tally = find_tally(text, facts.sheets)
+    if tally is not None:
+        facts.meta["area_tally"] = tally.as_meta()
 
     for s in _sheets_naming(facts, text, "BUILDING CODE ANALYSIS"):
         bca = labelled_values(doc, s.index, "BUILDING CODE ANALYSIS")
