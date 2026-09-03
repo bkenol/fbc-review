@@ -324,3 +324,49 @@ def test_a_set_with_no_sheets_abstains_rather_than_dividing_by_zero():
 
     assert not out.findings
     assert [a.reason for a in out.abstentions] == ["the set has no sheets to identify"]
+
+
+# ── what a below-floor miss actually costs ────────────────────────────────
+# Feedback f3e3a498675b, raised through Refine analysis on a 15-sheet MEP set
+# where one sheet fell back to a page number. The reviewer marked the rule as
+# having errored. It had not — the floor is deliberate, and three sheets in ten
+# still trips it — but the reason it gave was engine policy rather than
+# consequence: "sheet numbers were read on 14 of 15 sheets, which is inside the
+# 20% reporting floor" tells a reviewer nothing they can act on or judge.
+def test_a_below_floor_miss_says_what_it_costs_not_what_the_threshold_is(tmp_path):
+    codes: List[Optional[str]] = list(PILATES[:10])
+    codes[3] = None
+    _facts, res = reviewed(tmp_path, permit_set(codes), name="cost.pdf")
+
+    assert not [f for f in res.findings if f.rule_id == RULE]
+    reason = [a.reason for a in res.abstentions if a.rule_id == RULE][0]
+
+    assert "cannot be cited by any check that needs it" in reason
+    assert "recorded here rather than raised as a finding" in reason
+    # The sheets are still named, under the same detail line as before.
+    assert [a.detail for a in res.abstentions if a.rule_id == RULE] == [
+        "numbered by page instead: p4"]
+
+
+def test_the_reason_still_classifies_for_the_abstention_register(tmp_path):
+    """webapp/abstentions.py routes this reason by the phrase 'reporting floor'.
+    An unclassified reason is a row the register cannot explain or act on."""
+    from webapp import abstentions
+
+    codes: List[Optional[str]] = list(PILATES[:10])
+    codes[3] = None
+    _facts, res = reviewed(tmp_path, permit_set(codes), name="classify.pdf")
+    reason = [a.reason for a in res.abstentions if a.rule_id == RULE][0]
+
+    assert abstentions.classify(reason) == "extraction"
+
+
+def test_several_missed_sheets_below_the_floor_read_as_plural(tmp_path):
+    codes: List[Optional[str]] = list(PILATES[:20])
+    codes[3] = codes[7] = codes[11] = None          # 3 of 20 is 15%
+    _facts, res = reviewed(tmp_path, permit_set(codes), name="plural.pdf")
+
+    assert not [f for f in res.findings if f.rule_id == RULE]
+    reason = [a.reason for a in res.abstentions if a.rule_id == RULE][0]
+    assert "3 of 20 sheets" in reason
+    assert "cannot be cited by any check that needs them" in reason

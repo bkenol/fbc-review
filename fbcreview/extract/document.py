@@ -250,11 +250,20 @@ def sheet_numbers_read(f: ProjectFacts, out: RuleResult) -> None:
     missed = [s for s in f.sheets if s.code == f"p{s.index + 1}"]
     read = total - len(missed)
     if len(missed) / total <= _COVERAGE_FLOOR:
+        # Below the floor this is recorded rather than reported, and the reason
+        # has to earn that. Naming the threshold explains the engine's policy;
+        # what a reviewer needs is what it costs them — which sheets cannot be
+        # cited, and that anything needing one will stand down. Reported through
+        # Refine analysis as feedback f3e3a498675b, on a set where one sheet in
+        # fifteen fell back and the register said only that 14 of 15 were read.
         out.abstentions.append(Abstention(
             "DOC.SHEET_NUMBERS",
             "every sheet's number was read from its title block" if not missed else
-            f"sheet numbers were read on {read} of {total} sheets, which is inside "
-            f"the {_COVERAGE_FLOOR:.0%} reporting floor",
+            f"{len(missed)} of {total} sheets could not be identified from their title "
+            f"blocks and cannot be cited by any check that needs "
+            f"{'it' if len(missed) == 1 else 'them'}; that is inside the "
+            f"{_COVERAGE_FLOOR:.0%} reporting floor, so it is recorded here rather than "
+            f"raised as a finding",
             detail="" if not missed else
             "numbered by page instead: " + ", ".join(s.code for s in missed)))
         return
