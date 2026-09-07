@@ -1,5 +1,5 @@
 ---
-title: Claude Code Prompt — Deploy FBC Reviewer to review.omniflexfitness.com
+title: Claude Code Prompt — Deploy FBC Reviewer to fbc.omniflexfitness.com
 type: runbook
 tags:
   - code-review
@@ -13,7 +13,12 @@ created: 2026-08-21
 source-session: Meridian Drafting
 ---
 
-# Claude Code prompt — deploy the FBC Reviewer to `review.omniflexfitness.com`
+# Claude Code prompt — deploy the FBC Reviewer to `fbc.omniflexfitness.com`
+
+> **Hostname.** This prompt originally said `review.omniflexfitness.com`. Nothing was
+> ever built against that name — `cors.json`, the scripts, the tunnel config and
+> `docs/DEPLOYMENT.md` have always used `fbc.omniflexfitness.com`, which is what
+> answers. The name is settled in `CLAUDE.md` and corrected throughout below.
 
 Open Claude Code in `C:\Antigravity\fbc-review` and paste everything below the line.
 The repo is already unzipped there and `CLAUDE.md` in that folder carries the standing
@@ -87,7 +92,7 @@ laptop and wrong for the internet. Fixing it is most of this task.
 | Job records | **Firestore** (Native mode), collection `reviews` |
 | Uploads and outputs | **Cloud Storage**, one bucket, lifecycle delete at 30 days |
 | Auth | **Firebase Authentication**, Google provider, server-side email allowlist |
-| Domain | **Firebase Hosting** at `review.omniflexfitness.com`, `/api/**` rewriting to Cloud Run |
+| Domain | **Firebase Hosting** at `fbc.omniflexfitness.com`, `/api/**` rewriting to Cloud Run |
 | CI/CD | GitHub Actions → Artifact Registry → Cloud Run, via Workload Identity Federation |
 | Registry | Artifact Registry, `us-east1-docker.pkg.dev` |
 
@@ -422,13 +427,13 @@ not reactively.
 
 2. `ng build`, then `firebase deploy --only hosting`. Confirm the default `*.web.app`
    URL works end to end **before** touching DNS.
-3. Add the custom domain `review.omniflexfitness.com` in the Firebase Hosting console.
+3. Add the custom domain `fbc.omniflexfitness.com` in the Firebase Hosting console.
    **Print the exact DNS records for Bertin to paste into the registrar himself** — record
    type, host, value, TTL — and wait. Do not ask for registrar credentials and do not
    attempt to edit DNS.
 4. After propagation, confirm: HTTPS certificate valid, HTTP redirects to HTTPS, the
    sign-in flow completes, an upload runs, and the signed download URL resolves.
-5. Add `review.omniflexfitness.com` to Firebase Auth's authorized domains, or Google
+5. Add `fbc.omniflexfitness.com` to Firebase Auth's authorized domains, or Google
    sign-in will fail on the custom domain while working on `*.web.app`. This bites everyone
    once.
 

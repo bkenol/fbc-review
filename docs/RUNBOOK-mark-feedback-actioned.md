@@ -31,12 +31,12 @@ of 2026-09-07, not recalled. Where a value came from a file, the file is named.
 | Resulting state | `actioned` | `webapp/server.py` decision map |
 | Who may call it | an email in `FBC_OWNER_EMAILS` | `webapp/config.py:159` |
 
-> **Correction to something I said earlier.** I reported the service as unreachable.
-> That was wrong — I tested `review.omniflexfitness.com`, which is the hostname in
-> `CLAUDE.md`'s *Current task* line. The deployed host is `fbc.omniflexfitness.com`
-> (`docs/DEPLOYMENT.md`), and it answers fine from here. The only thing I actually
-> lack is an **owner ID token**. Worth reconciling those two hostnames in `CLAUDE.md`
-> at some point.
+> **Why this names the host it does.** The repository used to carry two names for
+> one service, and a session reported the deployment unreachable after testing the
+> wrong one. `fbc.omniflexfitness.com` is now settled as canonical in `CLAUDE.md`
+> and is the only name that has ever answered; nothing was ever built against the
+> other. If a command here fails, it is the credential, not the network — the host
+> responds `200` on `/healthz` without one.
 
 ---
 
