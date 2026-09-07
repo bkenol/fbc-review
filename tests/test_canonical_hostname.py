@@ -2,14 +2,21 @@
 
 The repository carried two hostnames for the deployed reviewer:
 `fbc.omniflexfitness.com`, which everything operational has always used and
-which is the only one that answers, and `review.omniflexfitness.com`, which
-appeared in `CLAUDE.md`'s task line and in the kickoff prompt and was never
-implemented anywhere.
+which is the only one that answers, and a second built on a `review.` prefix
+that appeared in `CLAUDE.md`'s task line and in the kickoff prompt and was
+never implemented anywhere.
 
 That cost real time: a session read the standing rules, tested the name they
 gave, got nothing, and reported the deployment unreachable when the only thing
 missing was a credential. `CLAUDE.md` now settles the name; this keeps it
 settled.
+
+This file never spells the retired name out. It scans every tracked file for
+it, and writing the literal here would make the scanner flag itself — which it
+did, in CI, on the first run. Assembling it instead keeps the check absolute:
+no tracked file carries that string, and the allowlist below stays about
+documents that explain the history rather than about the checker exempting
+itself.
 """
 from __future__ import annotations
 
@@ -21,7 +28,8 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 
 CANONICAL = "fbc.omniflexfitness.com"
-RETIRED = "review.omniflexfitness.com"
+#: Assembled, never written out — see the note in the module docstring.
+RETIRED = "review" + "." + "omniflexfitness.com"
 
 #: The two files allowed to name the retired host, and only to say it is retired.
 #: Both carry a note explaining the decision; a reader who meets the old name in
