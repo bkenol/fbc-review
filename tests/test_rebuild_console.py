@@ -286,3 +286,81 @@ def test_the_shortcut_and_the_console_look_for_the_same_browsers():
     py = CONSOLE.read_text(encoding="utf-8")
     for exe in ("chrome.exe", "msedge.exe", "brave.exe"):
         assert exe in py, exe
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# The Facts button
+# ══════════════════════════════════════════════════════════════════════════
+# Added because someone followed the runbook to find a Firebase ID token in
+# the Network tab, and there was no `Authorization` header to find: the
+# deployment was running with the sign-in bypass on, so nothing was asking for
+# one. "Which of those two worlds am I in" is the question that actually
+# blocks people, and it is not answerable from the browser.
+def _facts_lines(console, mode, tmp_path, port=8060):
+    console.log_clear()
+    original = console._auth_mode
+    console._auth_mode = lambda _port: mode
+    try:
+        console.facts(tmp_path, port)
+    finally:
+        console._auth_mode = original
+    return console.log_since(0)["lines"]
+
+
+def test_facts_says_there_is_no_token_when_sign_in_is_bypassed(console, tmp_path):
+    text = "\n".join(_facts_lines(console, {"known": True, "enforced": False}, tmp_path))
+    assert "no sign-in token to find" in text
+    assert "need no token" in text
+    # And the curl it offers must not carry an Authorization header, or it
+    # sends people looking for the thing that does not exist all over again.
+    assert "Authorization: Bearer" not in text
+
+
+def test_facts_warns_that_the_bypass_is_reachable_when_it_is_on(console, tmp_path):
+    """The bypass keys off K_SERVICE, which only Cloud Run sets. Served
+    through a tunnel from a workstation that signal is absent, so the guard
+    does not fire and the open service is on a public domain."""
+    text = "\n".join(_facts_lines(console, {"known": True, "enforced": False}, tmp_path))
+    assert "open to anyone" in text
+    assert "fbc.omniflexfitness.com" in text
+
+
+def test_facts_explains_how_to_get_a_token_when_sign_in_is_on(console, tmp_path):
+    text = "\n".join(_facts_lines(console, {"known": True, "enforced": True}, tmp_path))
+    assert "Authorization: Bearer" in text
+    assert "firebaseLocalStorageDb" in text
+    assert "one hour" in text
+
+
+def test_facts_says_so_rather_than_guessing_when_it_cannot_tell(console, tmp_path):
+    text = "\n".join(_facts_lines(
+        console, {"known": False, "why": "nothing is listening"}, tmp_path))
+    assert "Cannot tell" in text
+    # It must not fall through to either confident answer.
+    assert "no sign-in token to find" not in text
+
+
+def test_facts_never_prints_a_secret(console, tmp_path):
+    """Same rule `local_config` follows: names, never values. A credential on
+    screen is a credential in the screenshot somebody pastes into a chat."""
+    write(tmp_path, "FBC_SMTP_PASS=hunter2\nANTHROPIC_API_KEY=sk-ant-secret\n")
+    for mode in ({"known": True, "enforced": False}, {"known": True, "enforced": True}):
+        text = "\n".join(_facts_lines(console, mode, tmp_path))
+        assert "hunter2" not in text
+        assert "sk-ant-secret" not in text
+
+
+def test_facts_offers_the_decision_call_the_runbook_needs(console, tmp_path):
+    text = "\n".join(_facts_lines(console, {"known": True, "enforced": False}, tmp_path))
+    assert "/api/admin/feedback/PASTE_ID/decision" in text
+    assert '"decision": "action"' in text
+    # The trap that costs a round trip: accept 400s with no proposal attached.
+    assert "accept returns 400" in text
+
+
+def test_the_facts_button_is_wired_to_the_action(console):
+    source = CONSOLE.read_text(encoding="utf-8")
+    assert '<button id="facts"' in source
+    assert 'getElementById("facts").onclick' in source
+    assert 'run("facts")' in source
+    assert 'if action == "facts":' in source

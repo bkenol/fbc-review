@@ -47,7 +47,14 @@ of 2026-09-07, not recalled. Where a value came from a file, the file is named.
 `CLAUDE.md` prefers it. A row written any other way records a decision made by
 nobody at no time.
 
-### Step 1 — get an owner ID token
+> **Check which world you are in first.** Press **Facts** in the Rebuild Console.
+> If it reports sign-in **OFF**, this deployment is running the
+> `FBC_DEV_UNSAFE_AUTH` bypass: there is no token to find, no `Authorization`
+> header on any request, and the call below works without one. Step 1 only
+> applies when Facts reports sign-in **ON**. As of 2026-09-07 the live host is
+> in the first state — `GET /api/jobs` returns `200` unauthenticated.
+
+### Step 1 — get an owner ID token (only when sign-in is ON)
 
 Sign in at <https://fbc.omniflexfitness.com> with an account listed in
 `FBC_OWNER_EMAILS`. Then, easiest route, open DevTools → **Network**, click any
