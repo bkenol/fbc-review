@@ -964,9 +964,21 @@ def test_a_missing_code_table_needs_a_person(training_client):
 
 # ══ the marked-up pass ════════════════════════════════════════════════════
 def draw(client, job_id="job-1", **overrides):
+    """Draw one markup, defaulting to geometry that suits the shape.
+
+    An arrow and a freehand line are paths, and the API refuses one carrying no
+    points — a shape that marks nowhere cannot be acted on afterwards, which is
+    what feedback `6f65009d1762` arrived proving. Callers that care about the
+    geometry still pass their own; this only stops the default handing a
+    rectangle to a shape that is a line.
+    """
+    kind = overrides.get("kind", "box")
     body = {
         "page": 1, "kind": "box",
-        "geometry": {"x0": 10, "y0": 20, "x1": 90, "y1": 60, "points": []},
+        "geometry": ({"x0": 0, "y0": 0, "x1": 0, "y1": 0,
+                      "points": [[10.0, 20.0], [90.0, 60.0]]}
+                     if kind in ("arrow", "freehand") else
+                     {"x0": 10, "y0": 20, "x1": 90, "y1": 60, "points": []}),
         "comment": "", "colour": "", "sheet": "", "finding_fid": "",
     }
     body.update(overrides)

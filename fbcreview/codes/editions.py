@@ -44,7 +44,7 @@ class Edition:
 #: "on or about" in the sense that the Commission can move it, which is another
 #: reason it belongs here rather than in a rule.
 EDITIONS: List[Edition] = [
-    Edition("fbc2017", "7th", 2017, "2017 Florida Building Code, 6th Edition",
+    Edition("fbc2017", "6th", 2017, "2017 Florida Building Code, 6th Edition",
             _dt.date(2017, 12, 31), "IBC 2015"),
     Edition("fbc2020", "7th", 2020, "2020 Florida Building Code, 7th Edition",
             _dt.date(2020, 12, 31), "IBC 2018"),

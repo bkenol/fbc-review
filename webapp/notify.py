@@ -152,6 +152,54 @@ def summarise(record: Dict[str, Any]) -> str:
     )
 
 
+def _where(markup: Dict[str, Any]) -> str:
+    """A stored markup's geometry, in words somebody can go and look at.
+
+    The key is `geometry`, and it is a dict — `{x0, y0, x1, y1, points}` in PDF
+    user space. This read used to be `markup["rect"] or markup["points"]`, and a
+    stored markup has never carried either of those, so every escalation this
+    feature has ever sent said "no geometry" whatever the reviewer drew. A
+    report that cannot say where on the sheet it is about cannot be acted on,
+    which is the whole point of asking somebody to draw the box.
+
+    "no geometry" is still the honest answer for two cases and only two: a
+    `note`, which is defined as a pin carrying none, and a record written before
+    this was fixed. A degenerate rectangle at the origin is not rendered as a
+    location, because the origin is a place on the sheet and the markup was not
+    there.
+    """
+    geometry = markup.get("geometry") or {}
+    if not isinstance(geometry, dict):
+        return "no geometry"
+
+    points = geometry.get("points") or []
+    if points:
+        first, last = points[0], points[-1]
+        return (f"{len(points)} points from {_pt(first)} to {_pt(last)}"
+                if len(points) > 1 else f"a single point at {_pt(first)}")
+
+    try:
+        x0, y0 = float(geometry.get("x0", 0)), float(geometry.get("y0", 0))
+        x1, y1 = float(geometry.get("x1", 0)), float(geometry.get("y1", 0))
+    except (TypeError, ValueError):
+        return "no geometry"
+    if x0 == x1 and y0 == y1:
+        return "no geometry"
+    return f"({_n(x0)}, {_n(y0)}) to ({_n(x1)}, {_n(y1)})"
+
+
+def _n(value: float) -> str:
+    """A coordinate, without a trailing `.0` on a whole number of points."""
+    return f"{value:g}"
+
+
+def _pt(point: Any) -> str:
+    try:
+        return f"({_n(float(point[0]))}, {_n(float(point[1]))})"
+    except (TypeError, ValueError, IndexError):
+        return "(?, ?)"
+
+
 def feature_prompt(record: Dict[str, Any], job: Optional[Dict[str, Any]] = None) -> str:
     """Escalated feedback as a runnable prompt, in this repo's house style.
 
@@ -212,8 +260,7 @@ def feature_prompt(record: Dict[str, Any], job: Optional[Dict[str, Any]] = None)
             "### Where on the sheet",
             "",
             f"- **{markup.get('kind', 'markup')}** on page {markup.get('page', '?')} "
-            f"at {markup.get('rect') or markup.get('points') or 'no geometry'} "
-            "(PDF user space, origin top-left)",
+            f"at {_where(markup)} (PDF user space, origin top-left)",
             "",
         ]
 

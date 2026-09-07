@@ -363,7 +363,8 @@ MEP_AREA_TOTAL = sum(sf for _label, sf in MEP_AREA_ROWS)
 
 
 def mep_only(pages: int = 6, area_rows=None, stated_total: bool = False,
-             heading: str = "OCCUPANCY CALCULATION") -> bytes:
+             heading: str = "OCCUPANCY CALCULATION",
+             risk_category: str = "") -> bytes:
     """A mechanical/plumbing/electrical submittal with no architectural sheets.
 
     The case the declaration exists to cover, and the case where every read
@@ -391,6 +392,13 @@ def mep_only(pages: int = 6, area_rows=None, stated_total: bool = False,
             if stated_total:
                 page.insert_text((40, y), f"TOTAL   {sum(s for _l, s in rows):,} SQ. FT.",
                                  fontsize=9)
+                y += 15
+            if risk_category:
+                # An MEP cover sheet that carries the project's code summary,
+                # which is where this value lives on a single-discipline
+                # submittal. Default off: the sets already built on this
+                # fixture state no such thing, and they must not start to.
+                page.insert_text((40, y), f"RISK CATEGORY: {risk_category}", fontsize=9)
 
         _titleblock(page, code, title)
 

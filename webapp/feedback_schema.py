@@ -487,6 +487,43 @@ MARKUP_KINDS: Tuple[Tuple[str, str, str], ...] = (
     ("note", "Note", "A pin with no geometry, for a comment about the sheet itself."),
 )
 
+#: What each shape needs before it means anything.
+#:
+#: A `note` is defined above as a pin carrying no geometry, and `text` is a
+#: label placed by its own anchor; every other shape is a place on the sheet and
+#: is worthless without one. `MarkupGeometry` defaults all four coordinates to
+#: zero, so without this a `box` drawn with no drag at all stored cleanly as a
+#: rectangle of zero area at the origin — a markup that points nowhere while
+#: satisfying every check that asks whether one exists, including the one
+#: `/feedback` runs to insist a coverage report says where the miss was.
+MARKUP_NEEDS_REGION = frozenset({"highlight", "box", "cloud", "strikeout"})
+MARKUP_NEEDS_PATH = frozenset({"arrow", "freehand"})
+
+
+def geometry_complaint(kind: str, geometry: Dict[str, Any]) -> str:
+    """Why this shape's geometry is unusable, or an empty string when it is fine.
+
+    Returned as prose rather than a bool because the person hits this while
+    drawing, and "invalid geometry" does not tell them what to do differently.
+    """
+    geometry = geometry or {}
+    points = geometry.get("points") or []
+
+    if kind in MARKUP_NEEDS_PATH:
+        if len(points) < 2:
+            return (f"A {kind} is a path and needs at least two points. "
+                    "Drag on the sheet to draw one.")
+        return ""
+
+    if kind in MARKUP_NEEDS_REGION:
+        x0, y0 = geometry.get("x0") or 0, geometry.get("y0") or 0
+        x1, y1 = geometry.get("x1") or 0, geometry.get("y1") or 0
+        if x0 == x1 or y0 == y1:
+            return (f"A {kind} marks a region and this one has no area. "
+                    "Drag across the part of the sheet you mean.")
+    return ""
+
+
 #: What a colour means, rather than a paint box.
 #:
 #: A palette of twenty swatches gets used as decoration and tells the person
