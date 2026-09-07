@@ -205,12 +205,28 @@ def build_facts(path: str) -> ProjectFacts:
     # searched across the general sheets independently, exactly as the two
     # fixed sheets used to supply them.
     general = [s for s in facts.sheets if _series(s.code).endswith("G")]
+    # Recorded so a rule can tell "searched the general sheets and they do not
+    # state it" from "this submittal has no general sheet to search". Those are
+    # different answers and a reader has to be able to act on the difference.
+    facts.meta["has_general_sheets"] = bool(general)
+
     facts.meta["area_g0_sf"] = _first_match(
         general, text, r"AREA:?\s*([\d,]+)\s*SF", cast=_comma_float)
     facts.meta["area_g1_sf"] = _first_match(
         general, text, r"TOTAL\s+([\d,]+)\s*SF", cast=_comma_float)
+    # Unlike the two above, this phrase identifies itself. `AREA: 400 SF` on a
+    # mechanical sheet is as likely to be a zone as the building, and a wrong
+    # building area feeds the occupant load, Table 506 and the cross-sheet
+    # check — so those two stay scoped until the lexicon work of
+    # `docs/FEATURE-PROMPT-inference-ladder.md` §4 can widen them safely.
+    # `RISK CATEGORY:` cannot be mistaken for anything else, and on a
+    # single-discipline submittal it is written on whichever sheet carries the
+    # code summary. General sheets still win, so a set that has them is read
+    # exactly as it was before.
     facts.meta["risk_category"] = _first_match(
-        general, text, r"RISK\s*CATEGORY:?\s*(I{1,3}V?|\d)")
+        general, text, r"RISK\s*CATEGORY:?\s*(I{1,3}V?|\d)"
+    ) or _first_match(
+        facts.sheets, text, r"RISK\s*CATEGORY:?\s*(I{1,3}V?|\d)")
     for key in ("area_g0_sf", "area_g1_sf", "risk_category"):
         if facts.meta[key] is None:
             del facts.meta[key]

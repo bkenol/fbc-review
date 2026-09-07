@@ -155,3 +155,82 @@ def test_a_coverage_report_cannot_point_at_a_zero_area_box(training_client):
         "geometry": {"x0": 40, "y0": 40, "x1": 40, "y1": 40, "points": []},
     })
     assert r.status_code == 400, r.text
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 3. An abstention may not claim a search that never ran
+# ══════════════════════════════════════════════════════════════════════════
+# `CLAUDE.md`: "not checked" must never become indistinguishable from "checked
+# and passed". A submittal with no general sheets hits the sharper version of
+# the same fault — three reads in `pipeline.py` are scoped to the general
+# series, `general` comes back empty, the search never executes, and
+# `XSHEET.BUILDING_AREA` then reports "building area not found on both general
+# sheets" about a set that has no general sheet to find it on.
+def _mep_facts():
+    import tempfile
+    from fbcreview.pipeline import build_facts
+    from fixtures.permit_sets import mep_only
+
+    path = Path(tempfile.mkdtemp()) / "mep.pdf"
+    path.write_bytes(mep_only())
+    return build_facts(str(path))
+
+
+def test_the_mep_fixture_really_has_no_general_series():
+    """The premise of everything below."""
+    facts = _mep_facts()
+    assert facts.sheets, "the fixture built no sheets"
+    assert not [s for s in facts.sheets if s.code.upper().startswith("G")]
+
+
+def test_an_abstention_does_not_claim_general_sheets_a_set_does_not_have():
+    from fbcreview.rules import run_all
+
+    facts = _mep_facts()
+    res = run_all(facts, None, None)
+    area = [a for a in res.abstentions if a.rule_id == "XSHEET.BUILDING_AREA"]
+    assert len(area) == 1
+    reason = area[0].reason.lower()
+    assert "not found on both general sheets" not in reason, (
+        "the reason claims a search across sheets this set does not contain"
+    )
+    assert "general" in reason and (
+        "no general" in reason or "without" in reason or "carries none" in reason
+    ), f"the reason should say the set has no general sheets: {area[0].reason!r}"
+
+
+def test_a_risk_category_stated_on_an_mep_sheet_is_read():
+    """"It abstained, but the data is right here."
+
+    `RISK CATEGORY:` labels itself, so a hit anywhere in the set means the same
+    thing it means on a general sheet. Scoping the read to a series this
+    submittal does not have meant the phrase was never looked for at all.
+    """
+    import tempfile
+    from fbcreview.pipeline import build_facts
+    from fixtures.permit_sets import mep_only
+
+    path = Path(tempfile.mkdtemp()) / "mep-rc.pdf"
+    path.write_bytes(mep_only(risk_category="II"))
+    facts = build_facts(str(path))
+    assert facts.meta.get("risk_category") == "II"
+
+
+def test_a_loose_area_phrase_is_not_widened_with_it():
+    """The other two reads stay scoped on purpose.
+
+    `AREA: 400 SF` is not self-identifying — on a mechanical sheet it is as
+    likely to be a zone as the building — and a wrong building area feeds the
+    occupant load, Table 506 and the cross-sheet check. Abstaining is the
+    honest answer for those until the lexicon work lands; what must not happen
+    is abstaining while claiming to have looked.
+    """
+    import tempfile
+    from fbcreview.pipeline import build_facts
+    from fixtures.permit_sets import mep_only
+
+    path = Path(tempfile.mkdtemp()) / "mep-area.pdf"
+    path.write_bytes(mep_only(stated_total=True))
+    facts = build_facts(str(path))
+    assert facts.meta.get("area_g0_sf") is None
+    assert facts.meta.get("area_g1_sf") is None

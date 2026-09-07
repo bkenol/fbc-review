@@ -37,8 +37,17 @@ def _area_pair(f: ProjectFacts):
 def area_agreement(f: ProjectFacts, out: RuleResult):
     a, b, la, lb, drawn_only, basis = _area_pair(f)
     if a is None or b is None:
-        out.abstentions.append(Abstention("XSHEET.BUILDING_AREA",
-                                          "building area not found on both general sheets"))
+        # Naming the general sheets is only honest when the set has some. A
+        # single-discipline submittal has none, the two reads in `pipeline.py`
+        # never execute, and reporting "not found on both general sheets" would
+        # describe a search that did not happen — the same fault as letting
+        # "not checked" read as "checked and passed".
+        out.abstentions.append(Abstention(
+            "XSHEET.BUILDING_AREA",
+            "building area not found on both general sheets"
+            if f.meta.get("has_general_sheets", True) else
+            "this submittal carries no general sheets, so neither area was read "
+            "from one; declare the building area to have this checked"))
         return
     diff = abs(a - b)
     if diff > 1:
