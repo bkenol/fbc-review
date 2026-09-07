@@ -85,10 +85,29 @@ _OCCUPANCY_WORDS = {
     "INSTITUTIONAL": "I", "UTILITY": "U", "HAZARDOUS": "H",
 }
 
-_EDITION_WORDS = {
-    "7TH": "fbc2020", "SEVENTH": "fbc2020", "2020": "fbc2020",
-    "8TH": "fbc2023", "EIGHTH": "fbc2023", "2023": "fbc2023",
-    "9TH": "fbc2026", "NINTH": "fbc2026", "2026": "fbc2026",
+# Between them these two cover every edition `fbcreview.codes.editions` carries a
+# row for. The structured extractor (`extract.formblocks.edition_from`) reads the
+# same set off the code data block; a set states its edition once, so which of the
+# two readers happens to see it must not decide whether the rule can answer. A
+# missing entry here does not degrade gracefully — the sweep captures `6TH
+# EDITION` off the sheet, fails to normalise it, drops it, and the rule abstains
+# with "the set does not state this" about a line printed on G-001.
+
+#: How a sheet names the edition itself. An ordinal is a statement *about the
+#: building code*, so it is read before any year.
+_EDITION_ORDINALS = {
+    "6TH": "fbc2017", "SIXTH": "fbc2017",
+    "7TH": "fbc2020", "SEVENTH": "fbc2020",
+    "8TH": "fbc2023", "EIGHTH": "fbc2023",
+    "9TH": "fbc2026", "NINTH": "fbc2026",
+}
+
+#: The same editions by year. Weaker evidence: a permit set lists several codes
+#: on one line — `FBC 7TH EDITION (2020)` beside `NEC 2017` — and a bare year
+#: may belong to any of them.
+_EDITION_YEARS = {
+    "2017": "fbc2017", "2020": "fbc2020",
+    "2023": "fbc2023", "2026": "fbc2026",
 }
 
 #: Sprinkler standards, canonicalised. `YES` is what a drawing says when it
@@ -231,10 +250,16 @@ def norm_edition(value: Any) -> Optional[str]:
     text = str(value).strip().upper()
     m = re.search(r"FBC\s*(20\d\d)", text) or re.match(r"^(20\d\d)$", text)
     if m:
-        return _EDITION_WORDS.get(m.group(1), f"fbc{m.group(1)}")
-    for word, edition in _EDITION_WORDS.items():
-        if re.search(rf"\b{word}\b", text):
-            return edition
+        # An edition the corpus has no row for still resolves to a key, so the
+        # rule can abstain on "no effective date for that edition" rather than
+        # on "the set does not state this". Those are different answers.
+        return _EDITION_YEARS.get(m.group(1), f"fbc{m.group(1)}")
+    # Ordinals before years, and never in dictionary order: which key a dict
+    # happens to yield first is not a reason to prefer one reading of a sheet.
+    for lexicon in (_EDITION_ORDINALS, _EDITION_YEARS):
+        for word, edition in lexicon.items():
+            if re.search(rf"\b{word}\b", text):
+                return edition
     return None
 
 

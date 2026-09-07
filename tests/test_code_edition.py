@@ -6,13 +6,23 @@ A confirmation is evidence, so it is written down as a gate rather than filed �
 the sentences the reviewer read and agreed with are the ones a later refinement
 must not quietly change.
 
-Reproducing it also turned up something the reviewer was not looking at:
-`fbcreview/codes/editions.py` gave `fbc2017` the ordinal `7th`, which is the 2020
-code's. The rule prints `cited.ordinal` into its result and `cited.label` into
-its title, so a 6th Edition set produced a finding whose title said *2017 Florida
-Building Code, 6th Edition* and whose result said *Every code reference in this
-set is 7th Edition (2017)* — a finding contradicting itself in adjacent
-sentences, in the same paragraph the reviewer had just confirmed.
+Reproducing it turned up three things the reviewer was not looking at, all in
+the neighbourhood of the confirmed rule:
+
+* `fbcreview/codes/editions.py` gave `fbc2017` the ordinal `7th`, which is the
+  2020 code's. The rule prints `cited.ordinal` into its result and `cited.label`
+  into its title, so a 6th Edition set produced a finding titled *2017 Florida
+  Building Code, 6th Edition* whose result read *Every code reference in this
+  set is 7th Edition (2017)* — contradicting itself in adjacent sentences.
+* `reconcile`'s edition lexicon had no `6TH`, so the live-text sweep captured
+  `6TH EDITION` off the sheet, failed to normalise it, and dropped it. The rule
+  then abstained with "the set does not state this" about an edition printed on
+  the cover sheet — and the structured extractor, which maps `6` to `fbc2017`
+  perfectly well, disagreed with the sweep about whether that edition exists.
+* `norm_edition` read its lexicon in dictionary order, so whether an ordinal or
+  a bare year won was decided by insertion order rather than by which is better
+  evidence. A permit set names several codes on one line, and only the ordinal
+  is a statement about the building code.
 """
 from __future__ import annotations
 
@@ -26,7 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fbcreview.codes import editions as E
 from fbcreview.declaration import ProjectDeclaration
+from fbcreview.extract.formblocks import edition_from
 from fbcreview.pipeline import build_facts
+from fbcreview.reconcile import norm_edition
 from fbcreview.rules import run_all
 from fixtures.permit_sets import ITEC_DECLARATION, itec
 
@@ -141,3 +153,61 @@ def test_the_sixth_edition_is_the_2017_code():
     assert sixth.ordinal == "6th"
     assert sixth.year == 2017
     assert sixth.effective == dt.date(2017, 12, 31)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 3. The two readers of an edition have to agree it exists
+# ══════════════════════════════════════════════════════════════════════════
+def _words(text):
+    """A `Sequence[Word]` shaped the way `edition_from` reads it."""
+    return [(0.0, 0.0, 1.0, 1.0, text, 0, 0, 0)]
+
+
+@pytest.mark.parametrize("ordinal,key", [
+    ("6TH", "fbc2017"),
+    ("7TH", "fbc2020"),
+    ("8TH", "fbc2023"),
+    ("9TH", "fbc2026"),
+])
+def test_both_readers_resolve_the_same_edition(ordinal, key):
+    """`extract.formblocks.edition_from` reads a structured code block and
+    `reconcile.norm_edition` reads the live-text sweep. A set states its edition
+    once; which of the two happens to see it must not decide whether the rule
+    can answer."""
+    stated = f"FLORIDA BUILDING CODE {ordinal} EDITION"
+    assert edition_from(_words(stated)) == key
+    assert norm_edition(f"{ordinal} EDITION") == key
+
+
+def test_the_sweep_reads_a_sixth_edition_off_the_sheet():
+    """The captured group the `code_edition` pattern hands to the normaliser.
+    Dropping it made the rule abstain with "the set does not state this" about
+    an edition printed on the cover sheet."""
+    assert norm_edition("6TH EDITION") == "fbc2017"
+    assert norm_edition("SIXTH EDITION") == "fbc2017"
+    assert norm_edition("FBC 2017") == "fbc2017"
+
+
+def test_every_edition_a_reader_can_produce_is_in_the_corpus():
+    """A key either reader can return, that the corpus has no row for, makes the
+    rule abstain on "no effective date for that edition" — an honest answer, but
+    one nobody can act on. Keep the three in step."""
+    for ordinal in ("6TH", "7TH", "8TH", "9TH"):
+        key = edition_from(_words(f"FLORIDA BUILDING CODE {ordinal} EDITION"))
+        assert key is not None
+        assert E.edition(key) is not None, f"{ordinal}: no corpus row for {key}"
+
+
+def test_an_ordinal_beats_a_bare_year_from_another_code():
+    """A permit set names several codes on one line — `FBC 7TH EDITION (2020)`
+    beside `NEC 2017`. The ordinal is a statement about the building code; a
+    bare year on the same line may belong to any of the others. Reading them in
+    dictionary order made the answer depend on which key happened to be first."""
+    assert norm_edition("7TH EDITION (2020) NEC 2017") == "fbc2020"
+    assert norm_edition("FLORIDA BUILDING CODE 8TH EDITION / NEC 2017") == "fbc2023"
+    assert norm_edition("6TH EDITION, NEC 2020") == "fbc2017"
+
+
+def test_a_year_still_answers_when_no_ordinal_does():
+    assert norm_edition("FLORIDA BUILDING CODE 2023") == "fbc2023"
+    assert norm_edition("2017") == "fbc2017"
