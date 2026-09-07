@@ -2,6 +2,10 @@
 
 Every value the service reads is declared here so `DEPLOYMENT.md` can enumerate
 them without grepping. Nothing in this module touches the network.
+
+`secrets/local.env` is folded in first, where it exists — see `webapp.envfile`
+for what that is and why anything already set beats it. On Cloud Run there is
+no such file and this behaves exactly as it did before it existed.
 """
 from __future__ import annotations
 
@@ -9,6 +13,8 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import FrozenSet
+
+from webapp import envfile
 
 
 def _emails(name: str) -> FrozenSet[str]:
@@ -120,6 +126,13 @@ class Settings:
 
 @lru_cache(maxsize=1)
 def settings() -> Settings:
+    # Before anything is read, not at import: this is the one function every
+    # value in the service comes through, so doing it here means no module can
+    # be imported in an order that reads a variable before the file is folded
+    # in. It is a no-op when the file is absent, which is every deployment
+    # that is not somebody's own machine.
+    envfile.load()
+
     # Cloud Run always sets K_SERVICE. It is the one signal that cannot be
     # faked by a stray .env, which is why the dev auth bypass keys off it.
     on_cloud_run = bool(os.environ.get("K_SERVICE"))

@@ -98,13 +98,35 @@ def configured() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
+def workspace() -> str:
+    """Which workspace a request acts in, when the key needs to be told.
+
+    Anthropic issues two kinds of key. A **workspace key** is bound to one
+    workspace and needs nothing else. An **identity-linked key** belongs to the
+    person or service account that made it, can act in more than one workspace,
+    and so will not act at all until the request names one — the API answers
+
+        anthropic-workspace-id is required when authenticating with an
+        identity-linked API key
+
+    with a 400. The SDK sends that header for a credentials-file profile and
+    never for a key read out of the environment, which is how this service
+    authenticates, so it has to be supplied here.
+
+    Unset is correct for a workspace key and harmless for anything else: the
+    header is simply not sent.
+    """
+    return os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
+
+
 def status() -> str:
     if not configured():
         return (
             "not configured — set ANTHROPIC_API_KEY to have free-text comments "
             "summarised before they reach the queue"
         )
-    return f"{MODEL}, feedback path only"
+    where = f", workspace {workspace()}" if workspace() else ""
+    return f"{MODEL}, feedback path only{where}"
 
 
 def _catalogue() -> str:
@@ -156,10 +178,21 @@ def read_comment(
     context.append(f"The taxonomy you must choose from:\n{_catalogue()}")
 
     try:
-        client = anthropic.Anthropic()
+        # A workspace is named through a default header rather than a
+        # constructor argument because the SDK has no parameter for it: the
+        # header is assembled from a credentials-file profile, and this service
+        # authenticates from the environment, which skips that path entirely.
+        headers = {"anthropic-workspace-id": workspace()} if workspace() else {}
+        client = anthropic.Anthropic(default_headers=headers)
         response = client.messages.parse(
             model=MODEL,
-            max_tokens=2000,
+            # Room for the thinking as well as the answer. Adaptive thinking
+            # spends this budget too, and an opinion that hits the cap comes
+            # back unparsed — which this function reports as "no summary",
+            # indistinguishable from having no key at all. A ceiling that
+            # cannot be reached costs nothing: the bill is what was generated,
+            # and the answer is four short fields.
+            max_tokens=16000,
             system=_SYSTEM,
             thinking={"type": "adaptive"},
             output_config={"effort": "medium"},

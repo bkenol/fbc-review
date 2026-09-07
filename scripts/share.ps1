@@ -243,6 +243,20 @@ try {
         if ($owners) { $runArgs += @('-e', "FBC_OWNER_EMAILS=$owners") }
     }
 
+    # ── mail, the comment assist, and issues ──────────────────────
+    # One git-ignored file rather than five environment variables set per
+    # shell, because a missed one fails silently: mail and the assist are both
+    # inert without their keys and neither says so anywhere but /admin. Docker
+    # parses it itself, which is why webapp/envfile.py deliberately does not
+    # parse it any more cleverly - see the note there about quotes.
+    #
+    # Every -e above still wins: docker gives --env argument precedence over
+    # --env-file whatever the order on the command line, so this can never
+    # quietly take over FBC_BACKEND or the dev auth bypass.
+    $envFile = Join-Path $repo 'secrets\local.env'
+    $configured = Test-Path $envFile
+    if ($configured) { $runArgs += @('--env-file', $envFile) }
+
     if ($version) { $runArgs += @('-e', "FBC_VERSION=$version") }
     $runArgs += 'fbc-review:dev'
 
@@ -271,6 +285,14 @@ try {
         Write-Host '  Training mode: off' -ForegroundColor DarkGray
     } else {
         Write-Host '  Training mode: on (-NoTraining turns it off)' -ForegroundColor Green
+    }
+    if ($configured) {
+        Write-Host '  Local configuration: secrets\local.env' -ForegroundColor Green
+        Write-Host '  What is actually live is on /admin - mail and the comment assist' -ForegroundColor DarkGray
+        Write-Host '  both stay inert, quietly, when their keys are missing.' -ForegroundColor DarkGray
+    } else {
+        Write-Host '  Local configuration: none (mail and the comment assist are off)' -ForegroundColor DarkGray
+        Write-Host '  Turn them on with:  powershell -File scripts\setup-secrets.ps1' -ForegroundColor DarkGray
     }
     Write-Host ''
     Write-Host "  Upload limit: $MaxUploadMb MB" -ForegroundColor DarkGray

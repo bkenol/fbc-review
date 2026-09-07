@@ -42,6 +42,8 @@ export class TrainingService {
   private readonly _export = signal<MarkupExport | null>(null);
 
   private readonly _queue = signal<Feedback[]>([]);
+  private readonly _state = signal('new');
+  private readonly _disposition = signal('');
   private readonly _overview = signal<AdminOverview | null>(null);
   private readonly _calibration = signal<CalibrationView | null>(null);
   private readonly _prompt = signal<PromptExport | null>(null);
@@ -57,6 +59,9 @@ export class TrainingService {
   readonly markupExport = this._export.asReadonly();
 
   readonly queue = this._queue.asReadonly();
+  /** Which state the queue is showing, and which disposition within it. */
+  readonly queueState = this._state.asReadonly();
+  readonly queueDisposition = this._disposition.asReadonly();
   readonly overview = this._overview.asReadonly();
   readonly calibration = this._calibration.asReadonly();
   readonly prompt = this._prompt.asReadonly();
@@ -184,9 +189,19 @@ export class TrainingService {
   }
 
   // ── the owner's queue ───────────────────────────────────────────────────
-  loadQueue(state = 'new'): void {
+  /**
+   * Load the queue, and remember what it is showing.
+   *
+   * The two filters live here rather than in the component because two places
+   * drive them: the queue's own controls, and the counts above it, which are
+   * the reason a disposition filter exists at all. A component-local signal
+   * would leave the pressed state saying one thing and the rows another.
+   */
+  loadQueue(state = 'new', disposition = ''): void {
     this._busy.set(true);
-    this.admin.adminListFeedback(state || undefined).subscribe({
+    this._state.set(state);
+    this._disposition.set(disposition);
+    this.admin.adminListFeedback(state || undefined, disposition || undefined).subscribe({
       next: (page) => {
         this._queue.set(page.feedback);
         this._busy.set(false);

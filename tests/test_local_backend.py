@@ -245,3 +245,26 @@ def test_the_artefact_route_is_absent_on_the_gcp_backend(client):
     """There the browser fetches from Cloud Storage and never asks us."""
     response = client.get("/api/artefacts/outputs/job-1/findings.json")
     assert response.status_code == 404
+
+
+# ══ the two stores stay the same shape ════════════════════════════════════
+def test_both_job_stores_accept_the_same_create_arguments():
+    """`webapp.devbackend.LocalJobStore` mirrors `webapp.jobs.JobStore`, and the
+    mirroring is by hand — there is no shared base class, deliberately, because
+    the Firestore one has no business importing a filesystem stand-in.
+
+    That makes drift silent and expensive. A field added to the Firestore store
+    and not to this one is a `TypeError` raised by the *filesystem* deployment
+    only, which is the one nobody runs the suite against — this is exactly how
+    `rerun_of` shipped broken to a local instance while every unit test passed
+    against a double that had been updated.
+    """
+    import inspect
+
+    from webapp.devbackend import LocalJobStore
+    from webapp.jobs import JobStore
+
+    def names(cls):
+        return set(inspect.signature(cls.create).parameters) - {"self"}
+
+    assert names(LocalJobStore) == names(JobStore)

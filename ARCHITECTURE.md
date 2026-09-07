@@ -66,8 +66,9 @@ more than writing a compiler repeats per compilation.
 Everything here is already in this repo and already runs.
 
 - **Scale resolution.** Two independent sources (`/Measure` viewport dictionaries and the
-  printed `1/4" = 1'-0"` labels), intersected. See §3 — this one is more interesting than
-  it looks.
+  printed `1/4" = 1'-0"` labels), intersected — per view on a sheet that carries several
+  drawings at several scales, which is most of them. See §3 — this one is more interesting
+  than it looks.
 - **Geometry.** Layer-filtered path extraction off the preserved CAD layers, polyline
   length in feet. The four measured egress paths.
 - **Schedule extraction.** `find_tables` recovers the door schedule, RTU schedule, panel
@@ -132,13 +133,33 @@ if len(labels) == 1 and any(close(m, labels[0]) for m in meas):
     return Evidence(labels[0], confidence=HIGH)     # two sources agree
 if len(labels) == 1:
     return Evidence(labels[0], confidence=MEDIUM)   # one source only
-return Evidence.abstain(...)                        # several scales, no way to attribute
+return Evidence.abstain(...), page_views(doc, page)  # several scales: ask per view
 ```
 
-On the test set that resolves 13 of 24 pages, 12 at high confidence, and abstains on the
-detail sheets that print several scales at once. **Abstaining on 11 pages is the correct
-answer**, not a failure — those pages get no geometric rules rather than measurements at a
-guessed scale.
+On the test set that resolves 13 of 24 pages, 12 at high confidence. **Abstaining on the
+other 11 was the correct answer**, not a failure — those pages got no geometric rules
+rather than measurements at a guessed scale.
+
+But it was not the *complete* answer, and the eleven are the sheets carrying the most
+geometry. A sheet printing three scales is not a sheet missing one: it is a floor plan at
+1/4", an enlarged restroom at 1/2" and a wall section at 1-1/2", three true scales on one
+page. `extract/views.py` segments the page's linework into views — a coarse occupancy
+grid, dilated by the gap that reads as "still the same drawing", then flood-filled — and
+each printed label is attributed to the view it sits under. A view then carries its own
+scale, and `PageGeometry.scale_for(rect)` answers *which* scale governs a given piece of
+geometry.
+
+The abstention did not weaken; it moved down a level and got more specific. A view no
+label claims still abstains, a view two labels claim still abstains, and geometry spanning
+two views abstains rather than picking one of them — because that geometry is drawn at two
+scales and no single conversion is true of it. The number is always the one printed on the
+sheet. What is inferred is only which region it applies to, and every `Evidence.source`
+says which view it was attributed to so the claim can be checked against the drawing.
+
+The cross-check got sharper too. Page-wide, "some viewport agrees" is weak evidence when
+the page declares 23 factors. Per-view, the question is whether a viewport *covering this
+view* agrees — two independent sources about the same region, which is what HIGH was
+supposed to mean.
 
 Generalise the lesson: **key everything on the most stable token available.** Code data
 blocks are keyed by the cited section number, not the label text, because labels wrap and

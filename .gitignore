@@ -6,8 +6,14 @@ venv/
 .pytest_cache/
 *.egg-info/
 
-# Secrets — never commit
-secrets/
+# Secrets — never commit.
+# The directory is excluded by contents rather than as a whole: git cannot
+# re-include a file whose parent directory is excluded, and the template and
+# the README have to be committable for the variable names to live in the
+# repository rather than in somebody's head.
+secrets/*
+!secrets/README.md
+!secrets/*.example
 *firebase-sa*.json
 .env
 .env.*

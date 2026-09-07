@@ -92,22 +92,40 @@ def _rows(page: pymupdf.Page, region: pymupdf.Rect, band: float = 5.0
 _WINDOW_W, _WINDOW_H, _WINDOW_PAD = 620 / 1224, 260 / 792, 130 / 1224
 
 
-def code_data_block(doc: pymupdf.Document, pno: int, header: str, sheet: str,
-                    width: Optional[float] = None, height: Optional[float] = None,
-                    left_pad: Optional[float] = None) -> List[CodeDatum]:
-    """Extract every `LABEL (section): required provided` row under `header`."""
-    page = doc[pno]
+def block_region(page: pymupdf.Page, header: str,
+                 width: Optional[float] = None, height: Optional[float] = None,
+                 left_pad: Optional[float] = None, anchor: str = "lowest"
+                 ) -> Optional[pymupdf.Rect]:
+    """The search window under a block header, or None when the sheet has none.
+
+    Shared so that two parsers reading the same block read the same rectangle:
+    `code_data_block` wants the cited rows and `formblocks.form_block` wants the
+    bare `LABEL: value` ones, and a sheet may carry both. `anchor` picks which
+    occurrence of the header to hang the window on — "lowest" is the data block
+    rather than a table-of-contents mention of it, "first" is the reading-order
+    occurrence `labelled_values` has always used.
+    """
     hits = page.search_for(header)
     if not hits:
-        return []
+        return None
     if width is None:
         width = page.rect.width * _WINDOW_W
     if height is None:
         height = page.rect.height * _WINDOW_H
     if left_pad is None:
         left_pad = page.rect.width * _WINDOW_PAD
-    a = max(hits, key=lambda r: r.y0)          # the data block, not a TOC mention
-    region = pymupdf.Rect(a.x0 - left_pad, a.y0, a.x0 + width, a.y0 + height)
+    a = max(hits, key=lambda r: r.y0) if anchor == "lowest" else hits[0]
+    return pymupdf.Rect(a.x0 - left_pad, a.y0, a.x0 + width, a.y0 + height)
+
+
+def code_data_block(doc: pymupdf.Document, pno: int, header: str, sheet: str,
+                    width: Optional[float] = None, height: Optional[float] = None,
+                    left_pad: Optional[float] = None) -> List[CodeDatum]:
+    """Extract every `LABEL (section): required provided` row under `header`."""
+    page = doc[pno]
+    region = block_region(page, header, width, height, left_pad, anchor="lowest")
+    if region is None:
+        return []
     out: List[CodeDatum] = []
     for _y, row in _rows(page, region):
         line = " ".join(t for _x, t in row)
@@ -164,17 +182,14 @@ def labelled_values(doc: pymupdf.Document, pno: int, header: str,
     """`LABEL  value` rows under a block header, for blocks that carry no
     section citations (BUILDING CODE ANALYSIS, PROJECT DATA and friends)."""
     page = doc[pno]
-    hits = page.search_for(header)
-    if not hits:
+    region = block_region(
+        page, header,
+        width if width is not None else page.rect.width * (340 / 1224),
+        height if height is not None else page.rect.height * (300 / 792),
+        left_pad if left_pad is not None else page.rect.width * (12 / 1224),
+        anchor="first")
+    if region is None:
         return {}
-    if width is None:
-        width = page.rect.width * (340 / 1224)
-    if height is None:
-        height = page.rect.height * (300 / 792)
-    if left_pad is None:
-        left_pad = page.rect.width * (12 / 1224)
-    a = hits[0]
-    region = pymupdf.Rect(a.x0 - left_pad, a.y0, a.x0 + width, a.y0 + height)
     out: Dict[str, str] = {}
     for _y, row in _rows(page, region):
         toks = [t for _x, t in row]

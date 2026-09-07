@@ -89,6 +89,35 @@ def test_summary_stays_well_under_the_firestore_document_limit():
     assert len(encoded) < 100 * 1024
 
 
+def test_summary_carries_a_sheet_for_every_page():
+    """The viewer's navigator labels sheets from this, so it has to cover the
+    whole set: a page with no entry is a page the navigator cannot name."""
+    store, files = FakeJobStore(), FakeStorage()
+    record = run_one(store, files, pages=3)
+
+    index = record["summary"]["sheet_index"]
+    assert [s["page"] for s in index] == [1, 2, 3]
+    assert all(s["code"] for s in index)
+
+
+def test_an_unreadable_sheet_number_says_so_rather_than_guessing():
+    """`fbcreview.extract.document` gives a sheet it could not identify the code
+    `p{n}`. That has to survive to the client as "not read" rather than as a
+    label that looks like the drawing's own name — a navigator captioned p7 with
+    no further comment is claiming the title block says p7."""
+    from fbcreview.facts import Sheet
+    from webapp.worker import sheet_index
+
+    index = sheet_index([
+        Sheet(index=0, code="M.001", title="MECHANICAL NOTES", discipline="M"),
+        Sheet(index=1, code="p2", title="", discipline=""),
+    ])
+
+    assert [s["code"] for s in index] == ["M.001", "p2"]
+    assert [s["read"] for s in index] == [True, False]
+    assert [s["page"] for s in index] == [1, 2]
+
+
 def test_stage_progression_is_reported():
     store, files = FakeJobStore(), FakeStorage()
     record = run_one(store, files)

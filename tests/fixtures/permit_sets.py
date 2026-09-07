@@ -285,3 +285,115 @@ DIVERGENCE_DECLARATION = {
 def divergent(raster_tables: bool = False) -> bytes:
     """A set whose declared construction type changes two Chapter 5 outcomes."""
     return itec(raster_tables=raster_tables, code_rows=DIVERGENCE_CODE_ROWS)
+
+
+# ── a sheet carrying several views, each at its own scale ─────────────────
+#: The layout of a real architectural sheet, and the one `extract/scale.py`
+#: could not read until views were segmented: a floor plan, an enlarged plan
+#: and a wall section on one page, each with its scale printed under its title.
+#: Three true scales, no page-wide one.
+MULTIVIEW_VIEWS = [
+    ((60, 60, 460, 380), "LIFE SAFETY PLAN", '1/4" = 1\'-0"', 18.0),
+    ((560, 60, 900, 300), "ENLARGED RESTROOM PLAN", '1/2" = 1\'-0"', 36.0),
+    ((60, 470, 420, 690), "WALL SECTION", '1 1/2" = 1\'-0"', 108.0),
+]
+
+
+def _view(page: pymupdf.Page, box, title: str, scale: str, rows: int = 14,
+          oc: int = 0) -> None:
+    """One view: a grid of linework with its title and scale printed beneath."""
+    x0, y0, x1, y1 = box
+    for n in range(rows):
+        page.draw_line((x0, y0 + n * (y1 - y0) / rows),
+                       (x1, y0 + n * (y1 - y0) / rows), width=0.6)
+        page.draw_line((x0 + n * (x1 - x0) / rows, y0),
+                       (x0 + n * (x1 - x0) / rows, y1), width=0.6)
+    if title:
+        page.insert_text((x0, y1 + 16), title, fontsize=9)
+    if scale:
+        page.insert_text((x0, y1 + 30), scale, fontsize=8)
+
+
+def multiview(views=None, rotate: int = 0, border: bool = True,
+              egress: tuple = None) -> bytes:
+    """A single sheet laid out as several separately-scaled views.
+
+    `egress` is a box in the same coordinates; when given, a dashed run is drawn
+    inside it on an optional-content group named "EGRESS PATH", which is the
+    layer `MEASURE.EGRESS_EXTENT` traces. Its length is chosen by the caller so
+    a test can assert the converted feet.
+    """
+    doc = pymupdf.open()
+    page = doc.new_page(width=1224, height=792)
+    if border:
+        # The sheet border abuts every view; left in the clustering it would
+        # join all of them into one.
+        page.draw_rect(pymupdf.Rect(18, 18, 1206, 774), color=(0, 0, 0), width=1.2)
+
+    for box, title, scale, _pt in (views or MULTIVIEW_VIEWS):
+        _view(page, box, title, scale)
+
+    if egress:
+        ocg = doc.add_ocg("EGRESS PATH", on=True)
+        ex0, ey, ex1, _ = egress
+        # Dashes, the way CAD plots an egress path — the rule merges them back.
+        # The gap stays inside r_geometry.JOIN_TOL, or they are not one run.
+        x = ex0
+        while x < ex1:
+            page.draw_line((x, ey), (min(x + 6, ex1), ey), width=1.4, oc=ocg)
+            x += 7
+
+    if rotate:
+        page.set_rotation(rotate)
+
+    buf = doc.tobytes()
+    doc.close()
+    return buf
+
+
+# ── an MEP-only submittal, the shape of SUB1-JSP_Naples ───────────────────
+#: The OCCUPANCY CALCULATION table on M.001. Reported through Refine analysis
+#: (feedback feac59646e6c) against the real set: no G-series sheet anywhere, no
+#: sheet phrasing an area as "BUILDING AREA: n SF", and these rows carrying the
+#: only areas the set states. DECL.BUILDING_AREA stood down saying "neither the
+#: drawings nor the declaration state this", which is false — the components are
+#: printed right there.
+MEP_AREA_ROWS = [("LOBBY/RECEPTION", 400), ("STUDIO AREA", 1300)]
+MEP_AREA_TOTAL = sum(sf for _label, sf in MEP_AREA_ROWS)
+
+
+def mep_only(pages: int = 6, area_rows=None, stated_total: bool = False,
+             heading: str = "OCCUPANCY CALCULATION") -> bytes:
+    """A mechanical/plumbing/electrical submittal with no architectural sheets.
+
+    The case the declaration exists to cover, and the case where every read
+    scoped to the general sheets finds nothing to read: there is no G series in
+    this set at all.
+    """
+    doc = pymupdf.open()
+    sheets = [("M.001", "MECHANICAL COVER"), ("M.101", "MECHANICAL PLAN"),
+              ("M.501", "MECHANICAL DETAILS"), ("P.101", "PLUMBING PLAN"),
+              ("E.101", "ELECTRICAL PLAN"), ("E.501", "PANEL SCHEDULE")][:pages]
+
+    rows = MEP_AREA_ROWS if area_rows is None else area_rows
+    for code, title in sheets:
+        page = doc.new_page(width=1224, height=792)
+        _linework(page)
+        page.insert_text((40, 545), "JSP NAPLES, FL   1/4\" = 1'-0\"", fontsize=8)
+
+        if code == "M.001":
+            y = 580
+            page.insert_text((40, y), heading, fontsize=9)
+            y += 15
+            for label, sf in rows:
+                page.insert_text((40, y), f"{label}   {sf:,} SQ. FT.", fontsize=9)
+                y += 15
+            if stated_total:
+                page.insert_text((40, y), f"TOTAL   {sum(s for _l, s in rows):,} SQ. FT.",
+                                 fontsize=9)
+
+        _titleblock(page, code, title)
+
+    buf = doc.tobytes()
+    doc.close()
+    return buf

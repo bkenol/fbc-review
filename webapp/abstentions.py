@@ -50,6 +50,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from fbcreview import declaration_schema
+
 # ── the classes ───────────────────────────────────────────────────────────
 #: A value the rule needed was not pulled off the set.  The commonest class by
 #: far, and the only one where the sheet may well state the answer.
@@ -228,6 +230,30 @@ def catalogue() -> List[Dict[str, Any]]:
     return [k.to_dict() for k in KIND_CATALOGUE]
 
 
+# ── which question would have let the rule run ────────────────────────────
+#: rule id → the declaration fields that name it in `unlocks`.
+#
+# Inverted from `fbcreview.declaration_schema` rather than written out, so a
+# field that gains a rule gains the offer here with no second list to update.
+# The schema already states the forward direction because the form uses it to
+# tell somebody what answering buys them; this is the same fact read from the
+# other end, at the point where the rule has already stood down.
+_UNLOCKED_BY: Dict[str, Tuple[str, ...]] = {}
+for _field in declaration_schema.FIELDS:
+    for _rule in _field.unlocks:
+        _UNLOCKED_BY[_rule] = _UNLOCKED_BY.get(_rule, ()) + (_field.key,)
+
+
+def unlocked_by(rule_id: str) -> List[str]:
+    """Declaration fields whose answer would let this rule run.
+
+    Empty for most rules, and empty is the honest answer: a geometric rule that
+    could not find its linework is not waiting on a questionnaire, and offering
+    one there would be a dead end dressed as a remedy.
+    """
+    return list(_UNLOCKED_BY.get((rule_id or "").strip().upper(), ()))
+
+
 # ── the corroborated inference ────────────────────────────────────────────
 #: How many abstentions for want of a value it takes before "the set does not
 #: say" stops being a plausible account of all of them at once.  One rule
@@ -298,6 +324,12 @@ def classify_all(
             found = EXTRACTION
         row["kind"] = found
         row["proposable"] = kind(found).proposable
+        # Which questions would let it run. Carried on every class, not only
+        # ABSENT: an extraction failure for want of a value is *also* answerable
+        # by stating the value, and telling somebody that only where the tool
+        # has already conceded the set is silent would withhold the cheaper
+        # remedy in exactly the case where it is most likely to work.
+        row["unlocked_by"] = unlocked_by(str(row.get("rule", "")))
         out.append(row)
     return out
 

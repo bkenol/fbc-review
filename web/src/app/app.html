@@ -1,7 +1,7 @@
 <!-- The header is the absolute overlay the system specifies: it sits over the
      top of the sheet rather than taking a band out of it, and it scrolls away.
      No fill, one hairline, no nav. -->
-<header class="masthead">
+<header class="masthead" [class.compact]="fullBleed()">
   <!-- The build sits beside the wordmark rather than inside it: the lockup is a
        link home, and a version number is not part of what you click. It says
        nothing at all until the API answers, because a wrong build number is
@@ -16,13 +16,29 @@
     }
   </div>
 
+  <!-- Navigation, and deliberately not part of the session line. It was set in
+       the same 12px label type as the signed-in address, so it read as status
+       rather than as somewhere to go and people did not find it. It is its own
+       element now, at its own size, with the current one marked.
+
+       One entry rather than two. Training and the feedback queue were separate
+       destinations, which described the permission — everyone may propose, one
+       person decides — by putting a navigation step in the middle of a single
+       loop. They are one page now; the queue is a section of it, and an owner
+       is the only person who sees that section.
+
+       "Refine analysis" rather than "Training": what the page does is sharpen
+       what the reviewer says about a set, and "training" promises a model
+       learning from examples, which is precisely what this cannot do. -->
+  <nav class="masthead-nav" aria-label="Sections">
+    @if (trainingAvailable() || isOwner()) {
+      <a routerLink="/refine" routerLinkActive="on">
+        Refine<span class="nav-and">&nbsp;analysis</span>
+      </a>
+    }
+  </nav>
+
   <p class="session">
-    @if (trainingAvailable()) {
-      <a routerLink="/training">Training</a>
-    }
-    @if (isOwner()) {
-      <a routerLink="/admin">Feedback</a>
-    }
     @if (auth.openAccess()) {
       <!-- Nothing to sign out of, and saying so is better than showing a
            button that does nothing. -->

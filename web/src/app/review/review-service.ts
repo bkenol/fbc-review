@@ -91,6 +91,7 @@ export class ReviewService {
   private readonly _findings = signal<Finding[] | null>(null);
   private readonly _failure = signal<ApiFailure | null>(null);
   private readonly _submitting = signal(false);
+  private readonly _rerunning = signal(false);
   private readonly _lostContact = signal(false);
   private readonly _prefill = signal<PrefillResponse | null>(null);
   private readonly _reading = signal(false);
@@ -101,6 +102,8 @@ export class ReviewService {
   readonly findings = this._findings.asReadonly();
   readonly failure = this._failure.asReadonly();
   readonly submitting = this._submitting.asReadonly();
+  /** True while a re-run of a finished review is being accepted. */
+  readonly rerunning = this._rerunning.asReadonly();
   /** True when polling is failing. The job itself is probably fine. */
   readonly lostContact = this._lostContact.asReadonly();
   /** What the chosen set states about itself, for the declaration to offer. */
@@ -205,6 +208,12 @@ export class ReviewService {
     this.stop();
     this._failure.set(null);
     this._findings.set(null);
+    // Cleared before the fetch, not after it succeeds. Opening a second review
+    // and having the fetch fail used to leave the *first* one on screen —
+    // header, findings, abstentions and all — under the second one's URL, which
+    // is a stale register somebody has every reason to believe. Reaching that
+    // took a lucky failure until re-running a review made it one click away.
+    this._job.set(null);
     this._lostContact.set(false);
     this._prefill.set(null);
     this.reviews.getJob(id).subscribe({
@@ -265,6 +274,40 @@ export class ReviewService {
         },
         error: (error) => {
           this._submitting.set(false);
+          this.handle(error);
+        },
+      });
+  }
+
+  // ── re-run ──────────────────────────────────────────────────────────────
+  /**
+   * Review the same set again with more of the declaration answered.
+   *
+   * The set is not re-sent: the PDF is in the bucket under the first review's
+   * id and the server replays that review's options and admission profile, so
+   * this costs one pass of the engine. What comes back is a *new* review with
+   * its own id — the first one is not edited, because a review is a dated
+   * statement about a set under stated assertions and rewriting one would
+   * change what somebody was already told.
+   *
+   * `onStarted` receives the new id. The caller navigates; this service does
+   * not, because it has no router and a service that navigates is a service you
+   * cannot call from anywhere else.
+   */
+  rerun(id: string, declaration: ProjectDeclaration, onStarted: (id: string) => void): void {
+    this._failure.set(null);
+    this._rerunning.set(true);
+
+    this.reviews
+      .rerunReview(id, { declaration })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (accepted) => {
+          this._rerunning.set(false);
+          onStarted(accepted.id);
+        },
+        error: (error) => {
+          this._rerunning.set(false);
           this.handle(error);
         },
       });

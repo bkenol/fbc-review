@@ -49,6 +49,7 @@ verified off, measured off     ->  7 findings {CRITICAL 1, HIGH 2, MEDIUM 4}   (
 | `GET` | `/api/config` | Groups, editions, limits, whether mail is configured |
 | `POST` | `/api/review` | multipart: `file` + `options` JSON → `202 {"id": …}` |
 | `GET` | `/api/jobs/{id}` | State, stage, and the full summary when done |
+| `POST` | `/api/jobs/{id}/rerun` | Review the same set again with more of the declaration answered. The PDF is not re-sent — it is already in the bucket — so this costs one pass of the engine. Answers merge over the original's; the result is a **new** review carrying `rerun_of`. |
 | `GET` | `/api/jobs/{id}/markup.pdf` | The marked-up set |
 | `GET` | `/api/jobs/{id}/findings.json` | Machine-readable findings |
 | `GET` | `/healthz` | Liveness, and the version this build reports. Cloud Run's startup probe. |
@@ -80,8 +81,16 @@ FBC_SMTP_HOST=smtp.example.com
 FBC_SMTP_PORT=587
 FBC_SMTP_USER=...
 FBC_SMTP_PASS=...
-FBC_MAIL_FROM="Code Review <review@example.com>"
+FBC_MAIL_FROM=Code Review <review@example.com>
 ```
+
+Locally these live in `secrets/local.env`, which is git-ignored and read both by
+`docker run --env-file` and by `webapp/envfile.py` for a bare `uvicorn` run. Create it
+with `bash scripts/setup-secrets.sh`, which also says what is still missing.
+**Values there are literal — do not quote them**, including the `From` above: Docker's
+env-file parser keeps the quotes, and `webapp/envfile.py` deliberately matches it rather
+than being cleverer in one path than the other. `docs/DEPLOYMENT.md` §6a has the rest,
+including the App Password Google Workspace requires.
 
 Attachments over 20 MB are dropped from the mail and the body points at the download link
 instead — a 24-sheet vector set lands around 17 MB, so this matters.

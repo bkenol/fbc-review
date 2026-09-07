@@ -20,36 +20,49 @@
  *    submitted as one piece for the owner.
  */
 import { DatePipe, LowerCasePipe } from '@angular/common';
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import {
+  Component,
+  ElementRef,
+  computed,
+  effect,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { map } from 'rxjs';
 
 import {
   Abstention,
   AbstentionKindInfo,
+  DeclarationField,
   Feedback,
   FeedbackSubject,
   Finding,
   Markup,
   MarkupRequest,
+  ProjectDeclaration,
 } from '../api';
 import { FeedbackDraft, FeedbackPanel } from '../feedback/feedback-panel';
-import { SheetViewer } from '../viewer/sheet-viewer';
+import { FocusRequest, SheetAnnotation, SheetViewer } from '../viewer/sheet-viewer';
 import { TrainingService } from '../training/training-service';
+import { AnswerNow } from './declaration/answer-now';
 import { ReviewService } from './review-service';
 
 @Component({
   selector: 'app-workspace',
-  imports: [SheetViewer, FeedbackPanel, RouterLink, DatePipe, LowerCasePipe],
+  imports: [SheetViewer, FeedbackPanel, AnswerNow, RouterLink, DatePipe, LowerCasePipe],
   templateUrl: './workspace.html',
 })
 export class Workspace {
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly reviews = inject(ReviewService);
   protected readonly training = inject(TrainingService);
 
   protected readonly job = this.reviews.job;
+  protected readonly rerunning = this.reviews.rerunning;
   protected readonly findings = this.reviews.findings;
   protected readonly config = this.reviews.config;
   protected readonly failure = this.reviews.failure;
@@ -57,11 +70,36 @@ export class Workspace {
   protected readonly selectedFinding = signal<Finding | null>(null);
   protected readonly selectedMarkup = signal<Markup | null>(null);
   protected readonly selectedAbstention = signal<Abstention | null>(null);
+  /** A comment that was already inside the uploaded file. */
+  protected readonly selectedAnnot = signal<SheetAnnotation | null>(null);
+  /** Every such comment the viewer found, across the whole set. */
+  protected readonly annotations = signal<SheetAnnotation[]>([]);
   /** Which kind of feedback the panel is collecting right now. */
   protected readonly subject = signal<FeedbackSubject>(FeedbackSubject.Finding);
   protected readonly commentDraft = signal('');
   /** Which side list is open. The sheet keeps the space when they are closed. */
-  protected readonly tab = signal<'findings' | 'notchecked' | 'markup'>('findings');
+  protected readonly tab = signal<'findings' | 'notchecked' | 'comments' | 'markup'>(
+    'findings',
+  );
+
+  /**
+   * What the viewer should be looking at.
+   *
+   * A row in a register that does not take you to the sheet it is about is a
+   * row you have to go and find, on a set where finding it means knowing which
+   * of thirty-five sheets it is on. So picking one sends the viewer a focus
+   * request, and the viewer pages to it, scrolls it into the middle and lights
+   * it for a couple of seconds.
+   *
+   * The nonce is what makes picking the same row twice work. Without it the
+   * input is unchanged on the second click and nothing happens — which is
+   * exactly when you want it to, because you have scrolled away from the mark
+   * and are asking to be taken back.
+   */
+  protected readonly focus = signal<FocusRequest | null>(null);
+  private nonce = 0;
+  /** The scrolling side column, so a card that opens can be scrolled to. */
+  private readonly side = viewChild<ElementRef<HTMLElement>>('side');
   /** The hand-over form, opened from the markup tab. */
   protected readonly handingOver = signal(false);
   /**
@@ -96,6 +134,8 @@ export class Workspace {
     () => this.config()?.training?.enabled ?? false,
   );
   protected readonly source = computed(() => this.job()?.downloads?.source_pdf ?? '');
+  protected readonly reviewed = computed(() => this.job()?.downloads?.markup_pdf ?? '');
+  protected readonly sheetIndex = computed(() => this.job()?.summary?.sheet_index ?? []);
   protected readonly aspects = computed(() => this.config()?.feedback_aspects ?? []);
   protected readonly markupKinds = computed(() => this.config()?.markup_kinds ?? []);
   protected readonly markupColours = computed(() => this.config()?.markup_colours ?? []);
@@ -113,6 +153,17 @@ export class Workspace {
   /** Abstentions worth offering a proposal for, most useful first. */
   protected readonly proposable = computed(() =>
     this.abstentions().filter((a) => a.proposable),
+  );
+
+  /**
+   * How many stood down waiting on a question somebody can answer here.
+   *
+   * Counted rather than listed at the top of the register: the remedy is the
+   * same sentence for all of them, and saying it once above the list is the
+   * difference between a hint and twelve copies of a hint.
+   */
+  protected readonly answerableCount = computed(
+    () => this.abstentions().filter((a) => (a.unlocked_by ?? []).length).length,
   );
 
   private readonly kindIndex = computed(() => {
@@ -155,6 +206,8 @@ export class Workspace {
       // and markup on screen.
       this.clearSelection();
       this.handingOver.set(false);
+      this.annotations.set([]);
+      this.focus.set(null);
       this.training.clearExport();
       this.reviews.open(id);
     });
@@ -172,20 +225,79 @@ export class Workspace {
   }
 
   // ── selection ───────────────────────────────────────────────────────────
+  /**
+   * Picked on the drawing itself.
+   *
+   * No focus request: the sheet is already in front of you and scrolling it
+   * out from under the cursor you just clicked with is the opposite of helpful.
+   * Picking the same thing from a register does send one — see `openFinding`.
+   */
   protected pickFinding(finding: Finding): void {
     this.selectedFinding.set(finding);
     this.selectedMarkup.set(null);
     this.selectedAbstention.set(null);
+    this.selectedAnnot.set(null);
     this.subject.set(FeedbackSubject.Finding);
     this.training.clearAccepted();
+  }
+
+  /** Picked from the register: select it, and take the viewer to it. */
+  protected openFinding(finding: Finding): void {
+    this.pickFinding(finding);
+    this.showPanelTop();
+    this.lookAt('finding', finding.fid, finding.page);
   }
 
   protected pickMarkup(markup: Markup): void {
     this.selectedMarkup.set(markup);
     this.selectedFinding.set(null);
     this.selectedAbstention.set(null);
+    this.selectedAnnot.set(null);
     this.commentDraft.set(markup.comment ?? '');
     this.training.clearAccepted();
+  }
+
+  protected openMarkup(markup: Markup): void {
+    this.pickMarkup(markup);
+    this.showPanelTop();
+    this.lookAt('markup', markup.id, markup.page);
+  }
+
+  /** A comment that came with the file. Nothing here is feedback on the review. */
+  protected pickAnnotation(mark: SheetAnnotation): void {
+    this.selectedAnnot.set(mark);
+    this.selectedFinding.set(null);
+    this.selectedMarkup.set(null);
+    this.selectedAbstention.set(null);
+    this.training.clearAccepted();
+  }
+
+  protected openAnnotation(mark: SheetAnnotation): void {
+    this.pickAnnotation(mark);
+    this.showPanelTop();
+    this.lookAt('annotation', mark.id, mark.page);
+  }
+
+  protected onAnnotationsRead(marks: SheetAnnotation[]): void {
+    this.annotations.set(marks);
+  }
+
+  private lookAt(kind: FocusRequest['kind'], id: string, page: number): void {
+    this.focus.set({ kind, id, page, nonce: ++this.nonce });
+  }
+
+  /**
+   * Put the card that just opened where somebody can see it.
+   *
+   * The panel is one scrolling column: the detail card on top, the register
+   * underneath. Picking a row inserts the card *above* the row, and the browser
+   * keeps the button you clicked where it is — so the card you asked for opens
+   * off the top of the panel and the panel looks like it did nothing. It is
+   * worst on the abstention register, where the card carries the question that
+   * would let the rule run.
+   */
+  private showPanelTop(): void {
+    this.side()?.nativeElement.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   /**
@@ -200,14 +312,51 @@ export class Workspace {
     this.selectedAbstention.set(abstention);
     this.selectedFinding.set(null);
     this.selectedMarkup.set(null);
+    this.selectedAnnot.set(null);
     this.subject.set(FeedbackSubject.Abstention);
     this.forceProposal.set(false);
     this.training.clearAccepted();
+    // An abstention has no mark on the drawing to page to, so this is the only
+    // thing that happens when you pick one — and it is the case where the card
+    // matters most, because it carries the question that unlocks the rule.
+    this.showPanelTop();
   }
 
   /** Open the form on an abstention this build thinks was correct. */
   protected reportAnyway(): void {
     this.forceProposal.set(true);
+  }
+
+  // ── answering what the rule was waiting on ──────────────────────────────
+  /**
+   * The declaration questions the selected abstention named.
+   *
+   * `unlocked_by` is inverted on the server from the schema's own `unlocks`, so
+   * this is the rule's own account of what it wanted rather than a guess made
+   * here. The metadata — label, kind, choices, help — comes from `/api/config`,
+   * which is the same source the full questionnaire renders from, so a retitled
+   * question is retitled in both places at once.
+   */
+  protected readonly answerable = computed<DeclarationField[]>(() => {
+    const keys = new Set(this.selectedAbstention()?.unlocked_by ?? []);
+    if (!keys.size) return [];
+    return (this.config()?.declaration_fields ?? []).filter((f) => keys.has(f.key));
+  });
+
+  /**
+   * Start a second review with the answer folded in.
+   *
+   * Navigating to the new id rather than staying put: the review in front of
+   * you is not the one that now has the answer, and leaving it on screen while
+   * a different review runs is how somebody ends up reading a stale register
+   * and believing it.
+   */
+  protected answerAndRerun(declaration: ProjectDeclaration): void {
+    const id = this.jobId();
+    if (!id) return;
+    this.reviews.rerun(id, declaration, (next) => {
+      void this.router.navigate(['/review', next]);
+    });
   }
 
   /** Whether to show the proposal form for the abstention in hand. */
@@ -219,6 +368,7 @@ export class Workspace {
     this.selectedFinding.set(null);
     this.selectedMarkup.set(null);
     this.selectedAbstention.set(null);
+    this.selectedAnnot.set(null);
     this.subject.set(FeedbackSubject.Finding);
     this.forceProposal.set(false);
     this.training.clearAccepted();
@@ -229,6 +379,7 @@ export class Workspace {
     this.selectedMarkup.set(markup);
     this.selectedFinding.set(null);
     this.selectedAbstention.set(null);
+    this.selectedAnnot.set(null);
     this.subject.set(FeedbackSubject.Coverage);
     this.training.clearAccepted();
   }

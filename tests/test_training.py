@@ -93,6 +93,49 @@ def test_no_model_call_is_reachable_from_the_review_path():
         assert not offenders, f"{module} imports {offenders} inside the review path"
 
 
+def test_an_identity_linked_key_names_its_workspace(monkeypatch):
+    """Anthropic issues two kinds of key and only one of them works unaided.
+
+    A workspace key is bound to one workspace. An identity-linked key can act
+    in several, so the API refuses it — 400, `anthropic-workspace-id is
+    required` — until the request names one. The SDK sends that header for a
+    credentials-file profile and never for a key read out of the environment,
+    which is how this service authenticates, so it is set here or not at all.
+    """
+    import sys
+    import types
+
+    from webapp import assist
+
+    seen: dict = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+        class messages:  # noqa: N801 - mirrors the SDK's attribute, not a class name
+            @staticmethod
+            def parse(**_kwargs):
+                raise RuntimeError("stop here; the headers are what is under test")
+
+    fake = types.ModuleType("anthropic")
+    fake.Anthropic = _FakeClient  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_example")
+    assert assist.read_comment("the citation is wrong") is None
+    assert seen["default_headers"] == {"anthropic-workspace-id": "wrkspc_example"}
+    assert "wrkspc_example" in assist.status()
+
+    # A workspace key needs no header, and sending an empty one would be a
+    # 400 of its own.
+    seen.clear()
+    monkeypatch.delenv("ANTHROPIC_WORKSPACE_ID")
+    assert assist.read_comment("the citation is wrong") is None
+    assert seen["default_headers"] == {}
+
+
 def test_the_assist_is_inert_until_it_is_configured(monkeypatch):
     from webapp import assist
 

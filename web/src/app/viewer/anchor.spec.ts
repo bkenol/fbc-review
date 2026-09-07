@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { AnchorItem, locateAnchor, normalise } from './anchor';
+import { AnchorItem, locateAnchor, locateAnchors, normalise } from './anchor';
 
 /** A text run at a position, as the page's text layer would hand it over. */
 function item(text: string, x = 0, y = 100, width = 60): AnchorItem {
@@ -57,6 +57,36 @@ describe('locateAnchor', () => {
       'DOOR 104',
     );
     expect(box).toEqual({ x0: 200, y0: 292, x1: 230, y1: 300 });
+  });
+});
+
+describe('locateAnchors and hit', () => {
+  it('returns every occurrence, in the order the page gives them', () => {
+    const boxes = locateAnchors(
+      [item("2'-8\"", 10, 100, 20), item('DOOR', 40, 100, 20), item("2'-8\"", 10, 200, 20)],
+      "2'-8\"",
+    );
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0].y1).toBe(100);
+    expect(boxes[1].y1).toBe(200);
+  });
+
+  it("boxes the occurrence the finding's hit names, as the renderer does", () => {
+    // A door schedule listing the same leaf width four times is the case this
+    // is for: boxing the first row when the finding is about the third puts
+    // the viewer's marker on a different door from the marked-up PDF.
+    const items = [item("2'-8\"", 10, 100, 20), item("2'-8\"", 10, 200, 20)];
+    expect(locateAnchor(items, "2'-8\"", 1)?.y1).toBe(200);
+    expect(locateAnchor(items, "2'-8\"", 0)?.y1).toBe(100);
+  });
+
+  it('is null when the hit is past the last occurrence', () => {
+    // Which is what the renderer does too: `len(hits) <= f.hit` draws nothing.
+    expect(locateAnchor([item('DOOR 104')], 'DOOR 104', 3)).toBeNull();
+  });
+
+  it('finds nothing rather than everything for an anchor that is not there', () => {
+    expect(locateAnchors([item('GENERAL NOTES')], 'OUTDOOR AIR')).toEqual([]);
   });
 });
 

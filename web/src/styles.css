@@ -305,6 +305,76 @@ a:hover {
   white-space: nowrap;
 }
 
+/* ── the masthead's own navigation ─────────────────────────────────────────
+ * Training and Feedback are the two destinations in this app that are not the
+ * upload form, and they used to sit inside the session line in the same 12px
+ * mono label as the signed-in address. Everything in that line is status —
+ * which build, which account — so two links set identically read as status
+ * too, and got looked past.
+ *
+ * Framed and set larger, they read as controls. Restraint still applies: this
+ * is a border and a size, not a colour the rest of the page does not use, and
+ * the current section is filled rather than merely tinted so it is legible
+ * before you read it.
+ */
+.masthead-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  pointer-events: auto;
+}
+
+.masthead-nav a {
+  display: inline-block;
+  padding: 0.4rem 0.95rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--text-strong);
+  background: var(--surface-card);
+  border: 1px solid var(--border-input);
+}
+
+.masthead-nav a:hover,
+.masthead-nav a:focus-visible {
+  color: var(--primary-ink);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+/* Where you already are. Named `on` to match every other current-state class
+   in this stylesheet rather than inventing a second word for it. */
+.masthead-nav a.on {
+  color: var(--primary-ink);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+/* "Training & feedback" is the honest name for one page that carries both. It
+   is also four words of uppercase mono, so the second half goes when the
+   masthead has to share the line — the entry is still the same entry. */
+@media (max-width: 60rem) {
+  .masthead-nav a {
+    padding: 0.35rem 0.7rem;
+    font-size: 12px;
+  }
+  .nav-and {
+    display: none;
+  }
+}
+
+/* On a screen whose whole job is a 36-inch drawing, the masthead gives back
+   the height the larger nav took. The links stay the same size — they are the
+   point — and the band around them tightens. */
+.masthead.compact {
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+
 .session {
   display: flex;
   flex-wrap: wrap;
@@ -319,10 +389,17 @@ a:hover {
  * Left-aligned throughout. The system forbids centred body text, and this screen is
  * dense with figures that are harder to compare off a ragged left edge.
  */
+/* The masthead is absolutely positioned — it overlays the page rather than
+   taking a band out of it — so the content column reserves its height by hand.
+   These two numbers are measured against the rendered masthead, not guessed:
+   grow the nav and they have to grow with it, or the header lands on top of
+   the first thing the page says. */
 .wrap {
   max-width: var(--page-max);
   margin: 0 auto;
-  padding: var(--space-10) var(--page-gutter) var(--space-10);
+  /* A measurement, not a spacing step: it has to clear the rendered masthead,
+     which is why `.wrap.full` states its reserve in pixels too. */
+  padding: 120px var(--page-gutter) var(--space-10);
 }
 
 @media (max-width: 720px) {
@@ -588,9 +665,32 @@ textarea:focus {
  *
  * Primary rests in drafting blue and swaps to engineer red, which is the hover colour
  * colors.css reserves for it. Secondary inverts to filled graphite, per the system.
+ *
+ * THE RULE FOR EVERY VARIANT BELOW: a button type that sets its own resting
+ * colours sets its hover colours in the same declaration block, as the three
+ * --hover-* variables. The engineer red is the *fallback* — what a button
+ * hovers to when nothing else said — not something each variant has to fight
+ * off.
+ *
+ * It used to be exactly that fight, and the variants were losing it. The hover
+ * rule below is `button:hover:not(:disabled)`, which is specificity (0,2,1); a
+ * variant's natural `.state-btn:hover` is (0,2,0), so the type selector won and
+ * green ACCEPTED, blue ACTIONED and a hovered queue row all turned the same red.
+ * Out-specifying it works and is unreadable: every variant would carry a
+ * `:not(:disabled)` that exists for the cascade rather than for the meaning, and
+ * the next variant added would quietly be red again.
+ *
+ * Custom properties do not have that problem. `.state-btn { --hover-bg: … }` is
+ * a plain (0,1,0) declaration that beats the (0,0,1) default, and the one hover
+ * rule below reads whatever won. Colour and its hover live together, which is
+ * the only way to read a variant and know what it does.
  */
 button,
 .btn {
+  --hover-edge: var(--primary-hover);
+  --hover-bg: var(--primary-hover);
+  --hover-ink: var(--paper-white);
+
   display: inline-block;
   padding: 12px 22px;
   border: 1px solid var(--primary);
@@ -603,11 +703,18 @@ button,
   cursor: pointer;
   transition: var(--transition-colour);
 }
+/* The one place a hover colour is applied. The two anchors are named because
+   they share a button's resting block but are not buttons, so `button:hover`
+   never reaches them — and `.pastrow` is a `<button>` on the tool page and an
+   `<a>` in the training console, which is how its hover went missing on one of
+   the two the moment the rule stopped saying `:not(:disabled)`. */
 button:hover:not(:disabled),
-.btn:hover {
-  border-color: var(--primary-hover);
-  background: var(--primary-hover);
-  color: var(--paper-white);
+.btn:hover,
+a.inline:hover,
+a.pastrow:hover {
+  border-color: var(--hover-edge);
+  background: var(--hover-bg);
+  color: var(--hover-ink);
 }
 button:disabled,
 .btn[aria-disabled='true'] {
@@ -618,29 +725,46 @@ button:disabled,
 }
 button.ghost,
 .btn.ghost {
+  --hover-edge: var(--text-strong);
+  --hover-bg: var(--text-strong);
+  --hover-ink: var(--text-reverse);
+
   background: transparent;
   border-color: var(--border-input);
   color: var(--text-strong);
 }
-button.ghost:hover:not(:disabled),
-.btn.ghost:hover {
-  background: var(--text-strong);
-  border-color: var(--text-strong);
-  color: var(--text-reverse);
+/* The secondary verb: smaller than `.btn`, and a control rather than a phrase.
+ *
+ * It used to have no border, no fill and a hairline under it in muted grey —
+ * which is the same treatment as a disabled label, and it was carrying real
+ * work: Send the digest now, Dismiss, Report it anyway, Close, Confirm, Show
+ * all, Hand over. Everything you could do that was not the primary action was
+ * drawn as though it were a caption, so people read past it.
+ *
+ * Now it is what it is: a framed control in ink, at label size, with the same
+ * decisive colour swap on hover as every other button. It still sits inline in
+ * a sentence — the padding is small and the box does not break the line — but
+ * it can no longer be mistaken for prose. */
+button.inline,
+a.inline {
+  --hover-edge: var(--primary);
+  --hover-bg: var(--primary);
+  --hover-ink: var(--primary-ink);
+
+  display: inline-block;
+  padding: 4px 10px;
+  border: 1px solid var(--border-input);
+  background: transparent;
+  color: var(--text-strong);
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-decoration: none;
+  vertical-align: baseline;
 }
-/* Sits inline in the masthead, so it reads as a link rather than a control. */
-button.inline {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border-hairline);
-  letter-spacing: 0.06em;
-}
-button.inline:hover:not(:disabled) {
-  background: none;
-  color: var(--link-hover);
-  border-bottom-color: var(--link-hover);
+button.inline:disabled {
+  border-color: var(--border-hairline);
+  background: transparent;
+  color: var(--text-faint);
 }
 
 /* ── progress — the traverse ───────────────────────────────────────────────
@@ -1137,6 +1261,22 @@ td.sev {
   color: var(--sev, var(--text-body));
   transition: var(--transition-colour);
 }
+/* A chip that goes somewhere. Same shape as the label it sits beside, so the
+   header still reads as one run of facts — but it takes the link ink and the
+   hover swap, because underlined blue is what says "this one you can click". */
+a.chip-link {
+  color: var(--link);
+  border-color: color-mix(in srgb, var(--link) 45%, transparent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+a.chip-link:hover {
+  border-color: var(--link-hover);
+  background: var(--link-hover);
+  color: var(--paper-white);
+  text-decoration: none;
+}
+
 /* CRITICAL is the only severity that reverses. One row on a sheet reads as a stamp;
    more than one and the register would go to plaid. */
 td.sev.CRITICAL .chip {
@@ -1359,9 +1499,25 @@ tbody tr.LOW td:first-child {
 .annotations li:first-child {
   border-top: 0;
 }
+/* A callout label: the name of a thing, in survey blue, the way it is lettered
+ * beside a leader line on a drawing.
+ *
+ * It used to carry an underline in `currentColor`, and `--annotation` and
+ * `--link` are the same blue family — so `Mail`, `Issues` and `Comment assist`
+ * on the queue's status line were blue underlined text that did nothing when
+ * clicked, sitting a few pixels from links that did. Underlined blue is the one
+ * piece of formatting the whole web agrees means "follow this", and spending it
+ * on a label is how you teach somebody that clicking here does not work.
+ *
+ * So: the ink stays, the underline goes, and the mono annotation face plus the
+ * letter-spacing carry the distinction instead. `a.annot-name` keeps the
+ * underline, because there it is telling the truth. */
 .annot-name {
   font: var(--type-annotation);
   color: var(--annotation);
+  letter-spacing: 0.04em;
+}
+a.annot-name {
   border-bottom: 1px solid currentColor;
   padding-bottom: 1px;
 }
@@ -1487,6 +1643,10 @@ footer {
 /* A pair of pressed states, not a switch: both wordings are equally valid and
    neither is the "off" position. */
 .vocab-btn {
+  --hover-edge: var(--text-strong);
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   padding: 4px 12px;
   font: var(--type-label);
   letter-spacing: var(--ls-label);
@@ -1496,12 +1656,14 @@ footer {
   border: 1px solid var(--border-input);
   transition: var(--transition-colour);
 }
-.vocab-btn:hover {
-  color: var(--text-strong);
-  border-color: var(--text-strong);
-  background: transparent;
-}
+/* Already filled, so hovering nudges its own graphite toward the page rather
+   than swapping colour. Before the --hover-* variables this had no hover of its
+   own at all and the pressed wording turned engineer red under the cursor. */
 .vocab-btn.on {
+  --hover-edge: var(--surface-inverse);
+  --hover-bg: color-mix(in srgb, var(--surface-inverse) 85%, var(--surface-page));
+  --hover-ink: var(--text-reverse);
+
   color: var(--text-reverse);
   background: var(--surface-inverse);
   border-color: var(--surface-inverse);
@@ -1694,9 +1856,13 @@ input[type='number']:hover {
   color: var(--text-body);
   cursor: pointer;
   transition: var(--transition-colour);
-}
-.pastrow:hover:not(:disabled) {
-  background: var(--surface-sunk);
+
+  /* Hover, beside the resting colours. `--hover-edge` carries the severity
+     forward: the left rule is the row's only colour-coded channel and losing it
+     under the pointer would recolour the finding. */
+  --hover-edge: var(--sev, var(--border-hairline));
+  --hover-bg: var(--surface-sunk);
+  --hover-ink: var(--text-body);
 }
 .pastrow:hover:not(:disabled) .name {
   color: var(--accent-dimension);
@@ -1895,6 +2061,10 @@ td.sev .chip.conflict {
 }
 
 .tool {
+  --hover-edge: var(--border-input);
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   font: inherit;
   font-size: 0.78rem;
   padding: 0.25rem 0.6rem;
@@ -1904,12 +2074,15 @@ td.sev .chip.conflict {
   cursor: pointer;
 }
 
-.tool:hover {
-  color: var(--text-strong);
-  border-color: var(--border-input);
-}
-
+/* Pressed, and already wearing the primary. The red is the *primary verb's*
+   hover, not every blue thing's: a pressed toggle that swaps hue under the
+   cursor reads as a different button. It nudges its own blue toward the page
+   instead, the same way `.state-btn.on` and `.vocab-btn.on` do. */
 .tool.on {
+  --hover-edge: var(--primary);
+  --hover-bg: color-mix(in srgb, var(--primary) 85%, var(--surface-page));
+  --hover-ink: var(--primary-ink);
+
   color: var(--primary-ink);
   background: var(--primary);
   border-color: var(--primary);
@@ -1925,6 +2098,231 @@ td.sev .chip.conflict {
 .viewer-error,
 .viewer-note {
   margin-top: 0.5rem;
+}
+
+/* ── the sheet rail ────────────────────────────────────────────────────────
+ * Navigation is the thing a reviewer does most and it used to be the smallest
+ * control on the page: two text links either side of "Sheet 3 of 15". A permit
+ * set is read by sheet number — you go to M-2 because the ductwork is on M-2 —
+ * so every sheet is named here and one click away, and the counts say where the
+ * work is before you get there.
+ *
+ * It scrolls horizontally rather than wrapping. A rail that reflows to three
+ * rows on a narrow window moves every chip each time the panel resizes, and a
+ * target that moves is a target you have to look for.
+ */
+.sheet-rail {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+  padding-bottom: 0.5rem;
+}
+
+.rail-step {
+  /* Its hover only ever set colour and border, so the base rule was filling
+     the sheet-rail arrows with engineer red on the way past. Found by the
+     contract test in tests/test_button_hover.py, not by looking. */
+  --hover-edge: var(--border-input);
+  --hover-bg: var(--surface-card);
+  --hover-ink: var(--text-strong);
+
+  flex: 0 0 auto;
+  width: 2.1rem;
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+  cursor: pointer;
+}
+
+.rail-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Shrinks but does not stretch, and takes the slack after itself, so the two
+   step buttons stay against the chips on a three-sheet set instead of being
+   thrown to opposite ends of the bar. */
+.rail-track {
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 0 1 auto;
+  margin-inline-end: auto;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+}
+
+/* Wide enough for a real sheet number — M.001, A-101 — at a readable size,
+   rather than sized to the digits of a page count. */
+.rail-chip {
+  --hover-edge: var(--border-input);
+  --hover-bg: var(--surface-card);
+  --hover-ink: var(--text-strong);
+
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 4.4rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  text-align: left;
+  background: var(--surface-card);
+  color: var(--text-muted);
+  border: 1px solid var(--border-hairline);
+  border-bottom: 2px solid var(--sev, var(--border-hairline));
+  cursor: pointer;
+}
+
+.rail-chip.on {
+  --hover-edge: var(--primary);
+  --hover-bg: color-mix(in srgb, var(--primary) 85%, var(--surface-page));
+  --hover-ink: var(--primary-ink);
+
+  color: var(--primary-ink);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.rail-chip.on .rail-count {
+  background: color-mix(in srgb, var(--primary-ink) 22%, transparent);
+  color: var(--primary-ink);
+}
+
+.rail-code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* A page number standing in for a sheet number is shown as what it is. */
+.rail-code.unread {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.rail-marks {
+  display: flex;
+  gap: 0.2rem;
+  min-height: 0.85rem;
+}
+
+.rail-count {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.62rem;
+  line-height: 1.35;
+  padding: 0 0.25rem;
+  border-radius: 2px;
+  background: var(--surface-sunk);
+  color: var(--text-muted);
+}
+
+.rail-count.findings {
+  background: color-mix(in srgb, var(--sev, var(--text-muted)) var(--sev-tint), transparent);
+  color: var(--sev, var(--text-muted));
+}
+
+.rail-count.comments {
+  color: var(--accent-dimension);
+}
+
+.rail-count.marks {
+  color: var(--annotation);
+}
+
+/* Where you are, said once and in the set's own language. */
+.viewer-where {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.viewer-where strong {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9rem;
+  color: var(--text-strong);
+}
+
+.viewer-where .dim {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
+.viewer-layers {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.viewer-layers .tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── paging from the sheet itself ──────────────────────────────────────────
+ * Over the drawing rather than in the bar, because at fit-width the bar is off
+ * the top of where you are looking. They sit on the frame, not the stage, so
+ * they hold still while the sheet scrolls under them.
+ */
+.viewer-frame {
+  position: relative;
+  min-width: 0;
+}
+
+.stage-arrow {
+  /* It had no hover of its own, so the base rule filled a nav arrow with the
+     engineer red — the colour this system reserves for a primary verb, on a
+     control that only turns a page. It lifts off the sheet instead. */
+  --hover-edge: var(--border-input);
+  --hover-bg: var(--surface-card);
+  --hover-ink: var(--text-strong);
+
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 2.4rem;
+  height: 3.6rem;
+  font: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--text-body);
+  background: color-mix(in srgb, var(--surface-card) 88%, transparent);
+  border: 1px solid var(--border-hairline);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.viewer-frame:hover .stage-arrow {
+  opacity: 1;
+}
+
+.stage-arrow:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stage-arrow.left {
+  left: 0.4rem;
+}
+
+.stage-arrow.right {
+  right: 0.4rem;
+}
+
+.viewer-stage:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 /* The canvas and the overlay are the same box. The overlay must not intercept
@@ -2042,6 +2440,114 @@ td.sev .chip.conflict {
   stroke: none;
 }
 
+/* ── comments that came with the file ──────────────────────────────────────
+ * Drawn in the colour the file gave them — `--ink` is set per mark from the
+ * annotation's own colour — because that colour is a claim the drafter made
+ * about their own mark. Recolouring a red revision cloud to this app's ink
+ * would quietly restate somebody else's drawing.
+ *
+ * Deliberately not on the severity ramp and not in the reviewer's blue: three
+ * authors mark a permit set, and telling them apart is the whole job of this
+ * layer.
+ */
+.infile {
+  pointer-events: all;
+  cursor: pointer;
+  fill: none;
+  stroke: var(--ink, var(--accent-dimension));
+}
+
+.infile rect,
+.infile ellipse,
+.infile path,
+.infile line {
+  stroke: var(--ink, var(--accent-dimension));
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.infile rect.wash {
+  fill: var(--ink, var(--accent-dimension));
+  fill-opacity: 0.22;
+  stroke: none;
+}
+
+/* The area of the drawing the comment is about. Dashed, because it is the
+   annotation's declared extent rather than a line anybody drew. */
+.infile rect.region {
+  stroke: var(--ink, var(--accent-dimension));
+  stroke-dasharray: 4 3;
+  stroke-opacity: 0.55;
+  fill: none;
+}
+
+.infile:hover rect.region,
+.infile.selected rect.region {
+  stroke-opacity: 1;
+  fill: var(--ink, var(--accent-dimension));
+  fill-opacity: 0.08;
+}
+
+/* Comment text, written on the drawing beside the mark it belongs to. A
+   comment you have to click something to read is a comment that is not on the
+   sheet. Struck through with the paper colour so it stays legible over
+   linework without a box that would hide the drawing under it. */
+.caption text {
+  fill: var(--ink, var(--annotation));
+  font-family: var(--font-mono, monospace);
+  paint-order: stroke;
+  stroke: var(--paper-white);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* What the viewer just scrolled to. Long enough to find on a 36-inch sheet,
+   short enough that it is not still shouting when you start reading. */
+.pin.lit rect,
+.markup.lit rect,
+.markup.lit path,
+.markup.lit line,
+.markup.lit circle,
+.infile.lit rect,
+.infile.lit ellipse,
+.infile.lit path {
+  animation: mark-lit 2.2s ease-out 1;
+}
+
+@keyframes mark-lit {
+  0%,
+  55% {
+    stroke-width: 4px;
+    stroke-opacity: 1;
+  }
+  100% {
+    stroke-width: inherit;
+    stroke-opacity: inherit;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin.lit rect,
+  .markup.lit rect,
+  .markup.lit path,
+  .markup.lit line,
+  .markup.lit circle,
+  .infile.lit rect,
+  .infile.lit ellipse,
+  .infile.lit path {
+    animation: none;
+    stroke-width: 3px;
+  }
+}
+
+.markup.selected rect,
+.markup.selected path,
+.markup.selected line,
+.markup.selected circle {
+  stroke: var(--accent-dimension);
+}
+
 /* ── the side panel ────────────────────────────────────────────────────── */
 .side-card {
   padding: var(--space-3, 1rem);
@@ -2075,11 +2581,24 @@ td.sev .chip.conflict {
 }
 
 /* Register rows. The left rule carries the severity, exactly as the findings
- * table does, so scanning the panel and scanning the table are the same act. */
+ * table does, so scanning the panel and scanning the table are the same act.
+ *
+ * Flex rather than a fixed grid, and that is a bug fix rather than a
+ * preference. Four registers share this row and they do not share a shape: a
+ * finding has a severity, an id, a sheet and a title; an abstention has no
+ * sheet; a markup has no id. A grid of five fixed columns assigns them by
+ * source order, so every row missing a cell shifted everything after it one
+ * column left — an abstention's reason was being laid out in the 2.6rem sheet
+ * column and painted straight over the rule id beside it.
+ *
+ * Flex-wrap has no such coupling: each row lays out the cells it actually has.
+ * The title takes a line of its own because it is the part that is long, and a
+ * rule id like DECL.BUILDING_AREA gets the width it needs rather than 3.2rem
+ * and an ellipsis. */
 .side-row {
-  display: grid;
-  grid-template-columns: 4.6rem 3.2rem 2.6rem 1fr auto;
-  gap: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.5rem;
   align-items: baseline;
   width: 100%;
   padding: 0.4rem 0.5rem;
@@ -2087,35 +2606,61 @@ td.sev .chip.conflict {
   font-size: 0.78rem;
   text-align: left;
   background: var(--surface-card);
+  /* Stated rather than inherited: the base `button` rule sets `--primary-ink`,
+     and `.side-row.on .side-tag` takes `color: inherit` from here — which put
+     white on the light scheme's grey ground. */
+  color: var(--text-body);
   border: 0;
   border-left: 2px solid var(--sev, var(--border-hairline));
   cursor: pointer;
-}
 
-.side-row:hover {
-  background: var(--surface-sunk);
+  /* Hover, beside the resting colours. The left rule is the severity, so it is
+     what `--hover-edge` carries. */
+  --hover-edge: var(--sev, var(--border-hairline));
+  --hover-bg: var(--surface-sunk);
+  --hover-ink: var(--text-body);
 }
 
 .side-row.on {
+  --hover-edge: var(--primary);
+  --hover-bg: var(--surface-sunk);
+  --hover-ink: var(--text-body);
+
   background: var(--surface-sunk);
   border-left-color: var(--primary);
 }
 
+/* The identifying cells, on the first line, in whatever combination the row
+ * has. They size to their contents and wrap among themselves rather than
+ * overflowing a fixed box — a truncated rule id identifies nothing. */
+.side-sev,
+.side-fid,
+.side-sheet {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+}
+
 .side-sev,
 .side-fid {
-  font-family: var(--font-mono, monospace);
   color: var(--text-muted);
   text-transform: uppercase;
-  font-size: 0.7rem;
 }
 
 .side-sheet {
-  font-family: var(--font-mono, monospace);
   color: var(--text-faint);
-  font-size: 0.7rem;
 }
 
+/* Ordered after the flag so the flag finishes the first line and this starts
+ * the second. `order` rather than moving it in the template, because its
+ * position in the DOM is the reading order a screen reader should get:
+ * what the row is about, then whether it has been answered. */
 .side-title {
+  order: 1;
+  flex: 1 0 100%;
+  min-width: 0;
   color: var(--text-body);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2123,7 +2668,87 @@ td.sev .chip.conflict {
 }
 
 .side-flag {
+  /* Last on the row whatever else is on it: `.side-tag` also sits after the
+     title, and the "you have reported this" tick belongs at the far end. */
+  order: 3;
+  margin-left: auto;
   color: var(--sev-verified, var(--annotation));
+}
+
+/* ── the queue's channel list ──────────────────────────────────────────────
+ * Mail, issues, the comment assist: what each one is and where it stands, one
+ * per line. It was a single paragraph running all three together with the
+ * digest button on the end of it. */
+.channels {
+  list-style: none;
+  margin: var(--space-3, 1rem) 0;
+  padding: 0;
+}
+.channels li {
+  display: grid;
+  grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
+  gap: var(--space-2, 0.5rem);
+  align-items: baseline;
+  padding: var(--space-2, 0.5rem) 0;
+  border-top: var(--hairline);
+}
+.channels li:first-child {
+  border-top: 0;
+}
+.channel-state {
+  font: var(--type-small);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+/* Configured, and therefore able to do something. Said in ink rather than in
+   the same grey as the sentence explaining how to switch it on. */
+.channel-state.live {
+  color: var(--text-body);
+}
+@media (max-width: 40rem) {
+  .channels li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* "answerable" on a not-checked row: this rule stood down waiting on a question
+   you can answer from here. A framed word rather than another grey one, because
+   it is the difference between a register you act on and one you scroll.
+
+   Ordered after the title, which claims the full row width — otherwise it lands
+   between the rule id and the reason and breaks the sentence in half. */
+.side-tag {
+  order: 2;
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--annotation) 55%, transparent);
+  background: color-mix(in srgb, var(--annotation) 12%, transparent);
+  color: var(--annotation);
+  font: var(--type-annotation);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+/* A selected row reverses to a filled ground, and survey blue on it is
+   unreadable. The tag takes the row's own foreground there. */
+.side-row.on .side-tag {
+  border-color: currentColor;
+  background: transparent;
+  color: inherit;
+}
+
+/* ── answering what a rule stood down for ──────────────────────────────────
+ * The one or two questions the rule named, on the panel where it stood down.
+ * Fields at panel width, and one primary verb: nothing here is a second
+ * questionnaire. */
+.answer-now .q {
+  margin-top: var(--space-3, 1rem);
+}
+.answer-now .q input,
+.answer-now .q select {
+  width: 100%;
+}
+.answer-now .hint {
+  margin-top: 6px;
 }
 
 /* ── the feedback form ─────────────────────────────────────────────────── */
@@ -2166,6 +2791,10 @@ td.sev .chip.conflict {
  * opening anything, which is the difference between a form somebody answers
  * accurately and one they answer with whatever was already showing. */
 .verdict {
+  --hover-edge: var(--border-input);
+  --hover-bg: transparent;
+  --hover-ink: var(--text-body);
+
   font: inherit;
   font-size: 0.76rem;
   padding: 0.28rem 0.55rem;
@@ -2176,25 +2805,35 @@ td.sev .chip.conflict {
   cursor: pointer;
 }
 
-.verdict:hover {
-  border-color: var(--border-input);
-}
-
 /* The "this was right" answer is drawn in survey green and the rest in the
  * ordinary ink. Praise is a real answer here, not an escape from the question,
  * and it needs to look like one. */
 .verdict[data-polarity='good'] {
+  --hover-edge: var(--sev-verified, var(--border-input));
+  --hover-bg: transparent;
+  --hover-ink: var(--sev-verified, var(--text-body));
+
   color: var(--sev-verified, var(--text-body));
   border-color: color-mix(in srgb, var(--sev-verified, var(--border-hairline)) 45%, transparent);
 }
 
 .verdict.on {
+  --hover-edge: var(--primary);
+  --hover-bg: color-mix(in srgb, var(--primary) 85%, var(--surface-page));
+  --hover-ink: var(--primary-ink);
+
   color: var(--primary-ink);
   background: var(--primary);
   border-color: var(--primary);
 }
 
+/* Filled with the survey green, so hovering nudges that green toward the page
+   rather than swapping it for the red — same treatment as `.state-btn.on`. */
 .verdict[data-polarity='good'].on {
+  --hover-edge: var(--sev-verified, var(--primary));
+  --hover-bg: color-mix(in srgb, var(--sev-verified, var(--primary)) 85%, var(--surface-page));
+  --hover-ink: var(--primary-ink);
+
   background: var(--sev-verified, var(--primary));
   border-color: var(--sev-verified, var(--primary));
 }
@@ -2290,7 +2929,19 @@ td.sev .chip.conflict {
   border-left-color: var(--sev-verified, var(--border-hairline));
 }
 
+/* A row of the queue is a button, and the base `button` rule fills one with
+   --primary and writes it in --primary-ink, uppercase and letter-spaced. This
+   row overrode the background and the border and stopped there, so the triage
+   verdict — the whole reason the section says the work is "deciding rather than
+   reading" — was white text on a white card, and the rationale beside it was a
+   sentence of prose shouted in capitals. Both are inherited, and neither is
+   caught by `font: inherit`, because colour and text-transform are not part of
+   the font shorthand. */
 .queue-head {
+  --hover-edge: transparent;
+  --hover-bg: var(--surface-sunk);
+  --hover-ink: var(--text-strong);
+
   display: grid;
   grid-template-columns: 14rem 12rem 1fr auto;
   gap: 0.75rem;
@@ -2299,14 +2950,13 @@ td.sev .chip.conflict {
   padding: 0.55rem 0.75rem;
   font: inherit;
   font-size: 0.8rem;
+  letter-spacing: normal;
+  text-transform: none;
   text-align: left;
+  color: var(--text-body);
   background: none;
   border: 0;
   cursor: pointer;
-}
-
-.queue-head:hover {
-  background: var(--surface-sunk);
 }
 
 @media (max-width: 52rem) {
@@ -2317,6 +2967,7 @@ td.sev .chip.conflict {
 
 .queue-verdict {
   font-weight: 600;
+  color: var(--text-strong);
 }
 
 .queue-what {
@@ -2414,7 +3065,20 @@ td.sev .chip.conflict {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding: 54px var(--space-3) 0;
+  padding: 80px var(--space-3) 0;
+}
+
+/* Where the workspace puts the sheet and the panel side by side, the shell is
+   exactly the window: the sheet scrolls inside its own stage, and the sheet
+   rail, the toolbar and the registers stay where they were put.
+   `min-height` alone cannot do that — it lets a zoomed-in sheet push the shell
+   past the window and take the navigation with it.
+   Below the breakpoint the two stack, one column of a page is the right thing
+   to scroll, and this deliberately does not apply. */
+@media (min-width: 60rem) {
+  .wrap.full {
+    height: 100dvh;
+  }
 }
 
 .wrap.full > router-outlet + * {
@@ -2424,7 +3088,7 @@ td.sev .chip.conflict {
 
 @media (max-width: 720px) {
   .wrap.full {
-    padding: 108px var(--space-2) 0;
+    padding: 128px var(--space-2) 0;
   }
 }
 
@@ -2468,6 +3132,22 @@ footer.terse .build-line {
   flex: 1 1 auto;
   min-height: 0;
   gap: var(--space-3);
+  /* Stretch, so the sheet column is as tall as the row rather than as tall as
+     the drawing. The base rule starts the two columns at the top, which is
+     right when they are two blocks of prose and wrong when one of them is a
+     36-inch sheet that has to scroll inside itself. */
+  align-items: stretch;
+}
+
+/* The component's own host element sits between the split and the viewer, and
+   an unstyled host is a block of automatic height — which is enough to break
+   the chain and let the sheet grow the page instead of scrolling in its stage.
+   The symptom is the sheet rail disappearing off the top of the window the
+   moment you zoom past fitting, which is exactly when you need it. */
+.workspace.roomy app-sheet-viewer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .workspace.roomy .workspace-side {
@@ -2479,8 +3159,20 @@ footer.terse .build-line {
 .workspace.roomy .viewer {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
+}
+
+/* The frame is what flexes now — it holds the paging arrows still while the
+   sheet scrolls under them — and it passes the height straight through to the
+   stage. A frame that sized itself to its contents instead would let the sheet
+   grow the page rather than scroll inside the stage, which puts the sheet rail
+   and the register off the top of the window on any sheet zoomed past fitting. */
+.workspace.roomy .viewer-frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .workspace.roomy .viewer-stage {
@@ -2523,6 +3215,10 @@ footer.terse .build-line {
 }
 
 .ink {
+  --hover-edge: transparent;
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -2543,11 +3239,13 @@ footer.terse .build-line {
   box-shadow: 0 0 0 1px rgb(0 0 0 / 25%) inset;
 }
 
-.ink:hover {
-  color: var(--text-strong);
-}
-
+/* Pressed: the swatch's own colour becomes the frame, and stays the frame under
+   the pointer — it is what says which ink this button is for. */
 .ink.on {
+  --hover-edge: var(--ink, var(--annotation));
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   color: var(--text-strong);
   border-color: var(--ink, var(--annotation));
 }
@@ -2578,12 +3276,10 @@ footer.terse .build-line {
 
 /* An `<a class="pastrow">` in the training console does what the button does on
    the tool page. Same geometry, no underline, and the link colour does not
-   override the row's own ink. */
+   override the row's own ink — on hover that is the consumer rule's job, which
+   is why this anchor is named in it. */
 a.pastrow {
   text-decoration: none;
-  color: var(--text-body);
-}
-a.pastrow:hover {
   color: var(--text-body);
 }
 
@@ -2600,6 +3296,10 @@ a.pastrow:hover {
 }
 
 .side-tabs button {
+  --hover-edge: transparent;
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   font: inherit;
   font-size: 0.74rem;
   letter-spacing: 0.04em;
@@ -2612,11 +3312,14 @@ a.pastrow:hover {
   cursor: pointer;
 }
 
-.side-tabs button:hover {
-  color: var(--text-strong);
-}
-
+/* The underline is which tab you are on. `--hover-edge` keeps it there under
+   the pointer — the rest of the border is 0, so colouring all four sides only
+   ever shows on the bottom. */
 .side-tabs button.on {
+  --hover-edge: var(--primary);
+  --hover-bg: transparent;
+  --hover-ink: var(--text-strong);
+
   color: var(--text-strong);
   border-bottom-color: var(--primary);
 }
@@ -2675,4 +3378,204 @@ a.pastrow:hover {
    legible — "not checked" stays visible whatever kind it is. */
 .annotations li.quiet {
   opacity: 0.68;
+}
+
+/* ── the queue's counts, and the way into what they count ──────────────────
+ * Three lines of small mono down the left of a very wide section, saying
+ * "2 Needs a new component" with no way to see which two. A count you cannot
+ * open is a number you go looking for by hand, and most of the row was empty.
+ *
+ * Each tile is now the filter that produces it. A count of nothing is disabled
+ * rather than a dead end you can press — the register's own rule, that "not
+ * checked" must not look like "checked and passed", applied to a control: a
+ * button that looks pressable and does nothing teaches you not to press any of
+ * them.
+ */
+.queue-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-2, 0.5rem);
+  margin: var(--space-4, 1.5rem) 0 var(--space-5, 2rem);
+}
+.qstat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: var(--space-3, 1rem);
+  text-align: left;
+  /* Explicit, because the base `button` rule writes in --primary-ink: without
+     this the tile is white text on a white card, exactly as the queue rows
+     were. Nothing shows it today — both children set their own colour — but a
+     third child would inherit the fault. */
+  color: var(--text-body);
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+  border-left: 3px solid var(--border-hairline);
+  transition: var(--transition-colour);
+
+  /* Hover, beside the resting colours. A lift off the ink rather than a swap:
+     this is a filter, not a verb, and it should not shout.
+
+     Four values, because `border-color` is one property and the left rule is
+     not the same channel as the other three: it is the disposition accent, and
+     a tile that drops its accent the moment you point at it stops matching the
+     rows it opens. */
+  --hover-edge: var(--text-strong) var(--text-strong) var(--text-strong)
+    var(--accent, var(--border-hairline));
+  --hover-bg: color-mix(in srgb, var(--text-strong) 7%, var(--surface-card));
+  --hover-ink: var(--text-body);
+}
+.qstat-n {
+  font: var(--type-dimension);
+  font-size: clamp(1.75rem, 3.4vw, 2.75rem);
+  line-height: 1;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+.qstat-l {
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* The same three accents the queue rows already carry on their left rule, so
+   a tile and the rows it opens are visibly the same thing. */
+.qstat[data-disposition='auto_tunable'] {
+  --accent: var(--annotation);
+  border-left-color: var(--accent);
+}
+.qstat[data-disposition='needs_component'],
+.qstat[data-disposition='escalate'] {
+  --accent: var(--accent-dimension);
+  border-left-color: var(--accent);
+}
+.qstat[data-disposition='confirmation'] {
+  --accent: var(--verified);
+  border-left-color: var(--accent);
+}
+/* `--surface-raised` does not exist, so this fell back to --surface-card, which
+   is what the tile already rests on: a clickable tile with no hover response at
+   all. Mixed off the ink instead, which lifts in the light scheme and in the
+   dark one alike. */
+.qstat:focus-visible {
+  border-color: var(--hover-edge);
+  background: var(--hover-bg);
+  color: var(--hover-ink);
+}
+.qstat:not(:disabled):hover .qstat-l,
+.qstat:not(:disabled):focus-visible .qstat-l {
+  color: var(--text-strong);
+}
+/* Pressed: an ink frame all the way round, the accent included, so the tile you
+   are filtered to reads as one object rather than one with a coloured edge. It
+   keeps that frame under the pointer. */
+.qstat.on {
+  --hover-edge: var(--text-strong);
+
+  border-color: var(--text-strong);
+  box-shadow: inset 0 0 0 1px var(--text-strong);
+}
+.qstat:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.qstat:disabled .qstat-n {
+  color: var(--text-muted);
+}
+
+/* The digest sits on a row of its own, and that row needs a bottom margin.
+   Without one it butted straight into the state filters below and read as one
+   overlapping stack of boxes rather than two separate controls. */
+.channel-actions {
+  margin-top: var(--space-3, 1rem);
+  margin-bottom: var(--space-5, 2rem);
+}
+
+/* ── the four states ───────────────────────────────────────────────────────
+ * Bigger than the chips they replace, and each in its own ink. Four grey words
+ * in four grey boxes made "rejected" and "accepted" the same object, which is
+ * the one distinction this row exists to draw.
+ *
+ * No new hues: the survey green is the one already spent on VERIFIED, the red
+ * is CRITICAL's, and the two accents are the system's own. The colour is the
+ * left rule and the text; the fill only arrives on the pressed one, so at most
+ * one of the four is ever shouting.
+ */
+.states {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  margin: var(--space-4, 1.5rem) 0 var(--space-4, 1.5rem);
+}
+.state-btn {
+  --state: var(--text-muted);
+  --hover-edge: var(--state);
+  --hover-bg: color-mix(in srgb, var(--state) 14%, transparent);
+  --hover-ink: var(--state);
+
+  padding: 0.6rem 1.1rem;
+  font: var(--type-label);
+  font-size: 0.8125rem;
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--state);
+  background: transparent;
+  border: 1px solid var(--border-input);
+  border-left: 3px solid var(--state);
+  transition: var(--transition-colour);
+}
+/* Four states, four treatments, and no fifth hue: the system owns a red, a
+   blue, the survey green and the ink ramp, and that is exactly four. Measured
+   rather than assumed — `--accent-dimension` and `--sev-critical` resolve to
+   the same red in the dark scheme, so spending both would have left "new" and
+   "rejected" identical, which is the one distinction this row is for. */
+.state-btn[data-state='new'] {
+  --state: var(--accent-dimension);
+}
+.state-btn[data-state='accepted'] {
+  --state: var(--verified);
+}
+.state-btn[data-state='rejected'] {
+  --state: var(--text-strong);
+}
+.state-btn[data-state='actioned'] {
+  --state: var(--annotation);
+}
+/* Already filled with its own colour, so hovering nudges that colour toward the
+   page rather than swapping it: darker in the dark scheme, lighter in the
+   light one, and the same hue in both. */
+.state-btn.on {
+  --hover-edge: var(--state);
+  --hover-bg: color-mix(in srgb, var(--state) 85%, var(--surface-page));
+  --hover-ink: var(--text-reverse);
+
+  color: var(--text-reverse);
+  background: var(--state);
+  border-color: var(--state);
+}
+.state-btn:focus-visible {
+  border-color: var(--hover-edge);
+  background: var(--hover-bg);
+  color: var(--hover-ink);
+}
+/* The narrowing a count applied, and the way back out of it. */
+.state-clear {
+  --hover-edge: var(--text-strong);
+  --hover-bg: color-mix(in srgb, var(--text-strong) 7%, transparent);
+  --hover-ink: var(--text-strong);
+
+  padding: 0.6rem 1.1rem;
+  font: var(--type-label);
+  letter-spacing: var(--ls-label);
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px dashed var(--border-input);
+}
+/* The one thing the variables cannot carry: the dashes go solid, so the way out
+   of a narrowing reads as a real control the moment you reach for it. */
+.state-clear:hover,
+.state-clear:focus-visible {
+  border-style: solid;
 }

@@ -185,11 +185,82 @@ def building_area(f: ProjectFacts, out: RuleResult):
                               "either number can be relied on.",
                   action="State the area and its basis (gross or net) on the code data sheet.")
             return
+    # Nobody stated an area — but the set may still tabulate one. Saying
+    # "neither the drawings nor the declaration state this" over a sheet that
+    # prints LOBBY/RECEPTION 400 SQ. FT. and STUDIO AREA 1,300 SQ. FT. is a
+    # false statement about the drawings, and it is what this rule used to do.
+    if _no_area_stated(f) and f.meta.get("area_tally"):
+        _report_tabulated(f, out, f.meta["area_tally"])
+        return
+
     _emit(f, out, "DECL.BUILDING_AREA", "building_area_sf",
           discipline="Height and area", code="FBC-B Table 506.2 · Table 1004.5",
           fid_conflict="X-ARE", fid_ok="V-ARE", subject="an area of",
           consequence="Area drives Table 506.2 and the occupant load.",
           action="State the area and its basis on the code data sheet.")
+
+
+def _no_area_stated(f: ProjectFacts) -> bool:
+    """True when neither source gave an area, by either name."""
+    for key in ("building_area_sf", "total_area_sf"):
+        rec = _record(f, key)
+        if rec is not None and (rec.declared_value is not None
+                                or rec.drawn_value is not None):
+            return False
+    return True
+
+
+def _report_tabulated(f: ProjectFacts, out: RuleResult, tally: dict) -> None:
+    """Report the area the set tabulates, as arithmetic rather than as a fact.
+
+    The sum of a room-area table is not a gross building area: it is the spaces
+    somebody chose to list, net of walls, chases and whatever circulation they
+    left out, and both Table 506.2 and Table 1004.5 want gross. So this is a
+    finding the applicant is asked to confirm, showing its working — and it is
+    deliberately not fed to `building_area_sf`, which is why Table 506.2 still
+    stands down on this set instead of being computed off a number nobody
+    stated.
+    """
+    rows = tally.get("rows") or []
+    total = float(tally.get("total_sf") or 0)
+    sheet, page = tally.get("sheet") or "", int(tally.get("page") or 0)
+    heading = tally.get("heading") or "AREA CALCULATION"
+    listed = "; ".join(f"{r['label']} {float(r['sf']):,.0f} SF" for r in rows)
+    stated_total = tally.get("stated_total")
+
+    out.findings.append(Finding(
+        "D-ARE", "DECL.BUILDING_AREA", "OPEN", "MEDIUM", "Height and area",
+        page, sheet, heading,
+        f"Building area is not stated; the {heading} table on {sheet} "
+        f"totals {total:,.0f} SF",
+        f"Every sheet, for a stated building area, and the project declaration for a "
+        f"declared one. Neither gave a figure, so the set's own area table was added up "
+        f"instead.",
+        f"No sheet states a building area and the declaration left it blank. "
+        f"{sheet} carries a table headed {heading}, listing {len(rows)} "
+        f"{'space' if len(rows) == 1 else 'spaces'}: {listed}. "
+        + (f"The table states a total of {float(stated_total):,.0f} SF, which agrees with "
+           f"the sum of its rows. " if stated_total is not None else
+           f"They sum to {total:,.0f} SF. ")
+        + "That sum is not a gross building area — it is the spaces this table lists, "
+          "net of walls, shafts and any circulation left off it — so it is reported here "
+          "for you to confirm and is NOT used for the Table 506.2 allowable-area "
+          "comparison or the Table 1004.5 occupant load. Those checks stand down until "
+          "an area is stated.",
+        "Review coverage · derived from the set's own table, not a code citation",
+        action=(f"State the building area per storey, and its basis (gross or net), on the "
+                f"code data sheet — or answer it in the project declaration and re-run. "
+                f"If {total:,.0f} SF is the gross area, saying so turns three checks that "
+                f"are standing down into checks that run."),
+        body=("An area table is the commonest way a set carries its areas without ever "
+              "writing 'BUILDING AREA' anywhere, and it is the shape this build used to "
+              "miss entirely: the review reported that neither the drawings nor the "
+              "declaration stated an area, over a sheet printing the components of it.\n\n"
+              "The arithmetic is shown above so it can be checked in the time it takes to "
+              "read the table. What it cannot tell you is the basis — whether the drafter "
+              "listed every space or only the occupiable ones — and that is the difference "
+              "Table 1004.5 is sensitive to, which is why it is a question here and not "
+              "an answer.")))
 
 
 @rule("DECL.HEIGHT")

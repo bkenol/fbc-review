@@ -197,18 +197,43 @@ Two consequences worth knowing:
 
 ## 5. What the reviewer sees
 
-### `/training` — the way in
+### `/refine` — the way in, and the whole loop
 
-Training is a destination, not a checkbox. It used to be only a review option,
+**On the name.** This page said "Training" and the word was doing damage. It
+promises a model learning a check from examples, which is exactly what this
+cannot do — the review path makes zero model calls and is not going to make
+one. What actually happens is that a reviewer's argument moves a named,
+versioned lever on a rule somebody wrote by hand, and the next review's analysis
+is sharper for it. The page is called **Refine analysis** and says that.
+
+The mechanism keeps its old name wherever the old name is accurate:
+`FBC_TRAINING_MODE`, `options.mode == "training"`, `TrainingStatus` and
+`/api/admin/*` are unchanged. Renaming a wire field to improve a heading is how
+a client and a server stop agreeing.
+
+**It is a destination, not a checkbox.** It used to be only a review option,
 which meant the one way to reach any of it was to have a permit set in hand and
 be willing to wait forty seconds — while the questions people actually have
 (what have I told it, what did it do with that, what is still waiting on
 somebody) have nothing to do with the document in front of them.
 
-`/training` needs no upload. It shows the live profile version, how many rules
-it has moved, and every finished review as something you can open and work
-through. There is genuinely nothing to train on without a document; there is no
-reason it has to be a *new* one.
+`/refine` needs no upload. It shows the live profile version, how many rules it
+has moved, every finished review as something you can open and work through,
+and — for an owner — the queue those arguments land in. There is genuinely
+nothing to refine without a document; there is no reason it has to be a *new*
+one.
+
+**The queue is a section of this page, not a second route.** It was `/admin`,
+behind a second entry in the masthead, and that split described the permission
+by putting a navigation step in the middle of one loop: a reviewer argues with a
+rule here, the argument lands in the queue, and what is approved there is what
+the next review runs against. Somewhere you have to remember to go is somewhere
+you stop going. `/admin` and `/training` both still resolve — they redirect —
+because both URLs were handed out.
+
+Nothing about who may decide has moved. It was never the route guard that
+enforced it: every `/api/admin/*` path answers 404 to anybody who is not an
+owner, and that is untouched.
 
 The checkbox on the upload form still exists and still means one thing: which
 profile a **new** review runs against — your own candidate, so you see the
@@ -223,11 +248,81 @@ marketing block and the page gutters: a 24x36 sheet inside a 92-character
 measure is a drawing you cannot read, and this is the one screen where the
 document is the whole point.
 
-The zoom fits the sheet rather than opening at 100%, and keeps fitting it as the
-window and the side panel change size until somebody zooms by hand. `viewer/fit.ts`
-is that arithmetic, pure and tested on its own — fitting both axes is what makes
-one rule work for a landscape 24x36, a portrait title sheet and a square detail
+The zoom fits rather than opening at 100%, and keeps fitting as the window and
+the side panel change size until somebody zooms by hand. `viewer/fit.ts` is that
+arithmetic, pure and tested on its own — fitting both axes is what makes one
+rule work for a landscape 24x36, a portrait title sheet and a square detail
 sheet with no orientation branch anywhere.
+
+It opens on **fit width**, not fit sheet. Fitting a 24x36 sheet whole, next to a
+side panel, puts a schedule's row height at two or three pixels: the sheet is
+visible and nothing on it is readable, so the first act was always to zoom back
+in. Fit width starts where that zoom was going, and scrolling down a sheet is
+how the paper copy is read anyway. Fit sheet is one click away, because "where
+am I on this sheet" is a real question — it is just not the question you spend
+the session in.
+
+#### The sheet rail
+
+A permit set is read by sheet number. You go to M-2 because the ductwork is on
+M-2, and paging through fifteen sheets to reach it is work the paper set does
+not make you do. So every sheet is a chip on a rail inside the viewer, named
+from `summary.sheet_index`, carrying its open-finding count, its in-file comment
+count and its markup count — the rail is a map of where the work is, not a list
+of names. Arrow keys page it once the sheet has focus, and large arrows sit over
+the drawing where your eyes already are.
+
+The sheet numbers are the engine's own reading of the title block, carried
+forward rather than re-derived: `webapp/worker.py` writes `facts.sheets` into
+the summary. A sheet whose number could not be read is flagged and captioned
+"Sheet n" — the viewer's own numbering, which does not pretend the drawing is
+called `p7`.
+
+#### Three authors mark a permit set
+
+Findings, the file's own comments, and your markup are three separate layers
+with three separate toggles, because "whose mark is this?" has to be answerable
+by turning one off. There is a fourth switch for the reviewed copy — the
+marked-up PDF rendered in place of the source, with the engine's markup burnt in
+and its findings register on the pages past the end of the set.
+
+#### The comments that came with the file
+
+`viewer/annots.ts`. A permit set arrives with other people's marks on it: the
+engineer's revision clouds, a plans examiner's sticky notes from the last
+submittal, a callout the architect left in. Those are the most valuable
+annotations on the sheet, because somebody who knows the building wrote them.
+
+The viewer showed none of them, and not by choice: pdf.js paints a page from its
+content stream, and a PDF annotation is not in the content stream. It is a
+separate array on the page object, drawn by a separate layer this viewer never
+had, so a commented-up set and a clean one rendered identically.
+
+They are now read once per document, drawn in their own geometry — squares,
+ellipses, polygons, ink strokes, text-markup quads — in the colour the file gave
+them, with the region each comment is about and the comment text written on the
+drawing beside it. They are registered in the panel too, so four comments on M-2
+are visible without visiting M-2. The panel says plainly that they came with the
+file and are not something this review found: three authors, and telling them
+apart is the whole job of the layer.
+
+`readAnnotations` reads pdf.js's plain objects through a supplied
+user-space-to-viewport function and imports nothing, so the arithmetic is tested
+without a canvas. An annotation with no readable rectangle is dropped rather
+than placed at the origin — the same rule the finding pins follow.
+
+#### Picking a row takes you to the mark
+
+A register row that does not go to the sheet it is about is a row you then have
+to find, on a set where finding it means knowing which of thirty-five sheets it
+is on. Picking a finding, an in-file comment or a markup pages the viewer to its
+sheet, scrolls the mark into the middle of the stage and lights it for two
+seconds. Picking the same row again re-centres it — that is the case that
+matters, because you have scrolled away and are asking to be taken back.
+
+Picking the mark *on the drawing* deliberately does not scroll: the sheet is
+already in front of you, and moving it out from under the cursor you just
+clicked with is the opposite of helpful.
 
 In training mode the sheet also takes markup — highlight, box, revision cloud,
 arrow, strikeout, freehand, text label, note — each with a comment and a
@@ -309,22 +404,94 @@ the coupling runs the other way: a new reason over there fails a test here and
 somebody decides what it means, rather than a reviewer being told
 "unclassified" about something the engine was perfectly clear about.
 
-Two viewer decisions worth recording:
+### Answering what the rule was waiting on
 
-- **It renders the source set, not the marked-up PDF.** The marked-up PDF has
+Classifying an abstention says whether it was *right*. It does not make the
+rule run. On a real submittal the commonest line in the register is
+
+> `DECL.BUILDING_AREA` — neither the drawings nor the declaration state this
+
+and that rule is correct, and it is waiting on one number. Until now the only
+way to give it that number was to upload the permit set a second time and
+re-answer the whole questionnaire alongside it — so the remedy cost more than
+the finding was worth, and every one of these stayed in the register forever.
+
+Three pieces close that:
+
+1. **The rule names its own questions.** `fbcreview/declaration_schema.py`
+   already states, per field, which rules answering it enables — the form uses
+   `unlocks` to say what completing a question buys you. `abstentions.py`
+   inverts that map and puts `unlocked_by` on every classified abstention. Two
+   readings of one fact, so they cannot drift; nothing is written out twice.
+   `building_area_sf` and `total_area_sf` unlock `DECL.BUILDING_AREA`;
+   `code_edition` unlocks `CODE.EDITION_CURRENT`; a geometric rule that could
+   not find its linework names nothing, because no questionnaire would help it
+   and an offer there would be a dead end dressed as a remedy.
+
+2. **The workspace asks them, and only them.** Picking an abstention shows the
+   named questions on the panel, rendered from the same `/api/config` metadata
+   the full form uses. A field the review already declared is not asked again —
+   the rule did not stand down for want of *that*, and re-asking invites
+   somebody to overwrite an answer they gave deliberately.
+
+3. **`POST /api/jobs/{id}/rerun` reviews the set again.** The PDF is already in
+   the bucket and the admission profile is already on the record, so the file is
+   never re-sent and never re-probed: this costs one pass of the engine. The new
+   declaration is *merged over* the original's, because the browser only sends
+   the questions it asked about and a field it omitted is unanswered-in-this-
+   request rather than withdrawn.
+
+It creates a **new** review rather than amending the old one. A review is a
+dated statement about a set under stated assertions; editing one in place would
+rewrite what somebody was already told. Both stay in the history, and the second
+carries `rerun_of` and links back to the first from its header.
+
+Measured on a stand-in set: 31 abstentions before, 25 after seven fields were
+answered, with six checks that had nothing to work from now returning
+`VERIFIED`.
+
+### Making the controls look like controls
+
+Not cosmetic, and worth recording. Every secondary action in the application —
+*Send the digest now*, *Dismiss*, *Report it anyway*, *Close*, *Confirm*,
+*Show all*, *Hand over* — was drawn with no border, no fill and a hairline in
+muted grey, which is the same treatment this stylesheet gives a disabled label.
+Meanwhile `.annot-name`, which labels things and links to nothing, carried an
+underline in `--annotation` — the same blue family as `--link`. So the queue's
+status line had three blue underlined words that did nothing when clicked,
+inches from real controls that looked like captions.
+
+Both are fixed the same way: a control is framed, in ink, at label size, with
+the colour swap on hover every other button has; a label keeps the survey-blue
+annotation ink and loses the underline, which is reserved for `a.annot-name`
+where it tells the truth.
+
+Three viewer decisions worth recording:
+
+- **It opens the source set, not the marked-up PDF.** The marked-up PDF has
   every marker burnt into the page; drawing an interactive layer on top would
-  show each one twice, with neither switchable.
+  show each one twice, with neither switchable. The marked-up copy is a layer
+  you switch to, which is also how its register becomes readable in the app.
 - **Finding pins are placed by searching the page's text layer for the anchor
-  the finding cites** — the same strategy `render/markup.py` uses. When the
-  anchor is not there, usually because the sheet pastes its code table in as a
-  picture, the finding is listed and says it could not be placed. A guessed
-  position would put a marker on the wrong part of somebody's drawing.
+  the finding cites, at the occurrence its `hit` names** — the same strategy
+  and the same index `render/markup.py` uses. The `hit` is not a nicety: on a
+  door schedule listing `2'-8"` four times, always boxing the first would put
+  the viewer's marker on a different door from the marked-up PDF, and the two
+  would be reporting the same finding about different rows. When the anchor is
+  not there, usually because the sheet pastes its code table in as a picture,
+  the finding is listed and says it could not be placed. A guessed position
+  would put a marker on the wrong part of somebody's drawing.
+- **A finding that exists only under the declared reading gets no marker**,
+  because the renderer gives it none. The permit is issued against what was
+  submitted and the AHJ reviews the sheet, so a marker there would attribute to
+  the drawings something the drawings do not say. It is in the register, with
+  its basis stated.
 
 ---
 
 ## 6. What the owner sees
 
-`/admin`, gated on `FBC_OWNER_EMAILS`. Every report with its verdict, the
+The queue, section 04 of `/refine`, gated on `FBC_OWNER_EMAILS`. Every report with its verdict, the
 finding it is about, the markup, the comment, and the proposed diff. Three ways
 out:
 
@@ -339,6 +506,18 @@ Escalations also mail immediately where SMTP is configured; everything else
 waits for the digest. `auto_tunable` deliberately does not interrupt: it is a
 one-click approval sitting in a queue, and mailing about it would train the
 owner to ignore the mail that matters.
+
+Both optional channels — mail and the comment assist — are configured for a
+local deployment through one git-ignored file, `secrets/local.env`. See
+`docs/DEPLOYMENT.md` §6a for the file, the Google Workspace App Password mail
+needs, and why the parser deliberately refuses to be cleverer than Docker's.
+`bash scripts/setup-secrets.sh --check` says where you stand; the value of that
+is that both channels fail *quietly* when unconfigured — the review still runs
+and the feedback still queues, so nothing tells you but the queue's own status
+rows. Those are now one line per channel — mail, issues, the comment assist —
+each saying where it stands, with the digest button on a row of its own. They
+were a single run-on paragraph with three blue underlined names in it, none of
+which was a link.
 
 ---
 

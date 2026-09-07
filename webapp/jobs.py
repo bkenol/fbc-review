@@ -84,6 +84,11 @@ class JobStore:
         # The declaration is part of the audit trail: the register prints what
         # the applicant asserted, and support has to be able to read it back.
         declaration: Optional[Dict[str, Any]] = None,
+        # The review this one re-runs, when it re-runs one. Part of the audit
+        # trail for the same reason the declaration is: two reviews of one set
+        # that say different things is a fact somebody will have to explain,
+        # and the explanation is that the second was given more to work with.
+        rerun_of: Optional[str] = None,
     ) -> Dict[str, Any]:
         record = {
             "id": job_id,
@@ -98,6 +103,7 @@ class JobStore:
             "options": options,
             "declaration": declaration,
             "upload_blob": upload_blob,
+            "rerun_of": rerun_of,
             "source": source,
             "summary": None,
             "conversion": None,

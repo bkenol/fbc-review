@@ -15,6 +15,18 @@
  * the window and the side panel change size, until somebody zooms by hand and
  * takes the decision back.
  *
+ * ## Why `width` is the mode it starts in
+ *
+ * `page` was the first default, and it was wrong in practice. Fitting a 24x36
+ * sheet into a browser window alongside a side panel puts a schedule's row
+ * height at two or three pixels: the sheet is *visible* and nothing on it is
+ * *readable*, so the first act was always to zoom back in. `width` starts where
+ * that zoom was going, and scrolling down a sheet is how the paper copy is read
+ * anyway.
+ *
+ * `page` stays one click away, because "where am I on this sheet" is a real
+ * question — it is just not the question you spend the session in.
+ *
  * Fitting both axes is what makes one rule work for a landscape 24x36, a
  * portrait 8.5x11 title sheet and a square detail sheet without any of them
  * being a special case: the constraint is whichever axis runs out first.

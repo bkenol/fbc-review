@@ -24,5 +24,9 @@ export interface Abstention {
     proposable?: boolean;
     reason: string;
     rule: string;
+    /**
+     * Keys of the `DeclarationField`s whose answer would let this rule run. Inverted from the schema\'s own `unlocks`, so it cannot drift from it. Empty where no question would help — a geometric rule that could not find its linework is not waiting on a questionnaire.
+     */
+    unlocked_by?: Array<string>;
 }
 

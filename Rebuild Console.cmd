@@ -2,12 +2,20 @@
 rem  Meridian Rebuild Console — double-click this, or a shortcut to it.
 rem
 rem  Opens the console in your browser: Pull, Rebuild and Publish as buttons,
-rem  with their output streaming into the page.
+rem  with their output streaming into the page, plus Config and Doctor for
+rem  what this machine is actually set up to do - including whether mail and
+rem  the comment assist have their keys in secrets\local.env, and whether the
+rem  running container has picked them up.
 rem
-rem      "Rebuild Console.cmd"            open the console
-rem      "Rebuild Console.cmd" shortcut   put a shortcut on the Desktop
-rem      "Rebuild Console.cmd" debug      open it with a visible console, so a
-rem                                       startup error is readable
+rem      "Rebuild Console.cmd"                open the console
+rem      "Rebuild Console.cmd" app            open it as its own Chrome window,
+rem                                           with no tab strip or address bar
+rem      "Rebuild Console.cmd" app-shortcut   put a Desktop shortcut that does
+rem                                           that - the one to use
+rem      "Rebuild Console.cmd" shortcut       the older Desktop shortcut, which
+rem                                           opens in the default browser
+rem      "Rebuild Console.cmd" debug          open it with a visible console, so
+rem                                           a startup error is readable
 rem
 rem  From Git Bash, use scripts/rebuild-console.sh instead — a POSIX path with
 rem  no spaces in it, which avoids the backslash-escaping this file's name runs
@@ -57,11 +65,26 @@ if not defined PY (
   exit /b 1
 )
 
+if /i "%~1"=="app" goto :app
+if /i "%~1"=="app-shortcut" goto :appshortcut
 if /i "%~1"=="shortcut" goto :shortcut
 if /i "%~1"=="debug" goto :debug
 
 rem pythonw has no console, so the only window that appears is the browser.
 start "" /b "%PY%" "%REPO%\scripts\rebuild_console.py"
+exit /b 0
+
+:app
+rem As its own Chrome window rather than a tab. Falls back to the default
+rem browser when no Chromium-family browser is installed.
+start "" /b "%PY%" "%REPO%\scripts\rebuild_console.py" --browser app
+exit /b 0
+
+:appshortcut
+rem The shortcut worth having: targets pythonw directly, so no console window
+rem flashes, and opens the page in an app window carrying Chrome's own icon.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO%\scripts\app-shortcut.ps1"
+pause
 exit /b 0
 
 :debug
@@ -73,11 +96,22 @@ exit /b 0
 
 :shortcut
 rem WScript.Shell is the only thing on a stock Windows that writes a .lnk.
+rem
+rem WindowStyle 7 is minimised. The target is this .cmd, so Windows opens a
+rem console for it however briefly - it only starts pythonw and exits - and a
+rem black window flashing on every launch is what stops people using a
+rem shortcut.
+rem
+rem Every comment stays above the command: a caret continues the line, so a
+rem `rem` between two continued lines is not a batch comment at all - it is
+rem passed to powershell as an argument, and the shortcut silently stops
+rem being written.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Rebuild Console.lnk'));" ^
   "$s.TargetPath = '%REPO%\Rebuild Console.cmd';" ^
   "$s.WorkingDirectory = '%REPO%';" ^
   "$s.Description = 'Meridian Rebuild Console';" ^
+  "$s.WindowStyle = 7;" ^
   "$s.Save();" ^
   "Write-Host 'Shortcut placed on the Desktop.'"
 pause

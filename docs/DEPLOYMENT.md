@@ -111,12 +111,21 @@ builds the client and runs the tests.
 Then put the console on the Desktop and use that from here on:
 
 ```powershell
-& ".\Rebuild Console.cmd" shortcut
+& ".\Rebuild Console.cmd" app-shortcut
 ```
 
 Pull, Rebuild and Publish become buttons, their output streams into the page,
 and a line says whether the running container is on the commit in your working
 tree. `bash scripts/rebuild-console.sh` is the same thing from Git Bash.
+
+That shortcut opens the console as **its own Chrome window** — no tab strip, no
+address bar, its own taskbar button and Chrome's icon — because the console is a
+control panel and a control panel that lives in a tab gets lost among thirty
+others. It targets `pythonw.exe` directly rather than the `.cmd`, so no console
+window flashes on launch. Edge and Brave work too; with none of them installed
+the page opens in the default browser instead. `& ".\Rebuild Console.cmd" app`
+does the same thing once, without writing a shortcut, and
+`& ".\Rebuild Console.cmd" shortcut` still writes the older default-browser one.
 
 To confirm a machine is running what you think it is, read the version in the
 masthead and the footer of the page itself — locally it carries the commit and
@@ -1157,15 +1166,212 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_VERSION` | stamped from `VERSION` | The version reported on `/healthz` and shown in the client. Set by CI; wins over anything computed locally. See §5a. |
 | `FBC_BUILD` | unset | Build number, when handing one in without a full `FBC_VERSION`. |
 | `FBC_DEV_UNSAFE_AUTH` | unset | **Local only.** Ignored whenever `K_SERVICE` is set. |
-| `FBC_SMTP_*`, `FBC_MAIL_FROM` | unset | Email stays inert unless all are set |
+| `FBC_SMTP_*`, `FBC_MAIL_FROM` | unset | Email stays inert unless all are set. For a local run, `secrets/local.env` — see §6a. |
 | `FBC_TRAINING_MODE` | unset | `1` turns training mode on. Unset, no feedback collection exists and no Firestore collection beyond `reviews` is touched — see §8. **`share.ps1` and `share.sh` set it for a local run**, along with `FBC_OWNER_EMAILS=dev@localhost` so the owner's queue is reachable under the dev bypass; `-NoTraining` / `--no-training` opts out. The deployed service is unaffected: this default lives in the local run scripts, not in `webapp/config.py`. |
 | `FBC_OWNER_EMAILS` | empty | Who may read the feedback queue and promote a calibration profile. A second, independent list: **empty means nobody**, and being on `FBC_ALLOWED_EMAILS` does not put you on this one. |
 | `FBC_FEEDBACK_COLLECTION` | `feedback` | Firestore collection for submitted feedback |
 | `FBC_MARKUP_COLLECTION` | `markups` | Firestore collection for sheet markup |
 | `FBC_CALIBRATION_COLLECTION` | `calibration` | Firestore collection for calibration profile versions |
-| `ANTHROPIC_API_KEY` | unset | Summarising free-text feedback comments (`webapp/assist.py`). **Feedback path only** — never the review path, and `tests/test_training.py` walks the import graph to keep that true. Unset, comments route to a person unread. |
+| `ANTHROPIC_API_KEY` | unset | Summarising free-text feedback comments (`webapp/assist.py`). **Feedback path only** — never the review path, and `tests/test_training.py` walks the import graph to keep that true. Unset, comments route to a person unread. For a local run, `secrets/local.env` — see §6a. |
 | `FBC_GITHUB_REPO` | unset | `owner/repo` to open issues in from escalated feedback |
 | `FBC_GITHUB_TOKEN` | unset | Token for the above. Issues stay unavailable unless both are set. |
+
+### 6a. Configuring a local deployment: `secrets/local.env`
+
+On Cloud Run these variables are set once on the service and forgotten. Locally
+the service is a container `scripts/share.sh` starts from whatever shell is
+open, and exporting five SMTP variables and an API key before every start is a
+step that gets skipped. The failure is silent — mail and the comment assist are
+both inert without their keys, a review still runs, feedback still queues, and
+the only place that says otherwise is the queue on `/refine`.
+
+So there is one git-ignored file, and both paths read it: the container gets it
+as `docker run --env-file`, and a bare `uvicorn` gets it through
+`webapp/envfile.py`.
+
+```bash
+bash scripts/setup-secrets.sh          # copy the template, then say what is missing
+$EDITOR secrets/local.env              # fill in the blanks
+bash scripts/share.sh                  # restart; the container picks it up
+bash scripts/setup-secrets.sh --check  # what is set, without changing anything
+```
+
+On Windows: `powershell -ExecutionPolicy Bypass -File scripts\setup-secrets.ps1`.
+
+Three rules, and the second one is the one that bites:
+
+1. **Anything already set in the environment wins.** Cloud Run has no such file,
+   and if one ever appeared in a checkout it could not override the real thing.
+2. **Do not quote values.** Docker's `--env-file` takes quotes literally, so
+   `FBC_SMTP_PASS="abcd efgh"` sends the quotes as part of the password.
+   `webapp/envfile.py` deliberately parses no more cleverly than Docker does —
+   a parser that stripped quotes would authenticate locally and fail in the
+   container, which is worse than not supporting them. A password with spaces
+   in it is written bare. `setup-secrets` flags any quoted line it finds.
+3. **There is no `$VAR` expansion.** The value is the characters after the `=`.
+
+#### Mail, on Google Workspace
+
+`webapp/mailer.py` speaks SMTP with STARTTLS, which is `smtp.gmail.com` on 587.
+
+- `FBC_SMTP_USER` is the full address.
+- `FBC_SMTP_PASS` is a 16-character **App Password**, not the account password.
+  Google rejects the account password for SMTP on any account with 2-step
+  verification, which is every Workspace account worth having. Generate one at
+  <https://myaccount.google.com/apppasswords> signed in as that account.
+- `FBC_MAIL_FROM` must be the authenticated address or one of its verified
+  aliases. Gmail rewrites or rejects a `From` it does not own.
+- `FBC_OWNER_EMAILS` is who escalations and the digest go to. Empty means
+  nobody, so mail can be fully configured and still have nowhere to go —
+  `setup-secrets` calls that out.
+
+Prove it end to end from the queue on `/refine`: **send the digest now** returns what the SMTP
+server said, including the failure text when it said no.
+
+#### The comment assist
+
+`ANTHROPIC_API_KEY` turns on `webapp/assist.py`, which reads the free-text half
+of a feedback submission so an escalation arrives with a sentence saying what
+the person actually claimed. Keys are at
+<https://console.anthropic.com/settings/keys>.
+
+**It is not the review path and it cannot become the review path.** It runs
+after a review has finished, on a background thread, against feedback a person
+submitted. `tests/test_training.py::test_no_model_call_is_reachable_from_the_review_path`
+walks the import graph from `webapp.worker` and `fbcreview` and fails if
+`anthropic` is reachable from either — including through a lazy import inside a
+function. A review still makes zero model calls with this set. Its opinion is
+advisory and one-directional: it may raise a disposition and can never lower
+one (`docs/TRAINING-MODE.md` §3.5).
+
+For Cloud Run, put the key in Secret Manager and mount it rather than setting it
+as a plain environment variable — see the block below §8.
+
+##### Two kinds of key, and only one works unaided
+
+The console issues both, and the difference is not cosmetic:
+
+| Type | What it is | Needs |
+| --- | --- | --- |
+| **Workspace** | Bound to one workspace. Survives its creator leaving. | `ANTHROPIC_API_KEY` |
+| **Identity-linked** | Belongs to the person or service account that made it, and can act in several workspaces. | `ANTHROPIC_API_KEY` **and** `ANTHROPIC_WORKSPACE_ID` |
+
+An identity-linked key with no workspace named is refused outright:
+
+```
+400  anthropic-workspace-id is required when authenticating with an
+     identity-linked API key
+```
+
+The SDK sends that header for a credentials-file profile and never for a key
+read out of the environment, which is how this service authenticates — so
+`webapp/assist.py` sets it as a default header when `ANTHROPIC_WORKSPACE_ID` is
+present, and sends nothing when it is not. An empty header is a 400 of its own,
+which is why "unset" and "empty" have to mean the same thing here.
+
+The type is in the **Type** column at
+<https://console.anthropic.com/settings/keys>. `bash scripts/setup-secrets.sh
+--check` says whether you have set it, and warns when a key is present without
+one.
+
+Finding the id has one wrinkle worth knowing. A key created for **All
+workspaces** shows its Workspace ID as `—`, because it is not bound to one —
+which is exactly the key that needs the id supplied. Read it instead off any
+workspace-scoped key in the same organisation, or from the workspace's own page
+under **Organization settings → Workspaces**. It identifies the workspace, not
+the key, so the same `wrkspc_` value serves every key acting in it.
+
+#### Issues from escalated feedback
+
+`FBC_GITHUB_REPO` and `FBC_GITHUB_TOKEN` together let the queue open an escalated
+report as a GitHub issue — the same brief the prompt export produces, but
+tracked. Both are needed; either alone leaves the button unavailable.
+
+`webapp/notify.py` makes exactly one call, `POST /repos/{owner}/{repo}/issues`,
+with a `Bearer` token. So the token needs one permission and no more.
+
+**A fine-grained personal access token** (<https://github.com/settings/personal-access-tokens>):
+
+1. **Generate new token**, and set **Resource owner** to the account or
+   organisation that owns the repository. Getting this wrong is the usual
+   reason a token 404s on a repository that plainly exists.
+2. **Repository access → Only select repositories**, and pick the one you want
+   the issues in.
+3. **Repository permissions → Issues → Read and write.** Nothing else. Leave
+   Contents at "No access": this token opens issues, it does not push code.
+4. Set an expiry you will actually notice. The failure is quiet — the issue
+   button stops working and the queue says the channel is unconfigured.
+5. Copy the `github_pat_...` value once; GitHub will not show it again.
+
+A classic token works too and needs the `repo` scope, but that scope also
+grants read and write to your code on every repository you can reach. Prefer
+fine-grained.
+
+Then, in `secrets/local.env`:
+
+```
+FBC_GITHUB_REPO=owner/repo
+FBC_GITHUB_TOKEN=github_pat_...
+```
+
+`FBC_GITHUB_REPO` is `owner/repo` — no URL, no `.git`, no leading slash. It is
+interpolated straight into the API path.
+
+Two things worth doing before you rely on it. The issue is created with the
+labels `training-feedback` and `disposition/<disposition>`, where the
+disposition is one of `confirmation`, `auto_tunable`, `needs_component` or
+`escalate` — create those five labels in the repository first, so the first
+escalation is not the thing that finds out whether GitHub minds. And note that
+the token is never logged and a GitHub error is recorded by status code only,
+deliberately: an error body can echo the request back, and the request carries
+the report. That is the right trade for a service and a poor one for you
+standing at a terminal wondering why nothing happened, which is what the check
+below is for.
+
+##### Checking the token without opening an issue
+
+Send a create-issue request with a deliberately empty body. GitHub answers
+**403** when the token may not write issues and **422** when it may but the
+payload is wrong — and 422 creates nothing, because `title` is required:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -X POST https://api.github.com/repos/OWNER/REPO/issues \
+  -H "Authorization: Bearer $FBC_GITHUB_TOKEN" \
+  -H 'Accept: application/vnd.github+json' \
+  -H 'X-GitHub-Api-Version: 2022-11-28' \
+  -d '{}'
+```
+
+In PowerShell, on one line, with the token in a variable — `curl` there is an
+alias for `Invoke-WebRequest`, which takes none of these flags, and `\` is not
+a line continuation:
+
+```powershell
+$t = 'github_pat_...'
+curl.exe -s -o NUL -w "%{http_code}\n" -X POST https://api.github.com/repos/OWNER/REPO/issues -H "Authorization: Bearer $t" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" -d "{}"
+```
+
+Read the answer as a question about the *credential* first and the
+*permission* second:
+
+| Code | What it means |
+| --- | --- |
+| **422** | What you want. The permission is there; the empty payload was rejected and nothing was created. |
+| **401** | GitHub did not accept the credential at all. Almost never the token's scopes — it is the token that arrived: a placeholder pasted literally, a truncated copy, or a shell variable that expanded to nothing. An unset `$FBC_GITHUB_TOKEN` sends `Bearer ` and reads exactly like a bad token. |
+| **403** | Valid token, missing permission. Set Issues to Read and write. |
+| **404** | Valid token that cannot see the repository — the **resource owner** is not the account that owns it, or it was not in the selected list. A fine-grained token says "not found" rather than "not allowed". |
+
+Isolate a 401 before touching anything else, because this call answers only for
+the credential:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "Authorization: Bearer $FBC_GITHUB_TOKEN" https://api.github.com/user
+```
+
+`200` means the token is fine and the problem was in the longer command;
+`401` means the token itself never arrived intact.
 
 ---
 
@@ -1518,7 +1724,7 @@ gcloud run services update fbc-review --region=us-east1 \
   --update-env-vars="FBC_TRAINING_MODE=1,FBC_OWNER_EMAILS=you@example.com"
 ```
 
-`FBC_OWNER_EMAILS` is what makes `/admin` reachable and what gates every
+`FBC_OWNER_EMAILS` is what makes the queue section of `/refine` visible and what gates every
 `/api/admin/*` route. It is deliberately not derived from
 `FBC_ALLOWED_EMAILS`: running a review and re-levelling a rule for every future
 applicant are different privileges, and an unset variable must not grant the
@@ -1547,7 +1753,7 @@ Each is inert unless configured and each says so on `/api/admin/overview`.
 
 | Channel | Needs | Without it |
 | --- | --- | --- |
-| Immediate mail on an escalation, and the digest | `FBC_SMTP_*`, `FBC_MAIL_FROM`, `FBC_OWNER_EMAILS` | Feedback still queues; you read `/admin` |
+| Immediate mail on an escalation, and the digest | `FBC_SMTP_*`, `FBC_MAIL_FROM`, `FBC_OWNER_EMAILS` | Feedback still queues; you read the queue on `/refine` |
 | A GitHub issue from a report | `FBC_GITHUB_REPO`, `FBC_GITHUB_TOKEN` | The prompt export still works; copy it by hand |
 | Free-text comments summarised before they reach you | `ANTHROPIC_API_KEY` | Any comment routes to you unread, which is what it did before |
 
