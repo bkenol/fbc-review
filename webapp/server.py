@@ -1114,6 +1114,19 @@ def list_markups(
     )
 
 
+def _require_geometry(body: "models.MarkupRequest") -> None:
+    """Refuse a shape that carries no geometry, where its shape needs one.
+
+    Checked on the way in rather than on the way out: a markup that points
+    nowhere is not recoverable later, and the person who could still say where
+    they meant is the one drawing it right now.
+    """
+    complaint = feedback_schema.geometry_complaint(
+        str(body.kind), body.geometry.model_dump())
+    if complaint:
+        raise ApiError(400, errors.INVALID_REQUEST, complaint)
+
+
 @app.post(
     "/api/jobs/{job_id}/markups",
     response_model=models.Markup,
@@ -1142,6 +1155,7 @@ def create_markup(
             400, errors.INVALID_REQUEST,
             f"This set has {pages} sheets; there is no page {body.page}.",
         )
+    _require_geometry(body)
 
     stored = feedback.add_markup({
         "job_id": job_id,
@@ -1184,6 +1198,7 @@ def update_markup(
     existing = feedback.get_markup(markup_id)
     if not existing or existing.get("uid") != user.uid or existing.get("job_id") != job_id:
         raise ApiError(404, errors.NOT_FOUND, "No such markup.")
+    _require_geometry(body)
 
     feedback.update_markup(
         markup_id,
