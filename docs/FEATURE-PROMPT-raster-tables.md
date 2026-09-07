@@ -20,7 +20,7 @@ Reference implementations are in `docs/reference/ocr/` — read them before writ
 
 ---
 
-## Status — two of the four root causes are fixed
+## Status — three of the four root causes are fixed, the fourth in part
 
 Recorded here rather than in a commit message, because the next person to pick
 this up needs to know which half is left.
@@ -29,8 +29,8 @@ this up needs to know which half is left.
 | --- | --- | --- |
 | 1 — `pdfocr_tobytes()` loses line geometry | `webapp/convert.py` | **Fixed.** Tesseract is driven directly for TSV per-word boxes (`_tesseract_words`), confidence-gated, laid back cell by cell at true origins. |
 | 3 — the classifier hands over tiles, not tables | `webapp/pdfkind.py` | **Fixed.** `_coalesce()` merges bands of one plotted region before the size floors. See below. |
-| 2 — one region OCR'd as two side-by-side tables | `fbcreview/extract/blocks.py` | **Open.** Not fixable in `webapp/` — see below. |
-| 4 — parsers expect a table shape this office does not draw | `fbcreview/extract/` | **Open.** |
+| 2 — one region OCR'd as two side-by-side tables | `fbcreview/extract/formblocks.py` | **Fixed.** `column_strips()` re-derives the strip from the block's own word geometry and `cluster_rows()` keys on `(strip, y)`. See below. |
+| 4 — parsers expect a table shape this office does not draw | `fbcreview/extract/formblocks.py` | **Partly fixed.** Banner citations, word values and two pairs on one row all read (Phase 3). The ruled `LABEL │ PROVIDED │ REQUIRED` grid still needs Phase 2. |
 
 ### What root cause 3 actually cost, measured
 
@@ -48,18 +48,33 @@ the perpendicular extent, measured against the larger of the two. Merging two
 genuinely separate tables would cluster the left one's labels against the right
 one's values, which is a worse failure than leaving a seam in.
 
-### Why root cause 2 cannot be fixed in `webapp/`
+### Why root cause 2 had to be fixed in the engine, and how it was
 
 `convert.py::_ocr_region` writes each recovered cell back at its own true
 origin as invisible text. There is nowhere in a PDF text layer to put a strip
-index, and the downstream clustering in `fbcreview/extract/blocks.py::_rows()`
-re-derives rows from geometry alone. So adding column-strip detection to
-`_ocr_cells` would change the grouping inside one function and change nothing at
-all downstream — the fix has to be `_rows()` clustering on `(strip, y)`, which
-is engine work and is Phase 3 below.
+index, and the downstream clustering re-derives rows from geometry alone. So
+adding column-strip detection to `_ocr_cells` would have changed the grouping
+inside one function and changed nothing at all downstream. The fix had to be in
+the engine, clustering on `(strip, y)`.
 
-`CLAUDE.md` puts `fbcreview/` off limits to this service, which is why this is
-written down rather than done.
+`formblocks.column_strips()` re-derives the strip from the same geometry, which
+means it works identically on a vector sheet and an OCR'd one and needs nothing
+carried across the text layer. A candidate separator is a vertical gap no word
+in the block crosses. The trap is that a plain `LABEL   value` table has one of
+those too — the gutter between the label column and the value column — and
+splitting there puts every label in one strip and every value in another, so no
+pair is ever assembled again.
+
+What tells the two apart is what sits to the right of the gap: a second table
+asks its own questions, a value column does not. So a gap becomes a boundary
+only when the words between it and the next candidate carry their own label
+marks. On a sheet drawn as `[L-labels │ L-values] [R-labels │ R-values]` that
+accepts exactly the gap between the two tables and rejects both internal
+gutters. `tests/test_banner_form_block.py` carries the case.
+
+When the raster path grows its own rule-based `column_strips` (Phase 1), it sets
+field 5 and `form_rows()` uses it as-is; the geometric fallback only runs where
+nothing upstream has spoken.
 
 ## The problem, measured
 
@@ -247,7 +262,24 @@ Cost control: cell-by-cell OCR is many more tesseract calls. Cache per region, r
 a thread pool, and skip cells whose ink fraction is under a floor — empty cells are common
 and cost nothing to skip.
 
-### Phase 3 — parsers that match the drawn shape
+### Phase 3 — parsers that match the drawn shape — **done**
+
+Landed as `fbcreview/extract/formblocks.py`, wired into `pipeline.build_facts` by
+`_read_form_blocks()`, with `tests/test_banner_form_block.py` carrying the shape. Three
+departures from the prototype, each because the prototype was wrong rather than because
+this is different:
+
+- **The strip is re-derived, not carried.** `column_strips()` above, so the same code
+  serves a vector sheet with no OCR pass in front of it.
+- **A banner is not also an answer.** The prototype emitted the banner row as a
+  label/value pair — on a two-table sheet, literally one banner labelled with the other.
+  `form_rows()` skips rows that matched as banners.
+- **`find_value(..., without=)`.** `OCCUPANT LOAD FACTOR: 150` sits beside `TOTAL OCCUPANT
+  LOAD: 152` and both keys contain `OCCUPANT LOAD`. The prototype took the first match.
+
+What it reads on the fixture: 7 form rows, 6 of them answered, where `labelled_values`
+read 0. What it does not do is emit `CodeDatum` — a form row carries one value and
+`CodeDatum` wants required *and* provided, which is Phase 2's cell grid.
 
 Port `docs/reference/ocr/formblocks.py`:
 

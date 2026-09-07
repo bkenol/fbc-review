@@ -1,13 +1,14 @@
 """PDF in, findings out. No model in this path."""
 from __future__ import annotations
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 import pymupdf
 
 from .facts import ProjectFacts, Door, VentilationRow
 from .extract.areas import find_tally
 from .extract.document import sheet_index, page_geometry, ocg_names
 from .extract.blocks import code_data_block, labelled_values, normalise, to_feet, to_inches
+from .extract.formblocks import FormRow, find_value, form_block
 from .extract.schedules import find_schedule, split_merged_row
 from .rules import run_all, RuleResult, registered
 from .rules import (r_egress, r_doors, r_mechanical, r_electrical,   # noqa: F401
@@ -238,6 +239,8 @@ def build_facts(path: str) -> ProjectFacts:
                 facts.meta["stated_capacity_factor"] = float(re.sub(r"[^\d.]", "", v) or 0) or None
         break
 
+    _read_form_blocks(doc, facts, text)
+
     electrical = [s for s in facts.sheets if _series(s.code).startswith("E")]
     rating = _first_match(
         electrical, text,
@@ -250,6 +253,92 @@ def build_facts(path: str) -> ProjectFacts:
         facts.meta["service_kaic"] = kaic
     doc.close()
     return facts
+
+
+# ── label/value form blocks ──────────────────────────────────────────────────
+#
+# The same code-analysis blocks, read for the shape the parsers above cannot
+# see: values that are words rather than numbers, two `label: value` pairs on
+# one visual row, and a citation banner above the table instead of a section
+# number on every line. See `extract/formblocks.py`.
+#
+# This pass never overwrites a value the stricter parsers produced. It is what
+# the sheet says when they came back empty, and everything it reads is recorded
+# with the label it was printed under, where on the sheet it sits and what the
+# drafter cited above it — so a reviewer can check any of it against the paper.
+
+#: Labels that contain OCCUPANT LOAD and are not the occupant load. A code block
+#: prints `OCCUPANT LOAD FACTOR: 150` beside `TOTAL OCCUPANT LOAD: 152`; reading
+#: the factor as the load is how a plausible wrong number enters a review.
+_NOT_A_LOAD = ("FACTOR", "DENSITY", "PER")
+
+
+def _number(raw: str) -> Optional[float]:
+    """The first plain number in a value, or None.
+
+    Deliberately not `re.sub("[^0-9.]")` over the whole string: that turns
+    `TYPE II-B` into `2` and `150 SF/OCC` into `150.` — it cannot fail, which
+    on a value that is words is exactly the problem.
+    """
+    m = re.search(r"\d[\d,]*(?:\.\d+)?", raw or "")
+    if not m:
+        return None
+    try:
+        return float(m.group().replace(",", "")) or None
+    except ValueError:
+        return None
+
+
+def _read_form_blocks(doc, facts: ProjectFacts, text: Dict[int, str]) -> None:
+    rows: List[FormRow] = []
+    seen = set()
+    for header in CODE_BLOCK_HEADERS:
+        for s in _sheets_naming(facts, text, header):
+            for row in form_block(doc, s.index, header, s.code):
+                key = (row.page, row.strip, round(row.y, 1), row.key, row.value)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(row)
+    if not rows:
+        return
+
+    facts.meta["form_rows"] = [r.as_meta() for r in rows]
+    answered = [r for r in rows if r.value]
+    if answered:
+        bca = facts.meta.setdefault("building_code_analysis", {})
+        for r in answered:
+            bca.setdefault(r.label, r.value)
+
+    reads: Dict[str, dict] = {}
+
+    def take(meta_key: str, value, row: FormRow) -> None:
+        if value is None or facts.meta.get(meta_key) is not None:
+            return
+        facts.meta[meta_key] = value
+        reads[meta_key] = row.as_meta()
+
+    row = find_value(rows, "OCCUPANT LOAD", without=_NOT_A_LOAD)
+    if row:
+        take("occupant_load", _number(row.value), row)
+
+    row = find_value(rows, "EGRESS WIDTH FACTOR")
+    if row:
+        take("stated_capacity_factor", _number(row.value), row)
+
+    row = find_value(rows, "SPRINKLER")
+    if row:
+        # `norm_sprinkler`, not `startswith("Y")`: this block answers the
+        # question with a standard as often as with a yes — `YES, PER NFPA 13`,
+        # `NFPA 13R`, `NONE` — and a value nobody can classify leaves the key
+        # unset so the rules abstain rather than guess.
+        from .reconcile import norm_sprinkler
+        answer = norm_sprinkler(row.value)
+        if answer is not None:
+            take("sprinklered", answer != "NONE", row)
+
+    if reads:
+        facts.meta["form_reads"] = reads
 
 
 def _f(vals, i):
