@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-from webapp import mailer
+from webapp import feedback_schema, mailer
 from webapp.config import settings
 from webapp.triage import (AUTO_TUNABLE, DISPOSITION_LABELS, ESCALATE,
                            NEEDS_COMPONENT)
@@ -256,13 +256,37 @@ def feature_prompt(record: Dict[str, Any], job: Optional[Dict[str, Any]] = None)
 
     markup = record.get("markup") or {}
     if markup:
+        sheet = str(markup.get("sheet") or "").strip()
+        where = "page {}{}".format(markup.get("page", "?"),
+                                   " ({})".format(sheet) if sheet else "")
         lines += [
             "### Where on the sheet",
             "",
-            f"- **{markup.get('kind', 'markup')}** on page {markup.get('page', '?')} "
+            f"- **{markup.get('kind', 'markup')}** on {where} "
             f"at {_where(markup)} (PDF user space, origin top-left)",
-            "",
         ]
+
+        # The reviewer's own classification of what kind of report this is.
+        # `feedback_schema.MARKUP_COLOURS` gives each one a meaning, and
+        # "must change" is a different submission from "question".
+        colour = str(markup.get("colour") or "").strip()
+        if colour:
+            label = next((title for key, title, _hex, _why
+                          in feedback_schema.MARKUP_COLOURS if key == colour), colour)
+            lines.append(f"- Marked **{label}**")
+        lines.append("")
+
+        # The sentence somebody typed next to the box. On a coverage report
+        # this is frequently the *only* statement of what is wrong — the
+        # structured half says a rule stood down, and this says why that was
+        # the wrong call. Dropping it, which this did, left the owner a report
+        # naming a sheet and nothing to act on.
+        note = str(markup.get("comment") or "").strip()
+        if note:
+            lines += [
+                "> " + note.replace("\n", "\n> "),
+                "",
+            ]
 
     # The pass itself, verbatim. A sweep's value is the sentences somebody wrote
     # next to specific places on specific sheets, and summarising it away would
