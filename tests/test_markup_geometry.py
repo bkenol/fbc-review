@@ -234,3 +234,75 @@ def test_a_loose_area_phrase_is_not_widened_with_it():
     facts = build_facts(str(path))
     assert facts.meta.get("area_g0_sf") is None
     assert facts.meta.get("area_g1_sf") is None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 4. The sentence the reviewer actually wrote
+# ══════════════════════════════════════════════════════════════════════════
+# The record below is feedback `6f65009d1762` as the live service returned it,
+# trimmed to the markup. Two things in it never reached the escalation prompt:
+# the geometry (fixed above) and `comment` — which on this report was the only
+# statement of what was wrong. The prompt said "No finding — this is a coverage
+# report" and stopped, so the diagnosis the reviewer typed went nowhere.
+#
+# `sheet` and `colour` went the same way. `colour` is not decoration:
+# feedback_schema.MARKUP_COLOURS defines it as the reviewer's own
+# classification of intent, and "missed" is a different report from "question".
+LIVE_MARKUP = {
+    "id": "063c44a0b9b5",
+    "job_id": "5a0b93b20420",
+    "page": 2,
+    "sheet": "M.101",
+    "kind": "box",
+    "geometry": {"x0": 46.368385314941406, "y0": 51.42721939086914,
+                 "x1": 1354.8616943359375, "y1": 741.6018676757812, "points": []},
+    "comment": "Looks like this text isn't readable, which likely means it wasn't interpreted",
+    "colour": "missed",
+    "finding_fid": "",
+}
+
+
+def _coverage_record(markup):
+    return {
+        "id": "6f65009d1762",
+        "subject": "coverage",
+        "disposition": "needs_component",
+        "answers": {"gap": "avoidable_abstention"},
+        "comment": "",
+        "markup": markup,
+    }
+
+
+def test_the_reviewers_own_words_reach_the_prompt():
+    """The whole content of this report was one sentence in the markup, and
+    the prompt dropped it. A report nobody can read is a report nobody can
+    act on."""
+    markdown = notify.feature_prompt(_coverage_record(LIVE_MARKUP))
+    assert "wasn't interpreted" in markdown
+    assert "isn't readable" in markdown
+
+
+def test_the_marked_sheet_reaches_the_prompt():
+    markdown = notify.feature_prompt(_coverage_record(LIVE_MARKUP))
+    assert "M.101" in markdown
+
+
+def test_the_reviewers_classification_reaches_the_prompt():
+    """`missed` is the reviewer saying which kind of report this is."""
+    markdown = notify.feature_prompt(_coverage_record(LIVE_MARKUP))
+    assert "missed" in markdown
+
+
+def test_the_live_geometry_renders_as_the_region_it_was():
+    """The coordinates were in the store the whole time — nearly the full
+    sheet, which is itself the signal that the reviewer meant the sheet."""
+    markdown = notify.feature_prompt(_coverage_record(LIVE_MARKUP))
+    assert "no geometry" not in markdown
+    assert "46.3684" in markdown or "46.37" in markdown or "46.368" in markdown
+
+
+def test_a_markup_with_no_comment_adds_no_empty_section():
+    quiet = dict(LIVE_MARKUP, comment="", colour="")
+    markdown = notify.feature_prompt(_coverage_record(quiet))
+    assert "M.101" in markdown          # the rest still renders
+    assert "> \n" not in markdown       # and no hollow quote block

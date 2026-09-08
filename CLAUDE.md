@@ -80,6 +80,12 @@ the numbers.
 - **Hosting: Firebase Hosting** (static bundle + `/api/**` rewrite) in front of
   **Cloud Run** `us-east1`. Firestore for job records, Cloud Storage for artefacts.
 - **Auth: Firebase Authentication**, Google provider, server-side email allowlist.
+- **Hostname: `fbc.omniflexfitness.com`.** The canonical one, and the only one that
+  answers. `review.omniflexfitness.com` appeared in this file and in
+  `docs/DEPLOYMENT-PROMPT.md` and was never implemented — `cors.json`, every script's
+  `FBC_DOMAIN` default, the Cloudflare tunnel config and `docs/DEPLOYMENT.md` have
+  always said `fbc.`. Two names for one service sent a session chasing a network
+  fault that did not exist. Do not reintroduce the other one.
 
 ## Angular — you will get this wrong from memory
 
@@ -146,5 +152,5 @@ What holds instead of a prohibition:
 
 ## Current task
 
-`docs/DEPLOYMENT-PROMPT.md` — deploy this to `review.omniflexfitness.com`. Six phases.
+`docs/DEPLOYMENT-PROMPT.md` — deploy this to `fbc.omniflexfitness.com`. Six phases.
 Write the runbook to `docs/DEPLOYMENT.md` as you go.

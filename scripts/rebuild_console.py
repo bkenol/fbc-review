@@ -591,6 +591,118 @@ def service_mail(port: int) -> Optional[Dict[str, object]]:
     return value
 
 
+#: The one hostname. Settled in CLAUDE.md; see tests/test_canonical_hostname.py.
+CANONICAL_HOST = "fbc.omniflexfitness.com"
+
+
+def _auth_mode(port: int) -> Dict[str, object]:
+    """Whether the running container is asking anyone to sign in.
+
+    Asked of the container rather than read off the file, for the reason
+    `service_mail` gives: the file on disk and the environment the container
+    actually started with are different facts.
+
+    A `200` from `/api/config` with no `Authorization` header is the whole
+    answer — it means the bypass is on, because every route but `/healthz`
+    depends on `current_user`.
+    """
+    if not port_open(port):
+        return {"known": False, "why": "nothing is listening on 127.0.0.1:{}".format(port)}
+    try:
+        request = urllib.request.Request(
+            "http://127.0.0.1:{}/api/config".format(port))
+        with urllib.request.urlopen(request, timeout=3) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        return {"known": True, "enforced": False,
+                "owner": bool((body.get("training") or {}).get("is_owner"))}
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return {"known": True, "enforced": True}
+        return {"known": False, "why": "HTTP {}".format(exc.code)}
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return {"known": False, "why": str(exc)[:60]}
+
+
+def facts(repo: Path, port: int) -> None:
+    """Write the values you need to operate this service, ready to paste.
+
+    Every one of these has been looked up by hand at least once, out of the
+    source, in the middle of doing something else. They do not change, so the
+    console can just say them.
+
+    **No secret is printed here.** `local_config` lists which names
+    `secrets/local.env` gives a value to and never the values, and this keeps
+    that rule: a token or a key on screen is a token or a key in a screenshot.
+    What this does instead is tell you whether you need one at all, which is
+    the question that actually blocks people.
+    """
+    rule("facts")
+
+    mode = _auth_mode(port)
+    log_write("Sign-in")
+    if not mode.get("known"):
+        log_write("  Cannot tell - {}".format(mode.get("why", "no answer")))
+        log_write("  Start the app, then press Facts again.")
+    elif mode.get("enforced"):
+        log_write("  ON. Endpoints need an Authorization: Bearer <id-token> header.")
+        log_write("  Get a token: sign in at https://{}, then in DevTools".format(CANONICAL_HOST))
+        log_write("  open Console and run:")
+        log_write("")
+        log_write("    await (await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js'), 0)")
+        log_write("    // simpler: the app stores it. Read it straight out of IndexedDB:")
+        log_write("    (await new Promise(r => { const o = indexedDB.open('firebaseLocalStorageDb');")
+        log_write("      o.onsuccess = () => { const q = o.result.transaction('firebaseLocalStorage',")
+        log_write("        'readonly').objectStore('firebaseLocalStorage').getAll();")
+        log_write("        q.onsuccess = () => r(q.result.find(x =>")
+        log_write("          String(x.fbase_key).startsWith('firebase:authUser:'))); }; }))")
+        log_write("      ?.value?.stsTokenManager?.accessToken")
+        log_write("")
+        log_write("  Tokens last one hour. Fetch one immediately before you use it.")
+    else:
+        log_write("  OFF - FBC_DEV_UNSAFE_AUTH is set and this is not Cloud Run.")
+        log_write("  There is no sign-in token to find, and no Authorization header")
+        log_write("  on any request, because nothing is asking for one. Commands")
+        log_write("  below need no token.")
+        log_write("")
+        log_write("  !!! This is the local-development bypass. If a tunnel is")
+        log_write("  !!! publishing {} right now, every".format(CANONICAL_HOST))
+        log_write("  !!! endpoint is open to anyone who knows the address. Stop")
+        log_write("  !!! the tunnel, or unset FBC_DEV_UNSAFE_AUTH and rebuild.")
+
+    log_write("")
+    log_write("Where things are")
+    log_write("  Canonical host      https://{}".format(CANONICAL_HOST))
+    log_write("  Local app           http://127.0.0.1:{}".format(port))
+    log_write("  GCP/Firebase project  fbc-reviewer")
+    log_write("  Cloud Run service     fbc-review (us-east1)")
+    log_write("  Firestore collections feedback, markups, calibration")
+    log_write("  Repository          {}".format(repo))
+
+    log_write("")
+    log_write("Mark one piece of feedback actioned - paste and edit the id")
+    log_write("")
+    if mode.get("known") and not mode.get("enforced"):
+        log_write("curl -sS -X POST \\")
+        log_write("  \"https://{}/api/admin/feedback/PASTE_ID/decision\" \\".format(CANONICAL_HOST))
+        log_write("  -H \"Content-Type: application/json\" \\")
+        log_write("  -d '{\"decision\": \"action\", \"note\": \"Done.\"}'")
+    else:
+        log_write("curl -sS -X POST \\")
+        log_write("  \"https://{}/api/admin/feedback/PASTE_ID/decision\" \\".format(CANONICAL_HOST))
+        log_write("  -H \"Authorization: Bearer $TOKEN\" \\")
+        log_write("  -H \"Content-Type: application/json\" \\")
+        log_write("  -d '{\"decision\": \"action\", \"note\": \"Done.\"}'")
+    log_write("")
+    log_write("  decision is one of: action, accept, reject.")
+    log_write("  accept returns 400 when the triage attached no proposal;")
+    log_write("  action is the right one for a confirmation or a gap report.")
+
+    log_write("")
+    log_write("Read the queue")
+    log_write("")
+    log_write("curl -sS \"https://{}/api/admin/feedback\"".format(CANONICAL_HOST))
+
+
 def doctor(repo: Path, port: int) -> None:
     """Write a prerequisites report into the shared log."""
     def line(state: str, label: str, detail: str = "") -> None:
@@ -983,6 +1095,7 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
   <button id="funnel">Publish &middot; Tailscale</button>
   <button id="config" class="quiet">Config</button>
   <button id="doctor" class="quiet">Doctor</button>
+  <button id="facts" class="quiet">Facts</button>
   <button id="cancel" class="quiet">Cancel</button>
   <button id="clear" class="quiet">Clear log</button>
 </div>
@@ -1061,6 +1174,7 @@ document.getElementById("tunnel").onclick = function () { run("tunnel"); };
 document.getElementById("funnel").onclick = function () { run("funnel"); };
 document.getElementById("config").onclick = function () { run("config"); };
 document.getElementById("doctor").onclick = function () { run("doctor"); };
+document.getElementById("facts").onclick = function () { run("facts"); };
 document.getElementById("cancel").onclick = function () { run("cancel"); };
 document.getElementById("clear").onclick = function () {
   api("/api/clear", {}).then(function () { logBox.textContent = ""; offset = 0; });
@@ -1306,6 +1420,15 @@ class Console(http.server.BaseHTTPRequestHandler):
                 return {"ok": False}
             threading.Thread(
                 target=doctor, args=(self.repo, int(opts.get("port") or 8060)),
+                daemon=True,
+            ).start()
+            return {"ok": True}
+        if action == "facts":
+            # Reads only, and fast enough not to need the task slot — it must
+            # stay usable while a rebuild is running, which is exactly when
+            # somebody wants the address to paste somewhere.
+            threading.Thread(
+                target=facts, args=(self.repo, int(opts.get("port") or 8060)),
                 daemon=True,
             ).start()
             return {"ok": True}
