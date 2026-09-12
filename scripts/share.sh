@@ -89,7 +89,22 @@ ok()    { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn()  { printf '  \033[33m!\033[0m %s\n' "$*"; }
 die()   { printf '\n\033[31m✗ %s\033[0m\n\n' "$*" >&2; exit 1; }
 
-command -v docker >/dev/null 2>&1 || die "docker is not on PATH. Is Docker Desktop running?"
+# Docker before anything else, and the daemon rather than the CLI. Docker
+# Desktop leaves `docker` on PATH whether or not the engine is running, so this
+# check used to pass with the engine stopped and merely *ask* whether it was up
+# in its failure text. The run then spent a full client build before dying at
+# `docker build` on a raw socket error. Only `docker info` reaches the daemon.
+command -v docker >/dev/null 2>&1 || die \
+  "docker is not on PATH. Install Docker Desktop, then open a new terminal."
+if ! docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+  printf '\n\033[31m✗ Docker Desktop is not running\033[0m\n\n' >&2
+  printf '  The CLI is installed; the engine it talks to is stopped, so\n' >&2
+  printf '  building the image would fail after the client build.\n\n' >&2
+  printf '  Start Docker Desktop, wait for it to finish starting, then\n' >&2
+  printf '  re-run this. To confirm it is up:\n\n' >&2
+  printf '      docker info\n\n' >&2
+  exit 1
+fi
 
 # Windows-form paths for the -v arguments. On a non-Windows shell cygpath does
 # not exist and the POSIX path is already correct.

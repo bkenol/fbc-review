@@ -131,6 +131,26 @@ To confirm a machine is running what you think it is, read the version in the
 masthead and the footer of the page itself — locally it carries the commit and
 says `.dirty` when the tree has uncommitted changes. §5a explains the scheme.
 
+### Docker Desktop has to be actually running
+
+Not merely installed. Docker Desktop leaves `docker.exe` on PATH whether or not
+its engine is up, so every check short of asking the daemon passes with the
+engine stopped — and a Rebuild then builds the whole client before dying on:
+
+```
+ERROR: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
+```
+
+That is a stopped program, not a broken checkout. Both run scripts now ask
+`docker info` before they build anything, so it fails in a second with the fix
+in it, and the console's guidance panel names it rather than going on advising
+the Rebuild that just failed. **Doctor** reports the daemon separately from the
+CLI.
+
+To stop it recurring, turn on *Settings → General → "Start Docker Desktop when
+you sign in"*. A container started with `-Persistent` restarts with Docker, so
+that setting is what makes the local deployment survive a reboot.
+
 ### One hostname, one machine
 
 Every machine can run the app locally on `127.0.0.1:8060`; only one can serve

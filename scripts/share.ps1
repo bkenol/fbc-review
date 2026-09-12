@@ -71,6 +71,54 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
+
+# Docker before anything else, and the daemon rather than the CLI. Docker
+# Desktop leaves docker.exe on PATH whether or not the engine is running, so
+# Get-Command proves nothing; only a question that reaches the daemon does.
+# Asked here, first, because the alternative is what this script used to do:
+# spend a full client build and then fail on `docker build` with
+#
+#   ERROR: failed to connect to the docker API at npipe:////./pipe/...
+#
+# followed by a PowerShell stack trace, which reads as a broken script rather
+# than a stopped program.
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    Write-Host ''
+    Write-Host '  X Docker is not installed, or not on PATH' -ForegroundColor Red
+    Write-Host ''
+    Write-Host '    winget install --id Docker.DockerDesktop'
+    Write-Host ''
+    Write-Host '    Open a new terminal afterwards - winget only updates PATH'
+    Write-Host '    for new processes.'
+    Write-Host ''
+    exit 1
+}
+# $ErrorActionPreference drops to Continue across the probe on purpose:
+# PowerShell turns a native command's *redirected* stderr into an ErrorRecord,
+# and under 'Stop' that is terminating - so swallowing docker's complaint would
+# itself throw, before this could say anything useful in its place.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { & docker info --format '{{.ServerVersion}}' 2>&1 | Out-Null }
+finally { $ErrorActionPreference = $prevEap }
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ''
+    Write-Host '  X Docker Desktop is not running' -ForegroundColor Red
+    Write-Host ''
+    Write-Host '    The CLI is installed; the engine it talks to is stopped, so'
+    Write-Host '    building the image would fail after the client build.'
+    Write-Host ''
+    Write-Host '    Start Docker Desktop, wait for it to finish starting, then'
+    Write-Host '    re-run this. To confirm it is up:'
+    Write-Host ''
+    Write-Host '        docker info'
+    Write-Host ''
+    Write-Host '    To have it come up with Windows: Docker Desktop, Settings,'
+    Write-Host '    General, "Start Docker Desktop when you sign in".'
+    Write-Host ''
+    exit 1
+}
+
 Push-Location $repo
 
 try {
@@ -133,7 +181,14 @@ try {
 
     Write-Host 'Building the image...' -ForegroundColor Cyan
     & docker build -q -t fbc-review:dev $repo | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'docker build failed - see the errors above.' }
+    # The daemon was up at the top of this script; if the build cannot reach it
+    # now, it stopped in between. Named, because "docker build failed" over a
+    # named-pipe error is the pair that sent someone hunting through the repo.
+    if ($LASTEXITCODE -ne 0) {
+        throw ('docker build failed - see the errors above. If that mentions ' +
+               'the docker API or a named pipe, Docker Desktop stopped; start ' +
+               'it and re-run.')
+    }
 
     # Asked rather than attempted. `docker rm` writes "No such container" to
     # stderr when there is nothing to remove, and PowerShell turns a native

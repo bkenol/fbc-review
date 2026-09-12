@@ -364,3 +364,118 @@ def test_the_facts_button_is_wired_to_the_action(console):
     assert 'getElementById("facts").onclick' in source
     assert 'run("facts")' in source
     assert 'if action == "facts":' in source
+
+
+# ── the Docker daemon, and the log loop ───────────────────────────────────
+# Both come from one reported failure: six Rebuilds in a row that each built the
+# client, then died on `docker build` with a named-pipe error, while the page
+# went on advising the Rebuild that had just failed — and printed every line of
+# it two and three times.
+
+SHARE_PS1 = ROOT / "scripts" / "share.ps1"
+SHARE_SH = ROOT / "scripts" / "share.sh"
+
+
+def test_docker_is_judged_by_the_daemon_and_not_by_the_cli(console, monkeypatch):
+    """Docker Desktop leaves the CLI on PATH while the engine is stopped, so
+    `which docker` cannot tell the two apart and only `docker info` can."""
+    monkeypatch.setattr(console.shutil, "which", lambda name: "/usr/bin/" + name)
+    console._probe_cache.clear()
+
+    monkeypatch.setattr(console, "_probe", lambda argv, timeout=8.0: None)
+    stopped = console.docker_ready()
+    assert stopped["ok"] is False
+    assert "daemon is not running" in stopped["why"]
+
+    console._probe_cache.clear()
+    monkeypatch.setattr(console, "_probe", lambda argv, timeout=8.0: "27.4.0")
+    assert console.docker_ready() == {"ok": True, "why": "server 27.4.0"}
+
+
+def test_a_missing_docker_is_not_reported_as_a_stopped_one(console, monkeypatch):
+    monkeypatch.setattr(console.shutil, "which", lambda name: None)
+    console._probe_cache.clear()
+    assert console.docker_ready() == {"ok": False, "why": "not installed"}
+
+
+def test_a_probe_is_not_rerun_for_every_poll(console, monkeypatch):
+    """The page polls every 800 ms and asked for each probe twice per poll. On
+    Windows that was process spawns costing more than the interval itself,
+    which is what let the polls overlap."""
+    monkeypatch.setattr(console.shutil, "which", lambda name: "/usr/bin/" + name)
+    console._probe_cache.clear()
+    calls = []
+    monkeypatch.setattr(console, "_probe",
+                        lambda argv, timeout=8.0: calls.append(argv) or "27.4.0")
+    for _ in range(20):
+        console.docker_ready()
+    assert len(calls) == 1
+
+
+def test_a_stopped_daemon_is_named_instead_of_advising_the_rebuild(console, tmp_path,
+                                                                   monkeypatch):
+    monkeypatch.setattr(console, "port_open", lambda port: False)
+    monkeypatch.setattr(console, "container_version", lambda port: None)
+    monkeypatch.setattr(console, "docker_ready",
+                        lambda: {"ok": False, "why": "installed, but the daemon is not running"})
+
+    hints = console.guidance(tmp_path, 8060, 8443, "")
+
+    assert [h["title"] for h in hints] == ["Docker Desktop is not running"]
+    assert hints[0]["tone"] == "bad"
+    body = "\n".join(hints[0]["lines"])
+    assert "Start Docker Desktop" in body
+    assert "docker info" in body
+    # The advice that was wrong must not also be on screen.
+    assert "Press Pull + Rebuild" not in body
+
+
+def test_the_rebuild_is_still_the_advice_when_docker_is_fine(console, tmp_path,
+                                                             monkeypatch):
+    monkeypatch.setattr(console, "port_open", lambda port: False)
+    monkeypatch.setattr(console, "container_version", lambda port: None)
+    monkeypatch.setattr(console, "docker_ready", lambda: {"ok": True, "why": "server 27.4.0"})
+
+    hints = console.guidance(tmp_path, 8060, 8443, "")
+
+    assert [h["title"] for h in hints] == ["Nothing is running"]
+
+
+def test_the_log_says_where_the_lines_it_returns_start(console):
+    """Without this the page cannot tell a fresh reply from a late one, and a
+    late one replays lines that are already on screen."""
+    console.log_clear()
+    for i in range(3):
+        console.log_write("line {}".format(i))
+
+    first = console.log_since(0)
+    assert first["from"] == 0 and first["offset"] == 3
+
+    console.log_write("line 3")
+    assert console.log_since(3) == {"from": 3, "offset": 4,
+                                    "lines": ["line 3"], "total": 4}
+    # A reply built from a cursor the page has already moved past is
+    # identifiable as such, which is what lets the page drop it.
+    assert console.log_since(0)["from"] == 0
+    console.log_clear()
+
+
+def test_only_one_poll_is_ever_in_flight(console):
+    """A bare setInterval fires whether or not the last reply has landed, and
+    two requests carrying the same offset both answer "everything after N"."""
+    source = CONSOLE.read_text(encoding="utf-8")
+    assert "setInterval(poll" not in source, "the poll loop must not be free-running"
+    assert "if (polling) { return; }" in source
+    assert "timer = setTimeout(poll, 800);" in source
+    # And the reply is checked against the cursor it was asked for.
+    assert "s.from === offset" in source
+
+
+def test_both_run_scripts_reach_the_daemon_before_building_the_client(console):
+    """A stopped daemon used to cost a full client build before it was found."""
+    for script, probe in ((SHARE_PS1, "docker info"), (SHARE_SH, "docker info")):
+        text = script.read_text(encoding="utf-8")
+        assert probe in text, "{} never asks the daemon".format(script.name)
+        assert text.index(probe) < text.index("Building the client"), (
+            "{} asks the daemon after paying for the client build".format(script.name)
+        )
