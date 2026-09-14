@@ -201,10 +201,18 @@ def log_write(text: str) -> None:
 
 
 def log_since(offset: int) -> Dict[str, object]:
+    """Every line after `offset`, and the two ends of what is being returned.
+
+    `from` is the offset actually used - the request's, unless it was out of
+    range and got clamped. The page checks it against its own cursor and drops
+    anything that does not line up, so a reply that arrives late can never
+    append lines a newer reply already appended.
+    """
     with _LOG_LOCK:
         if offset < 0 or offset > len(_LOG):
             offset = 0
-        return {"offset": len(_LOG), "lines": _LOG[offset:], "total": len(_LOG)}
+        return {"from": offset, "offset": len(_LOG),
+                "lines": _LOG[offset:], "total": len(_LOG)}
 
 
 def log_clear() -> None:
@@ -452,7 +460,39 @@ def _probe(argv: List[str], timeout: float = 8.0) -> Optional[str]:
     return ""
 
 
-def cloudflared_ready() -> Dict[str, object]:
+# Anything that spawns a process is answered from a short-lived cache, because
+# the page polls every 800 ms and every poll asked for all of these twice - once
+# for the status strip and again inside guidance(). On Windows that was three
+# process spawns per poll (`git describe` and `tailscale status`, twice), which
+# on a slow answer took longer than the poll interval itself. See the note on
+# the poll loop in PAGE for what overlapping polls then did to the log.
+_PROBE_TTL = 4.0
+#: Longer, because "is the Docker daemon up" does not flip minute to minute and
+#: asking is the most expensive question here.
+_DOCKER_TTL = 10.0
+_probe_cache: Dict[str, tuple] = {}
+_probe_cache_lock = threading.Lock()
+
+
+def _cached(key: str, ttl: float, produce):
+    """Memoise `produce()` under `key` for `ttl` seconds.
+
+    The lock is not held across `produce`, so two callers arriving together can
+    both run it. That costs one extra probe and never a wrong answer, which is
+    the better trade against blocking a request thread behind a subprocess.
+    """
+    now = time.monotonic()
+    with _probe_cache_lock:
+        hit = _probe_cache.get(key)
+        if hit is not None and now - hit[0] < ttl:
+            return hit[1]
+    value = produce()
+    with _probe_cache_lock:
+        _probe_cache[key] = (time.monotonic(), value)
+    return value
+
+
+def _cloudflared_ready() -> Dict[str, object]:
     """Present, authorised, and holding credentials for some tunnel.
 
     All three are needed. cloudflared installed but with no `<uuid>.json` is
@@ -471,12 +511,42 @@ def cloudflared_ready() -> Dict[str, object]:
     return {"ok": True, "why": "{} tunnel credential(s)".format(len(creds))}
 
 
-def tailscale_ready() -> Dict[str, object]:
+def cloudflared_ready() -> Dict[str, object]:
+    return _cached("cloudflared", _PROBE_TTL, _cloudflared_ready)
+
+
+def _tailscale_ready() -> Dict[str, object]:
     if shutil.which("tailscale") is None:
         return {"ok": False, "why": "not installed"}
     if _probe(["tailscale", "status"]) is None:
         return {"ok": False, "why": "installed, not signed in"}
     return {"ok": True, "why": "signed in"}
+
+
+def tailscale_ready() -> Dict[str, object]:
+    return _cached("tailscale", _PROBE_TTL, _tailscale_ready)
+
+
+def _docker_ready() -> Dict[str, object]:
+    """Whether `docker build` would reach a daemon.
+
+    `docker` on PATH is not the question - Docker Desktop installs the CLI and
+    the CLI is perfectly happy while the engine is stopped. Only something that
+    talks to the daemon can tell the difference, and until this existed nothing
+    on the page could: a rebuild spent a full client build before docker failed
+    with a raw named-pipe error, and the guidance panel went on advising the
+    Rebuild that had just failed.
+    """
+    if shutil.which("docker") is None:
+        return {"ok": False, "why": "not installed"}
+    version = _probe(["docker", "info", "--format", "{{.ServerVersion}}"], 20.0)
+    if version is None:
+        return {"ok": False, "why": "installed, but the daemon is not running"}
+    return {"ok": True, "why": "server {}".format(version) if version else "running"}
+
+
+def docker_ready() -> Dict[str, object]:
+    return _cached("docker", _DOCKER_TTL, _docker_ready)
 
 
 # ── local configuration ───────────────────────────────────────────────────
@@ -918,8 +988,37 @@ def guidance(repo: Path, port: int, funnelport: int,
             ]})
         return hints
 
-    # 2. Nothing running.
+    # 2. Nothing running - but say *why* before advising the button. Docker
+    #    Desktop stopped is the case that reads as a broken script: the client
+    #    builds, the image does not, and the error is a named-pipe path. Only
+    #    asked when nothing is answering, since a running container is itself
+    #    proof the daemon is up.
     if live is None:
+        docker = docker_ready()
+        if not docker["ok"]:
+            if docker["why"] == "not installed":
+                hints.append({"tone": "bad", "title": "Docker is not installed",
+                    "lines": [
+                        "Rebuild needs it to build and run the image.",
+                        "  winget install --id Docker.DockerDesktop",
+                        "Open a new terminal afterwards - winget only updates PATH",
+                        "for new processes.",
+                    ]})
+            else:
+                hints.append({"tone": "bad", "title": "Docker Desktop is not running",
+                    "lines": [
+                        "Rebuild will build the client, then fail on the image with",
+                        "\"failed to connect to the docker API\". Nothing is wrong with",
+                        "the checkout.",
+                        "",
+                        "Start Docker Desktop and wait for the whale to stop animating,",
+                        "then press Pull + Rebuild. To confirm it is up:",
+                        "  docker info",
+                        "",
+                        "To have it come up with Windows: Docker Desktop, Settings,",
+                        "General, \"Start Docker Desktop when you sign in\".",
+                    ]})
+            return hints
         hints.append({"tone": "idle", "title": "Nothing is running",
             "lines": ["Press Pull + Rebuild. It installs client dependencies if the",
                       "branch changed them, builds, and replaces the container."]})
@@ -1136,6 +1235,8 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
 <script>
 var TOKEN = new URLSearchParams(location.search).get("token") || "";
 var offset = 0, logBox = document.getElementById("log"), pinned = true;
+// The poll loop runs one request at a time; see poll() for why.
+var polling = false, timer = null;
 // Hints are rebuilt only when they change; at 800ms a blind rebuild would
 // fight the cursor over any text being selected inside one.
 var lastHints = "";
@@ -1163,7 +1264,7 @@ function opts() {
   };
 }
 
-function run(action) { api("/api/run", { action: action, opts: opts() }).then(poll); }
+function run(action) { api("/api/run", { action: action, opts: opts() }).then(pokePoll); }
 
 document.getElementById("all").onclick = function () { run("all"); };
 document.getElementById("pull").onclick = function () { run("pull"); };
@@ -1188,11 +1289,23 @@ document.getElementById("quit").onclick = function (e) {
 };
 
 function poll() {
+  // One request at a time, always. This used to be a bare setInterval, which
+  // fires whether or not the last reply has landed - and a reply carries the
+  // lines after the offset the *request* was sent with. Two requests in flight
+  // therefore both said "everything after N" and the page appended the same
+  // lines twice, which is why every line arrived doubled and tripled whenever
+  // a poll ran long. The probes behind /api/status are cached now so that is
+  // rarer, but the loop is the thing that made it possible.
+  if (polling) { return; }
+  polling = true;
   var fp = document.getElementById("funnelport");
   api("/api/status?offset=" + offset + "&port=" +
       (parseInt(document.getElementById("port").value, 10) || 8060) +
       "&funnelport=" + (fp ? fp.value : 8443)).then(function (s) {
-    if (s.lines && s.lines.length) {
+    // Belt and braces over the guard above: a reply whose starting point is
+    // not where the cursor now sits describes a stretch of log that has already
+    // been written, so its lines are dropped rather than repeated.
+    if (s.lines && s.lines.length && s.from === offset) {
       logBox.textContent += s.lines.join("\\n") + "\\n";
       offset = s.offset;
       if (pinned) logBox.scrollTop = logBox.scrollHeight;
@@ -1255,11 +1368,26 @@ function poll() {
     document.getElementById("links").innerHTML =
       '<a href="http://127.0.0.1:' + s.port + '/" target="_blank" rel="noopener">127.0.0.1:' + s.port + '</a>' +
       ' &middot; <a href="https://fbc.omniflexfitness.com" target="_blank" rel="noopener">fbc.omniflexfitness.com</a>';
-  }).catch(function () { /* the console was shut down; stop shouting about it */ });
+  }).catch(function () {
+    /* the console was shut down; stop shouting about it */
+  }).then(function () {
+    // Chained, not scheduled independently: the next poll is 800 ms after this
+    // one *finished*, so a slow answer stretches the cadence instead of piling
+    // requests up behind it.
+    polling = false;
+    if (timer) { clearTimeout(timer); }
+    timer = setTimeout(poll, 800);
+  });
+}
+
+// Pressing a button should show its first line straight away rather than up to
+// 800 ms later, without breaking the one-at-a-time rule.
+function pokePoll() {
+  if (timer) { clearTimeout(timer); timer = null; }
+  if (!polling) { poll(); }
 }
 
 poll();
-setInterval(poll, 800);
 </script></body></html>
 """
 
