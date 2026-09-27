@@ -5,15 +5,37 @@ from . import rule, Finding, RuleResult
 from ..confidence import Abstention
 from ..codes import fbc2023 as C
 from ..facts import ProjectFacts
+from ..declaration_schema import BY_KEY
 from ..reconcile import legacy_context
 
-def _ctx(f):
-    """Occupancy group and sprinkler status.
+#: Said when a Chapter 10 table needs the occupancy or sprinkler status and
+#: neither the drawings nor the declaration give it. The rules used to assume
+#: Group A-3, sprinklered, instead; see `reconcile.legacy_context`.
+_ABSENT = "not stated on the drawings and not answered in the project declaration"
 
-    From the project declaration when the applicant stated one, otherwise the
-    fallback these rules have always used. See `reconcile.legacy_context`.
-    """
-    return legacy_context(f)
+
+def _ctx(f, out, rule_id, group=True, sprinklers=True):
+    """(group, sprinklered), or None after recording why the rule stood down."""
+    GROUP, SPRINKLERED = legacy_context(f)
+    missing = []
+    if group and not GROUP:
+        missing.append(BY_KEY["occupancy_group"].pro_label)
+    if sprinklers and SPRINKLERED is None:
+        missing.append(BY_KEY["sprinkler_system"].pro_label)
+    if missing:
+        out.abstentions.append(Abstention(rule_id, _ABSENT, detail="; ".join(missing)))
+        return None
+    return GROUP, SPRINKLERED
+
+
+def _no_row(out, rule_id, table, group):
+    out.abstentions.append(Abstention(
+        rule_id, f"{table} row not carried in this build's corpus",
+        detail=f"Group {group}."))
+
+
+def _with(sprinklered):
+    return "with" if sprinklered else "without"
 
 
 def _datum(facts, section):
@@ -22,13 +44,19 @@ def _datum(facts, section):
 
 @rule("EGRESS.COMMON_PATH")
 def common_path(f: ProjectFacts, out: RuleResult):
-    GROUP, SPRINKLERED = _ctx(f)
     d = _datum(f, "1006.2.1")
     if not d or d.required is None:
         out.abstentions.append(Abstention("EGRESS.COMMON_PATH",
             "no code datum citing 1006.2.1 with a parseable required value"))
         return
+    ctx = _ctx(f, out, "EGRESS.COMMON_PATH")
+    if ctx is None:
+        return
+    GROUP, SPRINKLERED = ctx
     req = C.common_path_ft(GROUP, SPRINKLERED)
+    if req is None:
+        _no_row(out, "EGRESS.COMMON_PATH", "Table 1006.2.1", GROUP)
+        return
     if abs(d.required - req) > 0.5:
         out.findings.append(Finding(
             "H-02", "EGRESS.COMMON_PATH", "OPEN", "HIGH", "Means of egress", d.page, d.sheet,
@@ -36,8 +64,8 @@ def common_path(f: ProjectFacts, out: RuleResult):
             f"Common path requirement understated on {d.sheet}",
             "The common path of egress travel requirement stated in the code data block, "
             "against Table 1006.2.1 for the occupancy and sprinkler status declared on this sheet.",
-            f"{d.sheet} states {d.required:g} LF required. Table 1006.2.1, Group {GROUP[0]} with a "
-            f"sprinkler system, is {req} feet. Provided is {d.provided_raw}, so there is no physical "
+            f"{d.sheet} states {d.required:g} LF required. Table 1006.2.1, Group {GROUP[0]} "
+            f"{_with(SPRINKLERED)} a sprinkler system, is {req} feet. Provided is {d.provided_raw}, so there is no physical "
             f"deficiency — but the stated requirement is wrong.",
             "FBC-B 1006.2.1 · Table 1006.2.1",
             f"Change {d.required:g} LF to {req} LF."))
@@ -52,12 +80,18 @@ def common_path(f: ProjectFacts, out: RuleResult):
 
 @rule("EGRESS.TRAVEL_DISTANCE")
 def travel(f: ProjectFacts, out: RuleResult):
-    GROUP, SPRINKLERED = _ctx(f)
     d = _datum(f, "1017.2")
     if not d or d.required is None:
         out.abstentions.append(Abstention("EGRESS.TRAVEL_DISTANCE", "no parseable 1017.2 datum"))
         return
+    ctx = _ctx(f, out, "EGRESS.TRAVEL_DISTANCE")
+    if ctx is None:
+        return
+    GROUP, SPRINKLERED = ctx
     req = C.travel_distance_ft(GROUP, SPRINKLERED)
+    if req is None:
+        _no_row(out, "EGRESS.TRAVEL_DISTANCE", "Table 1017.2", GROUP)
+        return
     ok = abs(d.required - req) <= 0.5
     out.findings.append(Finding(
         "V-01" if ok else "H-TD", "EGRESS.TRAVEL_DISTANCE", "PASS" if ok else "OPEN",
@@ -65,18 +99,21 @@ def travel(f: ProjectFacts, out: RuleResult):
         d.anchor or "MAX TRAVEL DISTANCE",
         "Travel distance limit — correct" if ok else "Travel distance limit is wrong",
         "The stated travel distance limit against Table 1017.2 for this occupancy and sprinkler status.",
-        f"Table 1017.2, Group {GROUP[0]} with a sprinkler system = {req} feet. "
+        f"Table 1017.2, Group {GROUP[0]} {_with(SPRINKLERED)} a sprinkler system = {req} feet. "
         f"Sheet states {d.required:g} LF, provided {d.provided_raw}.",
         "FBC-B Table 1017.2", "None." if ok else f"Change to {req} LF."))
 
 
 @rule("EGRESS.DEAD_END")
 def dead_end(f: ProjectFacts, out: RuleResult):
-    GROUP, SPRINKLERED = _ctx(f)
     d = _datum(f, "1020.5")
     if not d or d.required is None:
         out.abstentions.append(Abstention("EGRESS.DEAD_END", "no parseable 1020.5 datum"))
         return
+    ctx = _ctx(f, out, "EGRESS.DEAD_END")
+    if ctx is None:
+        return
+    GROUP, SPRINKLERED = ctx
     req = C.dead_end_ft(GROUP, SPRINKLERED)
     ok = abs(d.required - req) <= 0.5
     out.findings.append(Finding(
@@ -93,11 +130,14 @@ def dead_end(f: ProjectFacts, out: RuleResult):
 
 @rule("EGRESS.CORRIDOR_WIDTH")
 def corridor(f: ProjectFacts, out: RuleResult):
-    GROUP, SPRINKLERED = _ctx(f)
     d = _datum(f, "1020.3")
     if not d or d.required is None:
         out.abstentions.append(Abstention("EGRESS.CORRIDOR_WIDTH", "no parseable 1020.3 datum"))
         return
+    ctx = _ctx(f, out, "EGRESS.CORRIDOR_WIDTH", sprinklers=False)
+    if ctx is None:
+        return
+    GROUP, _SPRINKLERED = ctx
     req = C.corridor_width_in(GROUP)
     ok = abs(d.required - req) <= 0.5
     out.findings.append(Finding(
@@ -114,7 +154,6 @@ def corridor(f: ProjectFacts, out: RuleResult):
 
 @rule("EGRESS.CAPACITY_FACTOR")
 def capacity_factor(f: ProjectFacts, out: RuleResult):
-    GROUP, SPRINKLERED = _ctx(f)
     d = _datum(f, "1005.3.2")
     if not d or d.required is None:
         out.abstentions.append(Abstention("EGRESS.CAPACITY_FACTOR", "no parseable 1005.3.2 datum"))
@@ -123,6 +162,10 @@ def capacity_factor(f: ProjectFacts, out: RuleResult):
     if not ol:
         out.abstentions.append(Abstention("EGRESS.CAPACITY_FACTOR", "occupant load not extracted"))
         return
+    ctx = _ctx(f, out, "EGRESS.CAPACITY_FACTOR", group=False)
+    if ctx is None:
+        return
+    _GROUP, SPRINKLERED = ctx
     implied = d.required / ol
     evacs = f.text_contains("VOICE/ALARM") or f.text_contains("EVACS") or f.text_contains("907.5.2.2")
     permitted = C.capacity_factor(SPRINKLERED, evacs)
@@ -151,7 +194,6 @@ def capacity_factor(f: ProjectFacts, out: RuleResult):
 
 @rule("EGRESS.EXIT_COUNT")
 def exit_count(f: ProjectFacts, out: RuleResult):
-    GROUP, SPRINKLERED = _ctx(f)
     from .r_occupancy import computed_load
     d = _datum(f, "1006.3.2") or _datum(f, "1006.3.3")
     # Table 1004.5 can produce the load when the sheets do not state one; what

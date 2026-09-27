@@ -476,28 +476,39 @@ _PATTERNS: Dict[str, List[str]] = {
 def drawn_declaration(facts: ProjectFacts) -> Dict[str, Evidence]:
     """Everything the drawings themselves say about the declaration's fields.
 
-    Only live text is read; nothing here reaches into `fbcreview/extract/`, and
-    a set whose code data block is a pasted picture yields very little — which
-    is the honest answer for that set, and exactly the case the declaration
-    exists to cover.
+    The fact store answers first: every sheet laid out and read against the
+    field catalog, AI readings grounded against the same sheets, and each value
+    carrying the sheet and the words it was read from. What follows it is kept
+    so that no set loses a value it used to read — the structured `meta` values,
+    then the old regex sweep — and each only fills a field the store left empty.
+    A set whose code block is a pasted picture still yields very little, which
+    is the honest answer for that set and the case the declaration exists for.
     """
     out: Dict[str, Evidence] = {}
 
-    # Values the pipeline already extracted are preferred: they came off a
+    store = getattr(facts, "store", None)
+    if store is not None:
+        from .read.catalog import DECLARATION_FIELDS
+        for key, spec in DECLARATION_FIELDS.items():
+            r = store.resolve(spec.key)
+            if r is not None and r.value is not None:
+                out[key] = r.evidence()
+
+    # Values the pipeline already extracted come next: they came off a
     # structured block rather than a text sweep.
     meta = facts.meta
-    if meta.get("area_g0_sf") is not None:
+    if meta.get("area_g0_sf") is not None and "building_area_sf" not in out:
         out["building_area_sf"] = Evidence(
             float(meta["area_g0_sf"]), "G-0 project data", MEDIUM,
             "building area stated on the general sheet")
-    if meta.get("area_g1_sf") is not None:
+    if meta.get("area_g1_sf") is not None and "total_area_sf" not in out:
         out["total_area_sf"] = Evidence(
             float(meta["area_g1_sf"]), "G-1 occupancy tables", MEDIUM,
             "sum of the occupancy tables")
-    if meta.get("risk_category"):
+    if meta.get("risk_category") and "risk_category" not in out:
         out["risk_category"] = Evidence(
             norm_roman(meta["risk_category"]), "G-0 project data", MEDIUM, "")
-    if meta.get("sprinklered") is not None:
+    if meta.get("sprinklered") is not None and "sprinkler_system" not in out:
         out["sprinkler_system"] = Evidence(
             "YES" if meta["sprinklered"] else "NONE", "G-1 building code analysis",
             MEDIUM, "stated as a yes/no, so the standard is not established")
@@ -773,35 +784,28 @@ def basis_of(facts: ProjectFacts, *keys: str) -> str:
     return FROM_DRAWINGS
 
 
-def legacy_context(facts: ProjectFacts) -> Tuple[str, bool]:
-    """Occupancy group and sprinkler status for the rules that predate this module.
+def legacy_context(facts: ProjectFacts) -> Tuple[Optional[str], Optional[bool]]:
+    """Occupancy group and sprinkler status for the Chapter 10 audit rules.
 
-    Those rules shipped with a fallback — `A-3`, and whatever the general sheets'
-    building-code-analysis block said about sprinklers, defaulting to yes — and
-    the existing regression set depends on it.  It is preserved verbatim rather
-    than quietly turned into an abstention, so a set submitted with no
-    declaration reviews exactly as it did before this feature.
+    This used to fall back to `Group A-3` and `sprinklered = True` whenever no
+    declaration said otherwise — the Sculpted building's own profile, handed to
+    every set. On a Group B shell that ran travel distance, common path and dead
+    ends against the wrong rows of their tables, and the finding text said the
+    values were "declared on this sheet". The fallback is gone.
 
-    The reconciled value is used **only when the declaration participates** —
-    CORROBORATED, CONFLICT or DECLARED_ONLY.  A value the text sweep found on
-    its own (DRAWN_ONLY) is deliberately not fed to these rules: that would
-    change what they report on a set nobody declared anything about, which is
-    a behaviour change dressed up as a refactor.
-
-    New rules do not use this at all.  They read `building()` and stand down
-    when it returns `None`.
+    The answer now comes from the reconciled facts in any state — declared,
+    drawn, or both — then from what the pipeline read into `meta`, and is
+    otherwise `None`. A rule that needs it abstains and says which is missing.
     """
-    participating = (CORROBORATED, CONFLICT, DECLARED_ONLY)
-
     r = building(facts, "occupancy_group")
-    if r is not None and r.state in participating:
-        group = str(r.value)
-    else:
-        group = str(facts.meta.get("occupancy_group") or "A-3")
+    group: Optional[str] = str(r.value) if r is not None and r.value else None
+    if group is None and facts.meta.get("occupancy_group"):
+        group = str(facts.meta["occupancy_group"])
 
     s = building(facts, "sprinkler_system")
-    if s is not None and s.state in participating:
+    sprinklered: Optional[bool] = None
+    if s is not None and s.value is not None:
         sprinklered = s.value in _SPRINKLER_PRESENT
-    else:
-        sprinklered = bool(facts.meta.get("sprinklered", True))
+    elif facts.meta.get("sprinklered") is not None:
+        sprinklered = bool(facts.meta["sprinklered"])
     return group, sprinklered

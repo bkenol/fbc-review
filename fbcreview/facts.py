@@ -176,6 +176,9 @@ class ProjectFacts:
     geometry: Dict[int, PageGeometry] = field(default_factory=dict)
     text_by_page: Dict[int, str] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
+    #: `fbcreview.factstore.FactStore` — every reading of every fact, with where
+    #: it was read and by what. `None` only for facts built by hand in tests.
+    store: Any = None
 
     # ---- convenience lookups used by rules -------------------------------
     def datum(self, section: str) -> Optional[CodeDatum]:

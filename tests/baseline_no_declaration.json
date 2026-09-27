@@ -129,7 +129,25 @@
       ]
     },
     "itec_raster": {
-      "findings": [],
+      "findings": [
+        {
+          "fid": "V-RC",
+          "rule_id": "XSHEET.RISK_CATEGORY",
+          "status": "PASS",
+          "severity": "VERIFIED",
+          "discipline": "Structural / Occupancy",
+          "page": 0,
+          "sheet": "G-0",
+          "anchor": "RISK CATEGORY",
+          "title": "Risk category is consistent with the occupant load",
+          "checked": "Assigned risk category against Table 1604.5.",
+          "result": "RC II at an occupant load of 152.",
+          "code": "FBC-B Table 1604.5",
+          "action": "None.",
+          "body": "",
+          "hit": 0
+        }
+      ],
       "abstentions": [
         "DOORS.CLEAR_WIDTH",
         "EGRESS.CAPACITY_FACTOR",
@@ -141,12 +159,29 @@
         "ELEC.PANEL_LOADING",
         "MEASURE.EGRESS_EXTENT",
         "MECH.OUTDOOR_AIR_CAPACITY",
-        "XSHEET.BUILDING_AREA",
-        "XSHEET.RISK_CATEGORY"
+        "XSHEET.BUILDING_AREA"
       ]
     },
     "itec_live": {
-      "findings": [],
+      "findings": [
+        {
+          "fid": "V-RC",
+          "rule_id": "XSHEET.RISK_CATEGORY",
+          "status": "PASS",
+          "severity": "VERIFIED",
+          "discipline": "Structural / Occupancy",
+          "page": 0,
+          "sheet": "G-0",
+          "anchor": "RISK CATEGORY",
+          "title": "Risk category is consistent with the occupant load",
+          "checked": "Assigned risk category against Table 1604.5.",
+          "result": "RC II at an occupant load of 152.",
+          "code": "FBC-B Table 1604.5",
+          "action": "None.",
+          "body": "",
+          "hit": 0
+        }
+      ],
       "abstentions": [
         "DOORS.CLEAR_WIDTH",
         "EGRESS.CAPACITY_FACTOR",
@@ -158,8 +193,7 @@
         "ELEC.PANEL_LOADING",
         "MEASURE.EGRESS_EXTENT",
         "MECH.OUTDOOR_AIR_CAPACITY",
-        "XSHEET.BUILDING_AREA",
-        "XSHEET.RISK_CATEGORY"
+        "XSHEET.BUILDING_AREA"
       ]
     }
   }

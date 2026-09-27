@@ -149,29 +149,39 @@ for _g, _rows in {
 
 # ── Table 506.2 — allowable area factor, At, in square feet ──────────────────
 # (group, type) -> (NS, S1, SM): non-sprinklered, single-storey sprinklered,
-# multi-storey sprinklered.
+# multi-storey sprinklered — transcribed as printed in 2023 FBC-B Table 506.2
+# (IBC 2021 base), checked 2026-09-27 against the UpCodes rendering of the 8th
+# Edition and against ICC's 2021 IBC Heights & Areas course (EDUCODE 2024,
+# Session 36/38), whose worked example takes 92,000 SF from this table for a
+# single-storey sprinklered Group B, Type II-B building.
+#
+# The previous transcription carried S1 = 3 x NS and SM = 2 x NS in every row —
+# the pre-2015 "Is = 2 / Is = 3" increase read as a multiplier — and put A-1's
+# 8,500 in A-3's III-B cell. The printed table is S1 = 4 x NS and SM = 3 x NS
+# throughout, and `tests/test_code_corpus.py` holds that invariant so a slip of
+# that kind cannot come back unnoticed.
 _AREA: Dict[Tuple[str, str], Tuple[float, float, float]] = {}
 for _g, _rows in {
-    "B":   {"I-A": (UNLIMITED,) * 3, "I-B": (UNLIMITED,) * 3,
-            "II-A": (37500, 112500, 75000), "II-B": (23000, 69000, 46000),
-            "III-A": (28500, 85500, 57000), "III-B": (19000, 57000, 38000),
-            "IV": (36000, 108000, 72000), "V-A": (18000, 54000, 36000),
-            "V-B": (9000, 27000, 18000)},
     "A-3": {"I-A": (UNLIMITED,) * 3, "I-B": (UNLIMITED,) * 3,
-            "II-A": (15500, 46500, 31000), "II-B": (9500, 28500, 19000),
-            "III-A": (14000, 42000, 28000), "III-B": (8500, 25500, 17000),
-            "IV": (15000, 45000, 30000), "V-A": (11500, 34500, 23000),
-            "V-B": (6000, 18000, 12000)},
+            "II-A": (15500, 62000, 46500), "II-B": (9500, 38000, 28500),
+            "III-A": (14000, 56000, 42000), "III-B": (9500, 38000, 28500),
+            "IV": (15000, 60000, 45000), "V-A": (11500, 46000, 34500),
+            "V-B": (6000, 24000, 18000)},
+    "B":   {"I-A": (UNLIMITED,) * 3, "I-B": (UNLIMITED,) * 3,
+            "II-A": (37500, 150000, 112500), "II-B": (23000, 92000, 69000),
+            "III-A": (28500, 114000, 85500), "III-B": (19000, 76000, 57000),
+            "IV": (36000, 144000, 108000), "V-A": (18000, 72000, 54000),
+            "V-B": (9000, 36000, 27000)},
     "M":   {"I-A": (UNLIMITED,) * 3, "I-B": (UNLIMITED,) * 3,
-            "II-A": (21500, 64500, 43000), "II-B": (12500, 37500, 25000),
-            "III-A": (18500, 55500, 37000), "III-B": (12500, 37500, 25000),
-            "IV": (20500, 61500, 41000), "V-A": (14000, 42000, 28000),
-            "V-B": (9000, 27000, 18000)},
-    "S-1": {"I-A": (UNLIMITED,) * 3, "I-B": (48000, 144000, 96000),
-            "II-A": (26000, 78000, 52000), "II-B": (17500, 52500, 35000),
-            "III-A": (26000, 78000, 52000), "III-B": (17500, 52500, 35000),
-            "IV": (25500, 76500, 51000), "V-A": (14000, 42000, 28000),
-            "V-B": (9000, 27000, 18000)},
+            "II-A": (21500, 86000, 64500), "II-B": (12500, 50000, 37500),
+            "III-A": (18500, 74000, 55500), "III-B": (12500, 50000, 37500),
+            "IV": (20500, 82000, 61500), "V-A": (14000, 56000, 42000),
+            "V-B": (9000, 36000, 27000)},
+    "S-1": {"I-A": (UNLIMITED,) * 3, "I-B": (48000, 192000, 144000),
+            "II-A": (26000, 104000, 78000), "II-B": (17500, 70000, 52500),
+            "III-A": (26000, 104000, 78000), "III-B": (17500, 70000, 52500),
+            "IV": (25500, 102000, 76500), "V-A": (14000, 56000, 42000),
+            "V-B": (9000, 36000, 27000)},
 }.items():
     for _t, _v in _rows.items():
         _AREA[(_g, _t)] = _v

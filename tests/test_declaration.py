@@ -144,12 +144,25 @@ def test_the_real_set_is_unchanged_without_a_declaration():
 # ══════════════════════════════════════════════════════════════════════════
 def test_itec_as_plotted_reproduces_the_documented_baseline(sets):
     """`docs/reference/ITEC Alico Park Findings.md`: 0 findings, 12 reasoned
-    abstentions, because the code-analysis block is a picture."""
+    abstentions, because the code-analysis block is a picture.
+
+    One of the twelve no longer abstains, and the reason is not the picture.
+    The fixture prints `TOTAL OCCUPANT LOAD: 152` as live text on A-1 and
+    `RISK CATEGORY: II` on S-1; the extractors that produced the documented
+    baseline only looked for an occupant load inside a code-analysis window, so
+    `XSHEET.RISK_CATEGORY` stood down for want of one. The fact store reads it
+    where it is printed, and RC II at 152 occupants in a Group B building is
+    correct — a verification, not a finding. Every rule that needs the pictured
+    code-analysis block still abstains.
+    """
     res = review(sets["itec_raster"])
     pre = [f for f in res.findings if f.rule_id in PRE_EXISTING]
     pre_abstained = [a for a in res.abstentions if a.rule_id in PRE_EXISTING]
-    assert pre == []
-    assert len(pre_abstained) == 12
+    assert [(f.rule_id, f.status, f.severity) for f in pre] == [
+        ("XSHEET.RISK_CATEGORY", "PASS", "VERIFIED")]
+    assert "occupant load of 152" in pre[0].result
+    assert len(pre_abstained) == 11
+    assert "XSHEET.RISK_CATEGORY" not in {a.rule_id for a in pre_abstained}
 
 
 def test_itec_abstentions_fall_sharply_with_a_declaration(sets):
@@ -343,9 +356,15 @@ def test_findings_untouched_by_the_conflict_appear_once_marked_both(sets):
 
 
 def test_a_check_that_diverges_is_reported_under_both_readings(sets):
-    """Type II-B allows 69,000 SF and 75 ft; Type V-B allows 27,000 and 60 ft.
-    The same 40,000 SF at 62 ft therefore passes as drawn and fails as
-    declared, and both outcomes have to reach the register."""
+    """Type II-B allows 92,000 SF and 75 ft; Type V-B allows 36,000 and 60 ft
+    (Table 506.2, S1 column: one storey, sprinklered). The same 40,000 SF at
+    62 ft therefore passes as drawn and fails as declared, and both outcomes
+    have to reach the register.
+
+    This test used to assert 69,000 and 27,000 — the corpus's transcription,
+    which carried the sprinklered columns at 3 x and 2 x the non-sprinklered
+    value instead of the printed 4 x and 3 x. The outcome it guards is the same
+    under the published numbers; the numbers it quotes are now the code's."""
     res = review(sets["divergent"], ProjectDeclaration.from_dict(DIVERGENCE_DECLARATION))
     by_rule = {}
     for f in res.findings:
@@ -356,8 +375,8 @@ def test_a_check_that_diverges_is_reported_under_both_readings(sets):
     assert {f.status for f in area} == {"PASS", "OPEN"}
     drawn = next(f for f in area if f.scenario == AS_DRAWN)
     declared = next(f for f in area if f.scenario == AS_DECLARED)
-    assert drawn.status == "PASS" and "69,000" in drawn.result
-    assert declared.status == "OPEN" and "27,000" in declared.result
+    assert drawn.status == "PASS" and "92,000" in drawn.result
+    assert declared.status == "OPEN" and "36,000" in declared.result
 
     height = by_rule["HEIGHT_AREA.TABLE_504_HEIGHT"]
     assert {f.scenario for f in height} == {AS_DRAWN, AS_DECLARED}
