@@ -266,10 +266,28 @@ Pure functions, as before, with three changes:
   (M-02), the occupant-load posting sign in assembly (M-05), exits required and
   provided (V-04).
 
+As built (Phase D):
+
+| Rule | Reads | Register |
+| --- | --- | --- |
+| `_stated.stated()` (all Chapter 10 rules) | the section's block row, else the layout's required/provided claims for the same row | V-04 |
+| `EGRESS.COMMON_PATH` | also names another sheet stating a different requirement | H-02, whole |
+| `EGRESS.FACTOR_CONSISTENCY` | `EXIT DISCHARGE n` blocks (`read/groups.py`) against the requirement's factor | M-02 |
+| `EGRESS.CEILING_HEIGHT` | ceiling tags on the reflected ceiling plan (`read/tags.py`) against 1003.2 | V-17 |
+| `EGRESS.OCCUPANT_LOAD_POSTING` | every sheet's text, for an assembly occupancy (1004.9) | M-05 |
+| `DOORS.CLEAR_WIDTH_REQUIREMENT` | the stated 1010.1.1 row | V-05 |
+| `MECH.OUTDOOR_AIR_ARITHMETIC` | the outdoor-air table re-read inside its own box (`read/tables.py`) | V-35 |
+| `PLUMB.FIXTURE_COUNT` | the PLUMBING COUNTS block (`read/plumbing.py`) against Table 2902.1 | V-06 |
+| `OCC.CLASSIFICATION_CONSISTENCY` | occupant-load table rows (`read/groups.py`) against the Table 1004.5 function the set's own words name | H-01, L-01 |
+| `XSHEET.STATED_CONFLICT` | every value the fact store read on more than one sheet | — |
+
 ### 3.7 Code corpus
 
 Hand-transcribed, as before. Table 506.2 is re-transcribed from the code text
-(teardown §7), with the source cited in the module.
+(teardown §7), with the source cited in the module. Table 2902.1 gains its first
+row — A-3, auditoriums without permanent seating … gymnasiums — checked against
+the 2023 FBC-B text on 2026-09-27; a set on any other row abstains and names the
+table.
 
 ### 3.8 Output contract
 
@@ -360,10 +378,11 @@ reproduce-before-you-change rule as everything else.
 
 | Gate | What it proves |
 | --- | --- |
-| `tests/test_reference_sets.py` | the real Sculpted set (and ITEC, when present) under pytest — the gate `test_regression.py` never was |
-| recorded readings (`tests/fixtures/readings/`) | the AI tier replayed offline, including deliberately wrong proposals the verifier must reject |
-| fake Anthropic client | the reader's request shape, caching key, refusal and timeout handling |
-| guardrail tests | rules never import `ai`; a review with AI off completes; an ungrounded claim never reaches a rule; no finding's severity or citation is taken from model output |
+| `tests/test_reference_sets.py` | the real Sculpted set (and ITEC, when present) under pytest — the gate `test_regression.py` never was; its scorecard floor only rises |
+| `tests/test_sheet_checks.py` | each Phase D check against its input, drawn at the real set's geometry |
+| `tests/test_ai_guardrails.py` | rules never import `ai`; a review with AI off completes; an ungrounded claim never reaches a rule; the same readings give the same findings |
+| `tests/test_ai_reader.py` | the reader's request, through the real SDK over a mock transport; refusal, error, deadline, sheet limit, cache |
+| `tests/test_worker_ai.py`, `tests/test_cli.py` | the worker stage and `run.py --ai` / `--readings`, with readings built in code — no test makes a network call |
 | `scripts/scorecard.py` | how much of the hand review the engine reproduces — the number to move |
 
 ---
@@ -378,3 +397,24 @@ reproduce-before-you-change rule as everything else.
 | The model misreads a value | it cannot enter the store unless the quote is on the sheet and the value re-parses from it |
 | The model reads a value from the wrong row | the quote pins label and value together; a quote spanning two rows fails the compactness check |
 | Prompt injection via sheet text | the model's output is data validated against a schema and the page; it has no tools and nothing it says is executed or trusted |
+
+---
+
+## 8. Status
+
+| Phase | What | Scorecard on Sculpted (open / verified, exact) |
+| --- | --- | --- |
+| before | the engine as found (`docs/ENGINE-TEARDOWN.md` §11) | 4 / 14 · 5 / 36 |
+| A | layout layer: each sheet laid out once, label/value pairs in three shapes | — |
+| B | field catalog, deterministic reader, fact store; no hidden A-3 / sprinklered defaults; Table 506.2 corrected | 6 / 14 · 5 / 36 |
+| C | the AI reader, grounding verifier, readings cache and replay, worker stage, `run.py --ai` | unchanged with AI off, by design |
+| D | stated-row fallback, findings anchored where their evidence is, eight new checks, a false-conflict fix | 10 / 14 · 10 / 36 |
+| E | frontend conformance: page base, `rect`, evidence on cards, the AI stage | pending |
+| F | the real ITEC Alico Park set | pending — needs the PDF |
+
+Of the four open register entries still missed, three (M-06 interior finish
+classes, M-07 the accessible counter, M-08 trap seal protection) need checks on
+details and schedules this build does not read yet. The fourth, L-02, does not
+reproduce on the 8.18.2026 PDF: M-1 labels the 2 CFM row STORAGE, 14 SF at
+0.12 CFM/SF, which is consistent. `scripts/scorecard.py` still counts it, and
+says why it is disputed.

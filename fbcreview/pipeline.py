@@ -17,10 +17,14 @@ from .extract.schedules import find_schedule, split_merged_row
 from .factstore import FactStore
 from .layout import page_layout
 from .read import read_layouts
+from .read.groups import exit_discharges, occupancy_rows
+from .read.plumbing import plumbing_count
+from .read.tables import ventilation_rows, ventilation_total
+from .read.tags import ceiling_tags
 from .rules import run_all, RuleResult, registered
 from .rules import (r_egress, r_doors, r_mechanical, r_electrical,   # noqa: F401
                     r_crosssheet, r_geometry, r_declaration, r_heightarea,
-                    r_occupancy, r_structural, r_code)
+                    r_occupancy, r_structural, r_code, r_plumbing)
 from .declaration import ProjectDeclaration
 
 _FTIN = re.compile(r"(\d+)\s*'\s*-\s*(\d+)")
@@ -205,9 +209,25 @@ def build_facts(path: str, readings=None) -> ProjectFacts:
                     facts.meta["area_m1_sf"] = float(nums[0])
                     facts.meta["oa_persons"] = float(nums[1])
                     facts.meta["oa_required_cfm"] = float(nums[2])
-            parts = split_merged_row(r)
-            if parts:
-                for p in parts:
+        # One row per room, from the table re-read inside its own box; the
+        # whole-page read merges rooms (`read/tables.py`). Only when that
+        # cannot be read as a table does the old repair get a turn.
+        if "oa_required_cfm" not in facts.meta:
+            totals = ventilation_total(doc, oa)
+            if totals is not None:
+                area, persons, cfm = totals
+                facts.meta["oa_required_cfm"] = cfm
+                if area is not None:
+                    facts.meta["area_m1_sf"] = area
+                if persons is not None:
+                    facts.meta["oa_persons"] = persons
+        rows = ventilation_rows(doc, oa)
+        if rows is not None:
+            facts.ventilation = rows
+        else:
+            for r in oa.rows:
+                parts = split_merged_row(r)
+                for p in parts or []:
                     v = list(p.fields.values())
                     facts.ventilation.append(VentilationRow(
                         p.mark, _f(v, 1), _f(v, 2), _f(v, 3), _f(v, 4), _f(v, 5), _f(v, 6)))
@@ -391,6 +411,10 @@ def _read_facts(doc, facts: ProjectFacts, readings=None) -> None:
     layouts = {p: page_layout(doc[p]) for p in range(doc.page_count)}
     store = FactStore()
     store.extend(read_layouts(layouts, codes))
+    facts.discharges = exit_discharges(layouts, codes)
+    facts.occupancy_rows = occupancy_rows(layouts, codes)
+    facts.plumbing = plumbing_count(layouts, codes)
+    facts.ceilings = ceiling_tags(layouts, facts.sheets)
     if readings is not None:
         from .ai.grounding import ground_readings
         ground_readings(readings, layouts, codes, store)

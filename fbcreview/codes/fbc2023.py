@@ -61,6 +61,31 @@ MIN_CEILING_FT = 7.5
 # ── 1004.9 — assembly occupant load posting ───────────────────────────────────
 POSTING_REQUIRED_FOR = {"A", "A-1", "A-2", "A-3", "A-4", "A-5"}
 
+# ── Table 2902.1 — minimum number of required plumbing facilities ─────────────
+# Transcribed by hand from 2023 FBC-B Table 2902.1 (UpCodes, "2023 FBC - Building,
+# 8th edition", Chapter 29), checked 2026-09-27. Only the rows a set in hand has
+# needed: a set on any other row abstains and names the table, and the row is
+# added then, deliberately. Figures are occupants per fixture; `None` is the
+# table's dash (none required).
+PLUMBING_ROWS = (
+    {
+        "group": "A-3",
+        "description": "Auditoriums without permanent seating, art galleries, exhibition "
+                       "halls, museums, lecture halls, libraries, arcades and gymnasiums",
+        "wc": (125, 65),            # (male, female)
+        "lav": (200, 200),
+        "drinking_fountain": 500,
+        "service_sinks": 1,
+    },
+)
+# 2902.1.1 — "To determine the occupant load of each sex, the total occupant load
+# shall be divided in half" (Exception 1: approved statistical data), and
+# "fractional numbers resulting from applying the fixture ratios of Table 2902.1
+# shall be rounded up to the next whole number."
+PLUMBING_SPLIT = 0.5
+# 2902.1.2 — fixtures in single-user toilet rooms count toward the total; 2902.2
+# Exception 5 — such rooms need not be designated by sex.
+
 
 def common_path_ft(group: str, sprinklered: bool) -> Optional[int]:
     return _COMMON_PATH.get((group.split("-")[0].upper(), bool(sprinklered)))

@@ -169,6 +169,31 @@ def test_a_disagreement_is_kept_not_resolved_away():
     assert {g[0].value for g in r.rivals} | {r.value} == {50.0, 75.0}
 
 
+@pytest.mark.parametrize("a,b", [
+    ("ALTERATION - LEVEL II", "II"),              # G-0 prints both, one line apart
+    ("TYPE III-B", "III-B"),
+    ("C-1", "C-1 COMMERCIAL"),
+])
+def test_the_same_answer_written_out_more_fully_is_not_a_disagreement(a, b):
+    store = FactStore()
+    store.extend([_claim("classification_of_work", a, "G-0", 0),
+                  _claim("classification_of_work", b, "G-0", 0)])
+    r = store.resolve("classification_of_work")
+    assert not r.conflict and r.value == max(a, b, key=len)
+
+
+@pytest.mark.parametrize("a,b", [
+    ("ALTERATION - LEVEL II", "ALTERATION - LEVEL III"),
+    ("ALTERATION - LEVEL II", "III"),
+    ("C-1", "C-2 COMMERCIAL"),
+])
+def test_a_different_answer_is_still_a_disagreement(a, b):
+    store = FactStore()
+    store.extend([_claim("classification_of_work", a, "G-0", 0),
+                  _claim("classification_of_work", b, "G-1", 1)])
+    assert store.resolve("classification_of_work").conflict
+
+
 def test_nothing_stated_resolves_to_nothing():
     assert FactStore().resolve("occupancy_group") is None
     assert FactStore().value("sprinkler_system") is None
@@ -209,3 +234,20 @@ def test_a_non_sprinklered_building_is_not_described_as_sprinklered():
     res = run_all(_facts_with_common_path("A-3", "NONE"))
     f = next(f for f in res.findings if f.rule_id == "EGRESS.COMMON_PATH")
     assert "without a sprinkler system" in f.result
+
+
+def test_the_rules_run_without_the_pipeline_having_been_imported():
+    """`run_all` once ran zero rules unless `fbcreview.pipeline` had been
+    imported first, and said nothing. A fresh interpreter proves the fix."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; from fbcreview.rules import registered; "
+         "assert 'fbcreview.pipeline' not in sys.modules; alone = registered(); "
+         "import fbcreview.pipeline; assert registered() == alone, "
+         "sorted(set(registered()) - set(alone)); print(len(alone))"],
+        capture_output=True, text=True, cwd=str(Path(__file__).resolve().parent.parent))
+    assert out.returncode == 0, out.stderr
+    assert int(out.stdout.strip().splitlines()[-1]) >= 31

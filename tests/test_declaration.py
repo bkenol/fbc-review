@@ -172,7 +172,19 @@ def test_itec_abstentions_fall_sharply_with_a_declaration(sets):
     assert len(after.abstentions) < len(before.abstentions)
     # Well below, not marginally below: this is the measurable point of the
     # feature. Anything less means it is wired wrong.
-    assert len(after.abstentions) <= len(before.abstentions) / 2
+    #
+    # Measured over the rules a declaration can unlock (the schema's own
+    # `unlocks`). Until 2026-09-27 this divided the whole register, which was
+    # the same thing while every rule took a declarable input. The rules added
+    # then — ceiling heights, exit ratings, the plumbing and outdoor-air
+    # arithmetic — read only what the drawings show, so they abstain on this
+    # fixture identically with or without a declaration, and a whole-register
+    # ratio would measure them rather than the declaration. On the rules it can
+    # reach, the declaration takes ITEC from 14 abstentions to 3.
+    reachable = set(S.ALL_UNLOCKED)
+    b = [a for a in before.abstentions if a.rule_id in reachable]
+    a = [a for a in after.abstentions if a.rule_id in reachable]
+    assert len(a) <= len(b) / 2
     assert len(after.findings) > len(before.findings)
 
 

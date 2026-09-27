@@ -45,6 +45,7 @@ RULE_FOR: Dict[str, List[str]] = {
     "H-01": ["OCC.CLASSIFICATION_CONSISTENCY"],
     "H-02": ["EGRESS.COMMON_PATH"],
     "H-03": ["DOORS.CLEAR_WIDTH"],
+    "L-01": ["OCC.CLASSIFICATION_CONSISTENCY"],
     "M-01": ["EGRESS.CAPACITY_FACTOR"],
     "M-02": ["EGRESS.FACTOR_CONSISTENCY"],
     "M-03": ["XSHEET.RISK_CATEGORY"],
@@ -60,6 +61,15 @@ RULE_FOR: Dict[str, List[str]] = {
     "V-17": ["EGRESS.CEILING_HEIGHT"],
     "V-30": ["ELEC.PANEL_LOADING"],
     "V-35": ["MECH.OUTDOOR_AIR_ARITHMETIC"],
+}
+
+
+#: Register entries the 8.18.2026 PDF does not bear out, with why. Still counted
+#: (the register is the register, and dropping an entry would flatter the
+#: number) but annotated, so a miss here is not read as an engine defect.
+DISPUTED: Dict[str, str] = {
+    "L-02": "disputed: M-1 labels the 2 CFM row STORAGE, 14 SF at 0.12 CFM/SF, which "
+            "is consistent — rendered and checked 2026-09-27",
 }
 
 
@@ -102,6 +112,8 @@ def grade(findings: List[dict], abstentions: List[dict]) -> List[dict]:
                 break
         if got:
             outcome, note = got["_grade"], f"{got['fid']} {got['status']} {got['severity']}"
+        elif fid in DISPUTED:
+            outcome, note = "missed", DISPUTED[fid]
         elif not rules:
             outcome, note = "missed", "no rule for this check yet"
         else:

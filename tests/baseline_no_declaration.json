@@ -68,6 +68,23 @@
           "hit": 0
         },
         {
+          "fid": "M-05",
+          "rule_id": "EGRESS.OCCUPANT_LOAD_POSTING",
+          "status": "OPEN",
+          "severity": "MEDIUM",
+          "discipline": "Means of egress",
+          "page": 1,
+          "sheet": "G-1",
+          "anchor": "OCCUPANT LOAD",
+          "title": "Assembly occupant-load posting is not shown anywhere in the set",
+          "checked": "Every sheet in the set for the occupant-load sign 1004.9 requires in an assembly space.",
+          "result": "Group A-3 with a stated occupant load of 70. 1004.9 requires every room or space that is an assembly occupancy to have its occupant load posted in a conspicuous place near the main exit or exit access doorway, on an approved, legible, permanent sign. No sheet's text mentions an occupant-load sign or posting (8 sheets searched). A sign drawn only as a symbol, with no text anywhere in the set, would not be seen by this check.",
+          "code": "FBC-B 1004.9",
+          "action": "Show the sign location near the main exit access doorway and note it as a permanent, approved sign.",
+          "body": "",
+          "hit": 0
+        },
+        {
           "fid": "V-01",
           "rule_id": "EGRESS.TRAVEL_DISTANCE",
           "status": "PASS",
@@ -136,8 +153,8 @@
           "status": "PASS",
           "severity": "VERIFIED",
           "discipline": "Structural / Occupancy",
-          "page": 0,
-          "sheet": "G-0",
+          "page": 6,
+          "sheet": "S-1",
           "anchor": "RISK CATEGORY",
           "title": "Risk category is consistent with the occupant load",
           "checked": "Assigned risk category against Table 1604.5.",
@@ -165,13 +182,30 @@
     "itec_live": {
       "findings": [
         {
+          "fid": "V-AR",
+          "rule_id": "XSHEET.BUILDING_AREA",
+          "status": "PASS",
+          "severity": "VERIFIED",
+          "discipline": "Occupancy",
+          "page": 2,
+          "sheet": "G-2",
+          "anchor": "15,376 SF",
+          "title": "Building area agrees between the sheets that state it",
+          "checked": "Building area on each sheet that states it, compared.",
+          "result": "G-2 and A-1 both give 15,376 SF.",
+          "code": "FBC-B 1004.5",
+          "action": "None.",
+          "body": "",
+          "hit": 0
+        },
+        {
           "fid": "V-RC",
           "rule_id": "XSHEET.RISK_CATEGORY",
           "status": "PASS",
           "severity": "VERIFIED",
           "discipline": "Structural / Occupancy",
-          "page": 0,
-          "sheet": "G-0",
+          "page": 6,
+          "sheet": "S-1",
           "anchor": "RISK CATEGORY",
           "title": "Risk category is consistent with the occupant load",
           "checked": "Assigned risk category against Table 1604.5.",
@@ -192,8 +226,7 @@
         "EGRESS.TRAVEL_DISTANCE",
         "ELEC.PANEL_LOADING",
         "MEASURE.EGRESS_EXTENT",
-        "MECH.OUTDOOR_AIR_CAPACITY",
-        "XSHEET.BUILDING_AREA"
+        "MECH.OUTDOOR_AIR_CAPACITY"
       ]
     }
   }

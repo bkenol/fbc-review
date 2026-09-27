@@ -33,6 +33,9 @@ class CodeDatum:
     sheet: str = ""
     page: int = 0
     anchor: str = ""                 # search string that locates it on the page
+    #: Provenance a finding must repeat — "read by AI and verified on G-0" —
+    #: when the row was located only by the AI reader. Empty for a block row.
+    note: str = ""
 
 
 @dataclass
@@ -62,6 +65,81 @@ class VentilationRow:
 
 
 @dataclass
+class ExitDischarge:
+    """One exit's own capacity statement, read from a heading and the rows under it:
+
+        EXIT DISCHARGE 1:
+          WIDTH REQUIRED:     32"
+          WIDTH PROVIDED:     72"
+          OCCUPANT CAPACITY:  360
+          OCCUPANT LOAD:      35
+    """
+    name: str                                  # "EXIT DISCHARGE 1"
+    width_required_in: Optional[float] = None
+    width_provided_in: Optional[float] = None
+    capacity: Optional[float] = None           # occupants the sheet says the width serves
+    occupant_load: Optional[float] = None      # occupants assigned to this exit
+    page: int = 0
+    sheet: str = ""
+    anchor: str = ""                           # the heading, as printed
+
+
+@dataclass
+class OccupancyRow:
+    """One space in an occupant-load table: `MAT STUDIO | ASSEMBLY | 994 SF | 15 (NET) | 67`."""
+    space: str
+    use: str
+    area_sf: Optional[float]
+    factor: Optional[float]                    # square feet per occupant
+    basis: str                                 # "net" | "gross" | ""
+    load: Optional[float]
+    #: Which code's table the row sits in, from its headings: "FBC" for a
+    #: Table 1004.5 analysis, "FFPC" for the fire prevention code's (NFPA 101).
+    code: str
+    #: The table's heading and the lines over the row, as printed — where a set
+    #: names the function ("ASSEMBLY - EXERCISE ROOMS WITHOUT EQUIPMENT").
+    context: Tuple[str, ...] = ()
+    page: int = 0
+    sheet: str = ""
+
+
+@dataclass
+class PlumbingCount:
+    """A plumbing fixture calculation as a set states it:
+
+        ASSEMBLY OCCUPANCY: 70
+        WC: 1/125 MALE, 1/65 FEMALE     LAV: 1/200     DF: 1/500     SERVICE SINK: 1
+        TOTAL REQUIRED ...              TOTAL PROVIDED ...
+    """
+    occupant_load: Optional[float]
+    #: Occupants per fixture, as stated: "wc" -> (male, female), "lav" likewise;
+    #: "drinking_fountain" -> (n, n).
+    ratios: Dict[str, Tuple[Optional[float], Optional[float]]] = field(default_factory=dict)
+    service_sinks: Optional[float] = None
+    #: Fixture counts the set states as required and as provided, by type
+    #: ("wc", "lav", "drinking_fountain", "service_sink").
+    required: Dict[str, float] = field(default_factory=dict)
+    provided: Dict[str, float] = field(default_factory=dict)
+    #: Provided fixtures the set describes as unisex (single-user rooms).
+    unisex: bool = False
+    page: int = 0
+    sheet: str = ""
+    anchor: str = ""
+
+
+@dataclass
+class CeilingTag:
+    """A ceiling-height tag on a reflected ceiling plan — `A.F.F.` over `+10'-0"`,
+    or `B/O BAR JOIST` over `+14'-8"` where the ceiling is open to structure."""
+    height_ft: float
+    raw: str                                   # the height as printed
+    reference: str                             # what it is measured to, as printed
+    page: int = 0
+    sheet: str = ""
+    box: Optional[Tuple[float, float, float, float]] = None
+
+
+@dataclass
 class ScheduleRow:
     mark: str
     fields: Dict[str, str] = field(default_factory=dict)
@@ -81,6 +159,9 @@ class Schedule:
     columns: List[str]
     rows: List[ScheduleRow]
     anchor: str = ""
+    #: Where the table sits, unrotated page points. Lets a reader re-extract it
+    #: on its own, which separates rows a whole-page extraction merges.
+    bbox: Optional[Tuple[float, float, float, float]] = None
 
     def by_mark(self, mark: str) -> Optional[ScheduleRow]:
         for r in self.rows:
@@ -172,6 +253,10 @@ class ProjectFacts:
     code_data: List[CodeDatum] = field(default_factory=list)
     doors: List[Door] = field(default_factory=list)
     ventilation: List[VentilationRow] = field(default_factory=list)
+    discharges: List[ExitDischarge] = field(default_factory=list)
+    occupancy_rows: List[OccupancyRow] = field(default_factory=list)
+    plumbing: Optional[PlumbingCount] = None
+    ceilings: List[CeilingTag] = field(default_factory=list)
     schedules: List[Schedule] = field(default_factory=list)
     geometry: Dict[int, PageGeometry] = field(default_factory=dict)
     text_by_page: Dict[int, str] = field(default_factory=dict)

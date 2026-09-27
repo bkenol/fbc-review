@@ -68,12 +68,17 @@ CORPUS = "corpus"
 ABSENT = "absent"
 #: Switched off in the review options.  Working as asked.
 OPTION = "option"
+#: The check covers a case this building is not — a posting rule for assembly
+#: spaces on a business occupancy, a cross-sheet comparison on a set that
+#: states nothing twice.  Nothing to fix, and saying so is different from
+#: saying nothing was stated.
+NOT_APPLICABLE = "not_applicable"
 #: The rule raised.  An engine bug, always.
 ERROR = "error"
 #: No pattern matched.  Said plainly rather than filed under a guess.
 UNKNOWN = "unknown"
 
-KINDS = (EXTRACTION, GEOMETRY, CORPUS, ABSENT, OPTION, ERROR, UNKNOWN)
+KINDS = (EXTRACTION, GEOMETRY, CORPUS, ABSENT, NOT_APPLICABLE, OPTION, ERROR, UNKNOWN)
 
 
 @dataclass(frozen=True)
@@ -140,6 +145,14 @@ KIND_CATALOGUE: Tuple[Kind, ...] = (
         False,
     ),
     Kind(
+        NOT_APPLICABLE,
+        "Does not apply",
+        "The check covers a case this building is not.",
+        "Nothing to fix. Report it only if the building is in fact the case the check "
+        "covers — for example, if the occupancy the set states is wrong.",
+        False,
+    ),
+    Kind(
         OPTION,
         "Switched off",
         "This check was disabled in the review options.",
@@ -189,6 +202,10 @@ _PATTERNS: Tuple[Tuple[re.Pattern[str], str], ...] = (
     # revise when the set turns out to carry unread pasted tables.
     (re.compile(r"neither the drawings nor the declaration state this"), ABSENT),
     (re.compile(r"not stated on the drawings and not answered"), ABSENT),
+    (re.compile(r"does not name a table 1004\.5 function"), ABSENT),
+    # The check does not cover this building, and said why.
+    (re.compile(r"applies only to"), NOT_APPLICABLE),
+    (re.compile(r"nothing to compare"), NOT_APPLICABLE),
     # Everything else the corpus says is some flavour of "we could not get it".
     (re.compile(r"not extracted"), EXTRACTION),
     (re.compile(r"no parseable"), EXTRACTION),

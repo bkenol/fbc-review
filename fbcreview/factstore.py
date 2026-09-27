@@ -27,6 +27,8 @@ There is no default anywhere in this module. A fact nobody stated resolves to
 """
 from __future__ import annotations
 
+import re
+
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -132,11 +134,32 @@ def _same(field_key: str, a: Any, b: Any) -> bool:
     from .read.catalog import BY_KEY
     from .reconcile import agree
     spec = BY_KEY.get(field_key)
+    if isinstance(a, str) and isinstance(b, str) and _written_out(a, b):
+        return True
     if spec is not None and spec.declaration:
         return agree(spec.declaration, a, b) and _specific_agree(a, b)
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         return abs(float(a) - float(b)) <= max(0.01, 0.005 * max(abs(a), abs(b)))
     return str(a).strip().upper() == str(b).strip().upper()
+
+
+_WORD = re.compile(r"[A-Z0-9]+(?:[-./][A-Z0-9]+)*")
+
+
+def _written_out(a: str, b: str) -> bool:
+    """One text value is the other written more fully.
+
+    G-0 prints `CLASSIFICATION OF WORK: ALTERATION - LEVEL II` and, a line
+    below, `ALTERATION - LEVEL: II`; both are one answer. The shorter value's
+    words must appear, whole and in order, as a run inside the longer's — so
+    `LEVEL II` never matches `LEVEL III`, and `A-3` never matches `A-2`.
+    """
+    ta, tb = _WORD.findall(a.upper()), _WORD.findall(b.upper())
+    if not ta or not tb:
+        return False
+    short, long_ = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    n = len(short)
+    return any(long_[i:i + n] == short for i in range(len(long_) - n + 1))
 
 
 def _specific_agree(a: Any, b: Any) -> bool:

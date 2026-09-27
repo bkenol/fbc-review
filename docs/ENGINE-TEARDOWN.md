@@ -428,6 +428,9 @@ no fact store, so every rule's input is a separate text-scraping bet.
 
 ## 11. Scorecard detail (before)
 
+> After Phase D: **open 10/14 · verified 10/36** — `docs/ARCHITECTURE-V2.md` §8 has the
+> phase-by-phase numbers. The table below is the engine as found.
+
 Produced by `scripts/scorecard.py` against `fbcreview/render/v5_register_reference.py`.
 
 | Register | Reproduced | Missed — and why |

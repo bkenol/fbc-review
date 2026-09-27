@@ -1,11 +1,12 @@
 """Ruled schedule extraction via PyMuPDF's table finder, plus row repair.
 
 `find_tables` recovers the door schedule, RTU schedule, panel schedule and load
-calculations from the test set cleanly.  It does NOT always recover the
-outdoor-air table cleanly: two source rows collapse into one cell
-(`'RECEPTION MAT STUDIO' | '164 994'`).  That failure mode is the honest
-boundary of the deterministic path — see `split_merged_row`, and see
-ARCHITECTURE.md on where a small model earns its keep.
+calculations from the test set cleanly.  Run over the whole page it does NOT
+always recover the outdoor-air table cleanly: two source rows collapse into one
+cell (`'RECEPTION MAT STUDIO' | '164 994'`).  The same call clipped to the
+table's own box separates them, which is what `fbcreview/read/tables.py` does
+with the `bbox` recorded here; `split_merged_row` is the fallback for a table
+that re-read cannot parse.
 """
 from __future__ import annotations
 import re
@@ -63,7 +64,7 @@ def find_schedule(doc: pymupdf.Document, pno: int, title_contains: str,
             rows.append(ScheduleRow(mark, {c or f"col{i}": v
                                            for i, (c, v) in enumerate(zip(cols, cells))}))
         return Schedule(name or title_contains.upper(), sheet, pno, cols, rows,
-                        title_contains)
+                        title_contains, bbox=tuple(t.bbox))
     return None
 
 
