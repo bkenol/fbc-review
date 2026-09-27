@@ -291,13 +291,23 @@ table.
 
 ### 3.8 Output contract
 
-Backward compatible — every existing field keeps its meaning; three additions:
+Backward compatible — every existing field keeps its meaning. `Finding.to_dict()`
+is unchanged (the baselines hold it byte for byte); `fbcreview/payload.py` adds
+what the viewer needs when `findings.json` is written, for the worker and
+`run.py --json` alike:
 
 | Field | Meaning | Consumer |
 | --- | --- | --- |
-| `Finding.rect` | box on the **source** PDF, in the pdf.js viewport space at scale 1 (points, origin top-left, rotation applied), or null | viewer places the mark directly; `anchor`/`hit` stay as the fallback |
-| `Finding.evidence` | the claims the finding rests on: field, value, quote, sheet, 1-based page, method, confidence | finding card shows *where it was read and by what* |
-| page base | `Finding.page` stays 0-based (the renderer depends on it); the client converts in one place, `viewerPage()` | fixes teardown §8.1 |
+| `key` | unique within one review — `fid` is not (two under-width doors are two H-03s; a divergence is two findings with one fid) | everything the client tracks, maps, selects or focuses; feedback still says `fid` |
+| `rect` | where to draw the marker on the **source** PDF, in pdf.js viewport space at scale 1 (points, origin top-left, rotation applied): the rule's own `box` where it knows the row, else the renderer's anchor search, else where its evidence was read; null when it cannot be placed or the finding exists only as declared | the viewer draws it directly; `anchor`/`hit` stay the fallback for an older review |
+| `evidence` | the readings the rule's inputs rest on: field, role, value, quote as printed, sheet, 0-based page, rect, method, confidence, and a note when the AI reader found it | the register and the finding card show *where it was read and by what* |
+| page base | `page` stays 0-based everywhere (the renderer depends on it); the client converts in one place, `viewerPage()` in `web/src/app/viewer/findings.ts` | fixes teardown §8.1 |
+
+`Finding.box` is the placement hint behind `rect` — the table row H-01 is about,
+not the first place "MAT STUDIO" is printed — and the renderer uses it too, so
+the live viewer and the downloaded PDF mark the same place. `Summary.ai_reading`
+carries the reader's counts, and `/api/config` says whether AI reading is on, so
+the client claims "zero model calls" only where it is true.
 
 ---
 
@@ -409,7 +419,7 @@ reproduce-before-you-change rule as everything else.
 | B | field catalog, deterministic reader, fact store; no hidden A-3 / sprinklered defaults; Table 506.2 corrected | 6 / 14 · 5 / 36 |
 | C | the AI reader, grounding verifier, readings cache and replay, worker stage, `run.py --ai` | unchanged with AI off, by design |
 | D | stated-row fallback, findings anchored where their evidence is, eight new checks, a false-conflict fix | 10 / 14 · 10 / 36 |
-| E | frontend conformance: page base, `rect`, evidence on cards, the AI stage | pending |
+| E | frontend conformance: one page base, unique keys, `rect` placement (30/30 findings placed on Sculpted), evidence on cards, the AI stage and summary | unchanged, by design |
 | F | the real ITEC Alico Park set | pending — needs the PDF |
 
 Of the four open register entries still missed, three (M-06 interior finish

@@ -22,9 +22,13 @@ import {
 import { AuthService } from '../core/auth';
 import { DeclarationForm } from './declaration/declaration-form';
 import { ReviewService } from './review-service';
+import { findingKey } from '../viewer/findings';
 
 /** Tally order. VERIFIED and MEASURED last: they are coverage, not problems. */
 const TALLY = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'MEASURED', 'VERIFIED'] as const;
+
+/** The worker's name for the AI reading stage (`webapp/worker.py`, `AI_STAGE`). */
+const AI_STAGE = 'Reading sheets with AI';
 
 /**
  * What each stage is actually doing, keyed by the stage name the server sends.
@@ -41,6 +45,9 @@ const STAGE_DETAIL: Record<string, string> = {
   'Reading the PDF': 'Opening every sheet, indexing sheet numbers and reading the CAD layers.',
   'Rebuilding scanned sheets':
     'OCR over the raster pages, and tracing their linework back into vectors.',
+  [AI_STAGE]:
+    'Claude reads each sheet and says where each value is printed. Nothing it says is ' +
+    'used until the same words are found on the sheet.',
   'Extracting schedules and code data':
     'Pulling the door, RTU and panel schedules and the code-analysis blocks off the sheets.',
   'Running rules':
@@ -143,12 +150,18 @@ export class Review implements OnDestroy {
   protected readonly stageIndex = computed(() => this.job()?.stage ?? 0);
   protected readonly stages = computed(() => this.job()?.stages ?? []);
 
+  /** Whether this review's sheets are read by the AI reader as well. */
+  protected readonly aiReading = computed(() => this.stages().includes(AI_STAGE));
+
   /** How far along the traverse is, 0-100. Stations, not guessed seconds. */
   protected readonly progressPercent = computed(() => {
     const total = this.stages().length;
     if (total <= 1) return 0;
     return Math.round((this.stageIndex() / (total - 1)) * 100);
   });
+
+  /** A finding's identity within this review. See `viewer/findings.ts`. */
+  protected readonly key = findingKey;
 
   protected stageDetail(stage: string): string {
     return STAGE_DETAIL[stage] ?? '';

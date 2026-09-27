@@ -25,6 +25,7 @@ from fbcreview.ai.readings import (Readings, ReadingsCache, file_sha256, save_re
 from fbcreview.ai.reader import ReaderConfig
 from fbcreview.declaration import ProjectDeclaration
 from fbcreview.options import ReviewOptions
+from fbcreview.payload import findings_payload
 from fbcreview.pipeline import build_facts
 from fbcreview.render.markup import render
 from fbcreview.rules import ACTIONABLE, registered, run_all
@@ -220,7 +221,9 @@ def run_review(
         for f in result.findings:
             counts[f.severity] = counts.get(f.severity, 0) + 1
 
-        findings = [f.to_dict() for f in result.findings]
+        # Each finding with a unique key, where to draw it on the file the
+        # engine read, and the readings it rests on (`fbcreview/payload.py`).
+        findings = findings_payload(str(src), facts, result.findings)
         abstentions = [
             {"rule": a.rule_id, "reason": a.reason, "detail": getattr(a, "detail", "") or ""}
             for a in result.abstentions

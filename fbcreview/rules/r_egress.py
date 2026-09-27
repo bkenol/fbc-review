@@ -83,7 +83,7 @@ def common_path(f: ProjectFacts, out: RuleResult):
             f"deficiency — but the stated requirement is wrong.") + also,
             "FBC-B 1006.2.1 · Table 1006.2.1",
             f"Change {d.required:g} LF to {req} LF"
-            + (f" on {d.sheet} so the sheets agree." if other is not None else ".")))
+            + (f" on {d.sheet} so the sheets agree." if other is not None else "."), box=d.box))
     elif other is not None:
         # This sheet is right and another is not: the finding is about the other.
         out.findings.append(Finding(
@@ -96,14 +96,14 @@ def common_path(f: ProjectFacts, out: RuleResult):
             f"Table 1006.2.1, Group {GROUP[0]} {_with(SPRINKLERED)} a sprinkler system, is "
             f"{req} feet, so {d.sheet} is right and {other.sheet} is not.",
             "FBC-B 1006.2.1 · Table 1006.2.1",
-            f"Change {other.sheet} to {req} LF so the sheets agree."))
+            f"Change {other.sheet} to {req} LF so the sheets agree.", box=other.box))
     else:
         out.findings.append(Finding(
             "V-CP", "EGRESS.COMMON_PATH", "PASS", "VERIFIED", "Means of egress", d.page, d.sheet,
             d.anchor or "COMMON PATH OF TRAVEL", "Common path requirement is correct",
             "The stated common path requirement against Table 1006.2.1.",
             noted(d, f"{d.required:g} LF stated, {req} ft required. Correct."),
-            "FBC-B Table 1006.2.1", "None."))
+            "FBC-B Table 1006.2.1", "None.", box=d.box))
 
 
 @rule("EGRESS.TRAVEL_DISTANCE")
@@ -129,7 +129,7 @@ def travel(f: ProjectFacts, out: RuleResult):
         "The stated travel distance limit against Table 1017.2 for this occupancy and sprinkler status.",
         noted(d, f"Table 1017.2, Group {GROUP[0]} {_with(SPRINKLERED)} a sprinkler system = {req} feet. "
         f"Sheet states {d.required:g} LF, provided {d.provided_raw}."),
-        "FBC-B Table 1017.2", "None." if ok else f"Change to {req} LF."))
+        "FBC-B Table 1017.2", "None." if ok else f"Change to {req} LF.", box=d.box))
 
 
 @rule("EGRESS.DEAD_END")
@@ -153,7 +153,7 @@ def dead_end(f: ProjectFacts, out: RuleResult):
         noted(d, f"1020.5 sets {C._DEADEND_BASE} feet. The 50-foot sprinklered exception covers Groups "
         f"{', '.join(sorted(C._DEADEND_50FT_GROUPS))} only — Group {GROUP[0]} is not in the list, "
         f"so {req} feet governs. Sheet states {d.required:g} LF."),
-        "FBC-B 1020.5", "None." if ok else f"Change to {req} LF."))
+        "FBC-B 1020.5", "None." if ok else f"Change to {req} LF.", box=d.box))
 
 
 @rule("EGRESS.CORRIDOR_WIDTH")
@@ -177,7 +177,7 @@ def corridor(f: ProjectFacts, out: RuleResult):
         noted(d, f"Table 1020.3, 'any facilities not listed' = {req} inches. Sheet states "
         f"{d.required:g}\", provided {d.provided_raw}. In the 2023 FBC the width requirement sits at "
         f"1020.3 — older editions number it differently, so the citation is worth confirming and it is right."),
-        "FBC-B 1020.3 · Table 1020.3", "None." if ok else f"Change to {req} in."))
+        "FBC-B 1020.3 · Table 1020.3", "None." if ok else f"Change to {req} in.", box=d.box))
 
 
 @rule("EGRESS.CAPACITY_FACTOR")
@@ -203,7 +203,7 @@ def capacity_factor(f: ProjectFacts, out: RuleResult):
             d.anchor or "EXIT WIDTH REQUIRED", "Egress width factor is supported by the documents",
             "The factor implied by the stated required width and occupant load, against 1005.3.2.",
             noted(d, f"{implied:.2f} in/occupant implied; {permitted} permitted. Provided {d.provided_raw}."),
-            "FBC-B 1005.3.2", "None."))
+            "FBC-B 1005.3.2", "None.", box=d.box))
     if implied < permitted - 0.005:
         out.findings.append(Finding(
             "M-01", "EGRESS.CAPACITY_FACTOR", "OPEN", "MEDIUM", "Means of egress", d.page, d.sheet,
@@ -217,7 +217,8 @@ def capacity_factor(f: ProjectFacts, out: RuleResult):
             f"communication system per 907.5.2.2. No EVACS appears anywhere in this set. At the base "
             f"factor the requirement is {ol*C.CAPACITY_FACTOR_BASE:.2f}\", not {d.required:g}\"."),
             "FBC-B 1005.3.2 · 1005.3.2 Exc. 1",
-            f"Document the EVACS per 907.5.2.2, or recompute at {C.CAPACITY_FACTOR_BASE}."))
+            f"Document the EVACS per 907.5.2.2, or recompute at {C.CAPACITY_FACTOR_BASE}.",
+            box=d.box))
 
 
 @rule("EGRESS.EXIT_COUNT")
@@ -244,7 +245,7 @@ def exit_count(f: ProjectFacts, out: RuleResult):
         "Exit count is correct for the stated occupant load" if ok else "Too few exits",
         "Exit count against Table 1006.3.2 for the stated occupant load.",
         noted(d, f"Occupant load {ol:g} requires {req} exits; {prov:g} provided."),
-        "FBC-B Table 1006.3.2", "None." if ok else f"Provide {req} exits."))
+        "FBC-B Table 1006.3.2", "None." if ok else f"Provide {req} exits.", box=d.box))
 
 
 # ══ one capacity factor per analysis ═══════════════════════════════════════
@@ -304,7 +305,7 @@ def factor_consistency(f: ProjectFacts, out: RuleResult):
             + "1005.3.2 supports one factor for the building, not both in one analysis.",
             "FBC-B 1005.3.2",
             "Decide which factor 1005.3.2 supports for this building — see the egress capacity "
-            "factor check — and apply it uniformly across the analysis."))
+            "factor check — and apply it uniformly across the analysis.", box=first.box))
     else:
         out.findings.append(Finding(
             "V-UF", "EGRESS.FACTOR_CONSISTENCY", "PASS", "VERIFIED", "Means of egress",
@@ -313,7 +314,7 @@ def factor_consistency(f: ProjectFacts, out: RuleResult):
             "The capacity factor each exit was rated at, against the factor the required "
             "egress width was computed with.",
             f"{lines}. The required width uses the same {used:.2f} in/occupant ({how}).",
-            "FBC-B 1005.3.2", "None."))
+            "FBC-B 1005.3.2", "None.", box=first.box))
 
 
 # ══ ceiling height ═════════════════════════════════════════════════════════
@@ -368,7 +369,7 @@ def ceiling_height(f: ProjectFacts, out: RuleResult):
             f"means of egress.",
             "FBC-B 1003.2",
             "Raise the ceiling, or confirm the space is outside the means of egress and cite "
-            "the minimum that governs it."))
+            "the minimum that governs it.", box=low.box))
 
 
 # ══ assembly occupant-load posting ═════════════════════════════════════════
@@ -435,4 +436,4 @@ def occupant_load_posting(f: ProjectFacts, out: RuleResult):
             f"not be seen by this check.",
             "FBC-B 1004.9",
             "Show the sign location near the main exit access doorway and note it as a "
-            "permanent, approved sign."))
+            "permanent, approved sign.", box=r.best.box if r is not None else None))

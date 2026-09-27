@@ -366,7 +366,8 @@
       <p class="figures">
         {{ currentJob.filename }} · {{ currentJob.pages }} sheets ·
         {{ currentJob.elapsed_seconds }} s elapsed · station {{ stageIndex() + 1 }} of
-        {{ stages().length }} · zero model calls
+        {{ stages().length }} ·
+        {{ aiReading() ? 'sheets read by AI, every value checked against the sheet' : 'zero model calls' }}
       </p>
 
       @if (lostContact()) {
@@ -492,6 +493,17 @@
         pages · {{ megabytes(summary.pdf_bytes) | number: '1.1-1' }} MB ·
         {{ currentJob.elapsed_seconds }} s
       </p>
+      @if (summary.ai_reading; as ai) {
+        <!-- What the AI reader did, in counts. It proposes; the sheet decides. -->
+        <p class="figures">
+          AI reading · {{ ai.sheets_read }} sheets read by {{ ai.model }} ·
+          {{ ai.accepted }} values found on the sheet and used · {{ ai.rejected }} not found
+          on the sheet and set aside
+          @if (ai.sheets_failed) {
+            · {{ ai.sheets_failed }} sheets not read
+          }
+        </p>
+      }
     </section>
 
     <!-- ── 05 · declared versus drawn ───────────────────────────────────────
@@ -515,7 +527,7 @@
             On-sheet markers show the as-drawn outcome, because the permit is issued against what
             was submitted.
             <ul class="annotations">
-              @for (finding of conflicts(); track finding.fid) {
+              @for (finding of conflicts(); track key(finding)) {
                 <li>
                   <span class="xtick" aria-hidden="true"></span>
                   <span class="annot-name">{{ finding.sheet }}</span>
@@ -533,7 +545,7 @@
               differently under each reading.
             </b>
             <ul class="annotations">
-              @for (finding of divergent(); track finding.fid + finding.scenario) {
+              @for (finding of divergent(); track key(finding)) {
                 <li>
                   <span class="annot-name">{{ finding.fid }}</span>
                   {{ finding.title }} — {{ scenarioNote(finding) }}
@@ -576,20 +588,20 @@
               </tr>
             </thead>
             <tbody>
-              @for (finding of rows; track finding.fid) {
+              @for (finding of rows; track key(finding)) {
                 <tr class="{{ finding.severity }}">
                   <td class="ref">{{ finding.fid }}</td>
                   <td class="ref">{{ finding.sheet }}</td>
                   <td class="sev {{ finding.severity }}" data-sev-anchor>
                     <!-- The chip carries the severity's colour. The tick still marks
                          checked-and-passed, now inside it. -->
-                    <span class="chip" tabindex="0" [attr.aria-describedby]="'sev-' + finding.fid">
+                    <span class="chip" tabindex="0" [attr.aria-describedby]="'sev-' + key(finding)">
                       @if (finding.severity === 'VERIFIED') {
                         <span class="tick" aria-hidden="true"></span>
                       }
                       {{ finding.severity }}
                     </span>
-                    <span class="sev-tip" role="tooltip" [id]="'sev-' + finding.fid">
+                    <span class="sev-tip" role="tooltip" [id]="'sev-' + key(finding)">
                       <b>{{ finding.severity }}</b> — {{ meaning(finding.severity) }}
                     </span>
                     <!-- A conflict is a status, not a severity: the row keeps its own
@@ -610,6 +622,20 @@
                     }
                     @if (finding.scenario !== 'both') {
                       <span class="basis">{{ scenarioNote(finding) }}</span>
+                    }
+                    <!-- Where each value this rests on was read, and by what. A value
+                         only the AI reader found says so. -->
+                    @if (finding.evidence?.length) {
+                      <span class="evidence">
+                        Read from
+                        @for (e of finding.evidence; track $index) {
+                          <span class="quote">{{ e.sheet }} “{{ e.quote }}”</span>
+                          @if (e.note) {
+                            <span class="ai-note">({{ e.note }})</span>
+                          }
+                          {{ $last ? '' : ' · ' }}
+                        }
+                      </span>
                     }
                   </td>
                   <td class="ref">{{ finding.code }}</td>

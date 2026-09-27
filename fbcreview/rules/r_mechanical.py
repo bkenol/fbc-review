@@ -103,7 +103,7 @@ def outdoor_air_arithmetic(f: ProjectFacts, out: RuleResult):
             f"{body} Does not reconcile: " + "; ".join(problems) + ".",
             "FBC-M 403.3.1.1.1 · Equation 4-1",
             "Correct the calculation, then re-check the scheduled outdoor air against the "
-            "corrected total."))
+            "corrected total.", box=sched.bbox))
     else:
         out.findings.append(Finding(
             "V-35", "MECH.OUTDOOR_AIR_ARITHMETIC", "PASS", "VERIFIED", "Mechanical",
@@ -113,4 +113,4 @@ def outdoor_air_arithmetic(f: ProjectFacts, out: RuleResult):
             "(people from area and density; Rp x Pz + Ra x Az per zone; the total). The rates "
             "chosen from Table 403.3.1.1 are not checked here.",
             body + " Every difference is rounding.",
-            "FBC-M 403.3.1.1.1 · Equation 4-1", "None."))
+            "FBC-M 403.3.1.1.1 · Equation 4-1", "None.", box=sched.bbox))

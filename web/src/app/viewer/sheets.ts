@@ -25,6 +25,7 @@
  * Pure, and tested as such — no pdf.js, no DOM.
  */
 import { Finding, Markup, SheetRef } from '../api/model/models';
+import { viewerPage } from './findings';
 
 export interface SheetChip {
   /** 1-based, as the viewer numbers pages. */
@@ -80,8 +81,10 @@ export function sheetChips(input: SheetChipInput): SheetChip[] {
   const severity = new Map<number, string>();
   for (const finding of input.findings ?? []) {
     if (finding.status === 'PASS') continue;
-    open.set(finding.page, (open.get(finding.page) ?? 0) + 1);
-    severity.set(finding.page, worst(severity.get(finding.page) ?? '', finding.severity));
+    // Findings count from 0, sheets and markup from 1.
+    const page = viewerPage(finding);
+    open.set(page, (open.get(page) ?? 0) + 1);
+    severity.set(page, worst(severity.get(page) ?? '', finding.severity));
   }
 
   const marks = new Map<number, number>();

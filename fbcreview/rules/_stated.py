@@ -69,7 +69,7 @@ def stated(f: ProjectFacts, *sections: str) -> Optional[CodeDatum]:
             provided_raw=_printed(prov.best) if prov else "",
             required=float(req.value) if req else None,
             provided=float(prov.value) if prov else None,
-            unit=unit, sheet=home.sheet, page=home.page, anchor=home.label,
+            unit=unit, sheet=home.sheet, page=home.page, anchor=home.label, box=home.box,
             note=(f"read by AI and verified on {home.sheet}" if ai_only else ""))
     return None
 

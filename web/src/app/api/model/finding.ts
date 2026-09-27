@@ -7,10 +7,11 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { FindingEvidence } from './finding-evidence';
 
 
 /**
- * One rule outcome. Mirrors `fbcreview.rules.Finding`.
+ * One rule outcome. Mirrors `fbcreview.rules.Finding`, plus what the viewer needs.
  */
 export interface Finding { 
     action?: string;
@@ -23,9 +24,21 @@ export interface Finding {
     checked: string;
     code: string;
     discipline: string;
+    /**
+     * The readings the rule\'s inputs rest on, and which reader found each.
+     */
+    evidence?: Array<FindingEvidence>;
     fid: string;
     hit?: number;
+    /**
+     * Unique within one review. `fid` is not — two under-width doors are two H-03s — so anything the client keys, tracks or selects uses this. Empty on a review written before it existed; fall back to `fid`.
+     */
+    key?: string;
     page: number;
+    /**
+     * Where to draw the marker: [x0, y0, x1, y1] in pdf.js viewport space at scale 1 on the uploaded set\'s page (points, origin top-left, rotation applied). Null when it could not be placed; `anchor` and `hit` remain the fallback.
+     */
+    rect?: Array<number> | null;
     result: string;
     rule_id: string;
     /**

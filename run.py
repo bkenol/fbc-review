@@ -121,7 +121,8 @@ def main(argv):
 
     if "--json" in argv:
         out = _arg(argv, "--json")
-        json.dump({"findings": [f.to_dict() for f in res.findings],
+        from fbcreview.payload import findings_payload
+        json.dump({"findings": findings_payload(path, facts, res.findings),
                    "abstentions": [a.__dict__ for a in res.abstentions],
                    "declaration": declaration.to_dict() if declaration else None,
                    "meta": {k: v for k, v in facts.meta.items()

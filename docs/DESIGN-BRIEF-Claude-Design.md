@@ -22,8 +22,11 @@ margin added to every sheet, plus a findings register at the back.
 The review is deterministic. It reads the drawing's own vector geometry and text,
 checks every stated code value against the section it cites, redoes the
 arithmetic, and measures the egress paths off the drawing at the scale recorded
-inside the file. It makes no model calls and it does not guess: a rule that
-cannot get the input it needs abstains and says so.
+inside the file. It does not guess: a rule that cannot get the input it needs
+abstains and says so. Since 2026-09-27 a deployment may also have Claude read
+each sheet — "AI reads, rules decide" — and then every value the model proposes
+is found on the sheet before a rule may use it, and a card says when a value was
+read by AI. The rules themselves never call a model.
 
 That last property is the product. **"Not checked" must never look like "checked
 and passed."** The interface has to carry that distinction visually, not just in
@@ -148,6 +151,9 @@ fit this product:
 > Every stated value checked against the section it cites.
 
 > Twelve rules, zero model calls, fifteen seconds.
+
+(Only on a deployment with AI reading off — the client asks `/api/config` and
+says "every value checked against the sheet" instead where it is on.)
 
 The disclaimer is required on every state and is not negotiable prose:
 

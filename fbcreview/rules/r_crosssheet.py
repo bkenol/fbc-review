@@ -106,7 +106,8 @@ def area_agreement(f: ProjectFacts, out: RuleResult):
             f"Table 1004.5 factors are basis-specific, so the basis has to be explicit or the "
             f"occupant load cannot be independently checked.",
             "FBC-B 1004.5 · FBC-EBC 601.2",
-            "Label both areas with their basis (gross or net).", basis=basis))
+            "Label both areas with their basis (gross or net).", basis=basis,
+            box=ca.box if ca is not None else None))
     else:
         out.findings.append(Finding(
             "V-AR", "XSHEET.BUILDING_AREA", "PASS", "VERIFIED", "Occupancy", page, sheet,
@@ -120,7 +121,7 @@ def area_agreement(f: ProjectFacts, out: RuleResult):
              if drawn_only else
              f"The largest floor and the whole building are both {a:,.0f} SF "
              f"({la}), which is what a single-storey building should show."),
-            "FBC-B 1004.5", "None.", basis=basis))
+            "FBC-B 1004.5", "None.", basis=basis, box=ca.box if ca is not None else None))
 
 
 @rule("XSHEET.RISK_CATEGORY")
@@ -136,8 +137,9 @@ def risk_category(f: ProjectFacts, out: RuleResult):
         out.abstentions.append(Abstention("XSHEET.RISK_CATEGORY",
                                           "risk category or occupant load not extracted"))
         return
-    page, sheet, anchor = _home(f, _claim(f, "risk_category") if f.meta.get("risk_category")
-                                else None, "RISK CATEGORY")
+    rc_claim = _claim(f, "risk_category") if f.meta.get("risk_category") else None
+    page, sheet, anchor = _home(f, rc_claim, "RISK CATEGORY")
+    rc_box = rc_claim.box if rc_claim is not None else None
     if rc.strip().upper() in ("III", "3") and ol <= C.RISK_III_ASSEMBLY_OL:
         out.findings.append(Finding(
             "M-03", "XSHEET.RISK_CATEGORY", "OPEN", "MEDIUM", "Structural / Occupancy", page, sheet,
@@ -149,13 +151,14 @@ def risk_category(f: ProjectFacts, out: RuleResult):
             f"occupancy with an occupant load greater than {C.RISK_III_ASSEMBLY_OL}. The stated "
             f"occupant load is {ol:g}. RC III is conservative — it raises design wind pressures — "
             f"but it is inconsistent with the occupant load on the same sheet.",
-            "FBC-B Table 1604.5", "Confirm Risk Category II, or state the basis for III."))
+            "FBC-B Table 1604.5", "Confirm Risk Category II, or state the basis for III.",
+            box=rc_box))
     else:
         out.findings.append(Finding(
             "V-RC", "XSHEET.RISK_CATEGORY", "PASS", "VERIFIED", "Structural / Occupancy", page, sheet,
             anchor, "Risk category is consistent with the occupant load",
             "Assigned risk category against Table 1604.5.",
-            f"RC {rc} at an occupant load of {ol:g}.", "FBC-B Table 1604.5", "None."))
+            f"RC {rc} at an occupant load of {ol:g}.", "FBC-B Table 1604.5", "None.", box=rc_box))
 
 
 #: Disagreements a field's own rule reports inside its finding about that row.
@@ -233,7 +236,8 @@ def stated_conflict(f: ProjectFacts, out: RuleResult):
             f"\"{_shown(o)}\" ({o.label}). One set, two answers — whichever is right, the other "
             f"sheet is what a plans examiner will circle.",
             "FBC-B 107.2.1",
-            f"Decide which {name} is right and make every sheet that states it agree."))
+            f"Decide which {name} is right and make every sheet that states it agree.",
+            box=best.box))
     if shared and not conflicts:
         listed = sorted({f"{_name(k, role)} ({', '.join(r.sheets)})" for k, role, r in shared})
         first = shared[0][2].best
@@ -247,7 +251,7 @@ def stated_conflict(f: ProjectFacts, out: RuleResult):
             f"all in agreement: " + "; ".join(listed) + "."
             + "".join(f" One value is not in agreement — the {_name(r.field, r.role)} — and "
                       f"that disagreement is reported with its own code check." for r in folded),
-            "FBC-B 107.2.1", "None."))
+            "FBC-B 107.2.1", "None.", box=first.box))
     elif not shared and not conflicts:
         out.abstentions.append(Abstention(
             "XSHEET.STATED_CONFLICT",

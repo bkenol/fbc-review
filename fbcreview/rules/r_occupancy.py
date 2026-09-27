@@ -286,7 +286,8 @@ def classification_consistency(f: ProjectFacts, out: RuleResult):
             f"spaces they serve — but a zero in a column presented as Table 1004.5 invites a "
             f"comment.",
             "FBC-B Table 1004.5 · 1004.2.1",
-            "Footnote the row to 1004.2.1 rather than presenting it as a Table 1004.5 factor."))
+            "Footnote the row to 1004.2.1 rather than presenting it as a Table 1004.5 factor.",
+            box=r.box))
     zeros = any(r.code == "FBC" and r.factor == 0 for r in table)
     rows = [r for r in table if r.factor]
     if not rows:
@@ -348,7 +349,8 @@ def classification_consistency(f: ProjectFacts, out: RuleResult):
               "risk category.",
             "FBC-B 1004.5 · Table 1004.5",
             "State one governing occupant load with its Table 1004.5 basis, state any "
-            "ventilation density separately with its own basis, and cross-reference the two."))
+            "ventilation density separately with its own basis, and cross-reference the two.",
+            box=r.box))
     if matched:
         r0 = matched[0][0]
         out.findings.append(Finding(
@@ -361,4 +363,4 @@ def classification_consistency(f: ProjectFacts, out: RuleResult):
             "; ".join(f"{r.space.title()} ({words.strip().title()}): {r.factor:g} {r.basis}, "
                       f"Table 1004.5 '{key}' is {want:g} {want_basis}"
                       for r, key, words, _w, want, want_basis in matched) + ".",
-            "FBC-B Table 1004.5", "None."))
+            "FBC-B Table 1004.5", "None.", box=r0.box))

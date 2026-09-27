@@ -45,6 +45,7 @@ import {
   ProjectDeclaration,
 } from '../api';
 import { FeedbackDraft, FeedbackPanel } from '../feedback/feedback-panel';
+import { findingKey, viewerPage } from '../viewer/findings';
 import { FocusRequest, SheetAnnotation, SheetViewer } from '../viewer/sheet-viewer';
 import { TrainingService } from '../training/training-service';
 import { AnswerNow } from './declaration/answer-now';
@@ -172,6 +173,9 @@ export class Workspace {
     return index;
   });
 
+  /** A finding's identity within this review. See `viewer/findings.ts`. */
+  protected readonly key = findingKey;
+
   protected kindOf(abstention: Abstention): AbstentionKindInfo | null {
     return this.kindIndex().get(abstention.kind ?? '') ?? null;
   }
@@ -245,7 +249,7 @@ export class Workspace {
   protected openFinding(finding: Finding): void {
     this.pickFinding(finding);
     this.showPanelTop();
-    this.lookAt('finding', finding.fid, finding.page);
+    this.lookAt('finding', findingKey(finding), viewerPage(finding));
   }
 
   protected pickMarkup(markup: Markup): void {

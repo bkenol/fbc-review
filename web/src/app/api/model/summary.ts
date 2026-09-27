@@ -7,6 +7,7 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { AiReadingSummary } from './ai-reading-summary';
 import { SheetRef } from './sheet-ref';
 import { Abstention } from './abstention';
 
@@ -16,6 +17,10 @@ import { Abstention } from './abstention';
  */
 export interface Summary { 
     abstentions: Array<Abstention>;
+    /**
+     * What the AI sheet reader did on this review. Null when it was off.
+     */
+    ai_reading?: AiReadingSummary | null;
     annotations: number;
     cad_layers: number;
     /**

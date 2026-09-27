@@ -14,7 +14,7 @@ finding records which reading produced it.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from ..confidence import Abstention
 from ..facts import ProjectFacts
 
@@ -52,13 +52,20 @@ class Finding:
     #: resting on user input must say so; the markup may never attribute to the
     #: drawings something the drawings do not state.
     basis: str = "drawings"
+    #: Where the finding's subject is printed on `page`, in unrotated page
+    #: points, when the rule knows it better than `anchor` can say — the table
+    #: row, not the first place the room's name appears. Placement only
+    #: (`fbcreview/payload.py`): it is not part of the record `to_dict` returns.
+    box: Optional[Tuple[float, float, float, float]] = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("box", None)
+        return d
 
     def same_content(self, other: "Finding") -> bool:
         """Equal in everything except which scenario produced it."""
-        a, b = asdict(self), asdict(other)
+        a, b = self.to_dict(), other.to_dict()
         a.pop("scenario"), b.pop("scenario")
         return a == b
 

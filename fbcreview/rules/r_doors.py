@@ -85,7 +85,7 @@ def clear_width_requirement(f: ProjectFacts, out: RuleResult):
             noted(d, f"{d.sheet} states {shown} required. 1010.1.1 requires {req} in. of clear "
                      f"width, measured between the face of the door and the stop with the door "
                      f"open 90 degrees."),
-            "FBC-B 1010.1.1", f"Change the stated requirement to {req} in."))
+            "FBC-B 1010.1.1", f"Change the stated requirement to {req} in.", box=d.box))
         return
     exact = abs(d.required - req) <= 0.01
     out.findings.append(Finding(
@@ -98,4 +98,4 @@ def clear_width_requirement(f: ProjectFacts, out: RuleResult):
                  f"between the face of the door and the stop with the door open 90 degrees. The "
                  f"requirement as stated is right; whether each scheduled door provides it is "
                  f"checked separately, against the door schedule."),
-        "FBC-B 1010.1.1", "None."))
+        "FBC-B 1010.1.1", "None.", box=d.box))

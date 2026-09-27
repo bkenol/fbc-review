@@ -76,7 +76,7 @@ def plumbing_count(layouts: Dict[int, PageLayout], codes: Dict[int, str]) -> Opt
         block = [s for s in layout.segments if s is not head and x0 <= s.box[0] <= x1
                  and y0 < s.box[1] <= y1]
         out = PlumbingCount(None, page=page, sheet=codes.get(page, f"p{page + 1}"),
-                            anchor=head.text.strip())
+                            anchor=head.text.strip(), box=head.box)
         cols = {}
         for s in block:
             t = s.text.strip().upper()

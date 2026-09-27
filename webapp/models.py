@@ -792,11 +792,42 @@ class ConfigResponse(BaseModel):
         description="Every lever the overlay has. The closed list this publishes is "
                     "what makes the triage split decidable rather than a judgement."
     )
+    ai_reading: bool = Field(
+        default=False,
+        description="Whether this deployment reads sheets with the AI reader "
+                    "(`FBC_AI_READING=on` with a key). Rules are pure Python either way.",
+    )
 
 
 # ── findings ──────────────────────────────────────────────────────────────
+class FindingEvidence(BaseModel):
+    """One reading a finding rests on: the value, the words as printed, and where.
+
+    Written by `fbcreview/payload.py`. `method` says which reader found it —
+    `pair`, `line` and `table` are the layout reader; `ai` is the AI sheet
+    reader, whose readings are used only after the quote has been found on the
+    sheet, and `note` says so in words a card can show.
+    """
+
+    field: str = Field(description="The catalog field, e.g. `egress.common_path`.")
+    role: str = Field(default="", description="`required`, `provided`, or empty.")
+    value: str = Field(description="The value as a card shows it.")
+    quote: str = Field(description="The words the value was read from, as printed.")
+    sheet: str
+    page: int = Field(description="0-based, like `Finding.page`.")
+    rect: Optional[List[float]] = Field(
+        default=None,
+        description="Where it is printed: pdf.js viewport space at scale 1 on the source page.",
+    )
+    method: str
+    confidence: str
+    sheets: List[str] = Field(default_factory=list,
+                              description="Every sheet that states the same value.")
+    note: str = ""
+
+
 class Finding(BaseModel):
-    """One rule outcome. Mirrors `fbcreview.rules.Finding`."""
+    """One rule outcome. Mirrors `fbcreview.rules.Finding`, plus what the viewer needs."""
 
     fid: str
     rule_id: str
@@ -829,6 +860,27 @@ class Finding(BaseModel):
             "the value it depends on, and the card says so — the markup must never "
             "attribute to the drawings something the drawings do not say."
         ),
+    )
+    key: str = Field(
+        default="",
+        description=(
+            "Unique within one review. `fid` is not — two under-width doors are two "
+            "H-03s — so anything the client keys, tracks or selects uses this. Empty "
+            "on a review written before it existed; fall back to `fid`."
+        ),
+    )
+    rect: Optional[List[float]] = Field(
+        default=None,
+        description=(
+            "Where to draw the marker: [x0, y0, x1, y1] in pdf.js viewport space at "
+            "scale 1 on the uploaded set's page (points, origin top-left, rotation "
+            "applied). Null when it could not be placed; `anchor` and `hit` remain "
+            "the fallback."
+        ),
+    )
+    evidence: List[FindingEvidence] = Field(
+        default_factory=list,
+        description="The readings the rule's inputs rest on, and which reader found each.",
     )
 
 
@@ -916,6 +968,19 @@ class SheetRef(BaseModel):
     )
 
 
+class AiReadingSummary(BaseModel):
+    """Counts only — never sheet text. See `fbcreview/ai/readings.py`."""
+
+    model: str
+    prompt_version: str
+    sheets_read: int
+    sheets_failed: int
+    proposals: int = Field(description="Values the model proposed.")
+    accepted: int = Field(description="Proposals found on the sheet and used.")
+    rejected: int = Field(description="Proposals the sheet did not bear out; never used.")
+    usage: Dict[str, int] = Field(default_factory=dict)
+
+
 class Summary(BaseModel):
     """Counts and provenance for a finished review.
 
@@ -949,7 +1014,10 @@ class Summary(BaseModel):
                     "this was recorded, which the client treats as 'label the "
                     "sheets by page number' rather than as an error.",
     )
-
+    ai_reading: Optional[AiReadingSummary] = Field(
+        default=None,
+        description="What the AI sheet reader did on this review. Null when it was off.",
+    )
 
 # ── what kind of PDF was uploaded ─────────────────────────────────────────
 class RasterRegion(BaseModel):

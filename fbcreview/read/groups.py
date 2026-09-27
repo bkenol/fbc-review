@@ -19,7 +19,7 @@ import re
 from typing import Dict, List
 
 from ..facts import ExitDischarge, OccupancyRow
-from ..layout import PageLayout
+from ..layout import PageLayout, union
 from .deterministic import normalise_label
 from .parse import parse
 
@@ -32,6 +32,7 @@ def exit_discharges(layouts: Dict[int, PageLayout], codes: Dict[int, str]) -> Li
     out: List[ExitDischarge] = []
     for page, layout in sorted(layouts.items()):
         groups: Dict[str, ExitDischarge] = {}
+        boxes: Dict[str, list] = {}
         for pair in layout.pairs:
             heading = next((c.strip().rstrip(":").strip() for c in pair.context
                             if _EXIT.match(c.strip().upper())), None)
@@ -40,6 +41,7 @@ def exit_discharges(layouts: Dict[int, PageLayout], codes: Dict[int, str]) -> Li
             name = _EXIT.match(heading.upper()).group(1)
             g = groups.setdefault(name, ExitDischarge(
                 name, page=page, sheet=codes.get(page, f"p{page + 1}"), anchor=heading))
+            boxes.setdefault(name, []).append(pair.box)
             label, raw = normalise_label(pair.label), pair.values[0]
             if "WIDTH" in label and "PROVIDED" in label:
                 g.width_provided_in = parse("inches", raw)
@@ -49,7 +51,9 @@ def exit_discharges(layouts: Dict[int, PageLayout], codes: Dict[int, str]) -> Li
                 g.capacity = parse("count", raw)
             elif label in ("OCCUPANT LOAD", "OCCUPANTS", "OCCUPANTS SERVED"):
                 g.occupant_load = parse("count", raw)
-        out.extend(groups[k] for k in sorted(groups))
+        for k in sorted(groups):
+            groups[k].box = union(boxes[k])
+            out.append(groups[k])
     return out
 
 
@@ -95,5 +99,5 @@ def occupancy_rows(layouts: Dict[int, PageLayout], codes: Dict[int, str]) -> Lis
                 pair.values[use_i].strip() if use_i is not None else "",
                 parse("area", pair.values[area_i]) if area_i is not None else None,
                 factor, basis, parse("count", pair.values[load_i]), code, context,
-                page=page, sheet=codes.get(page, f"p{page + 1}")))
+                page=page, sheet=codes.get(page, f"p{page + 1}"), box=pair.box))
     return out

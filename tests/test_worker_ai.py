@@ -136,3 +136,26 @@ def test_a_rebuilt_set_is_replayed_too_though_its_bytes_never_repeat(ai_on, monk
 def file_sha256_of(data: bytes) -> str:
     import hashlib
     return hashlib.sha256(data).hexdigest()
+
+
+def test_config_says_whether_this_deployment_reads_with_ai(client, monkeypatch):
+    """The client says "zero model calls" only where that is true."""
+    monkeypatch.delenv("FBC_AI_READING", raising=False)
+    off = client.get("/api/config").json()
+    assert off["ai_reading"] is False and AI_STAGE not in off["stages"]
+    for k, v in ON.items():
+        monkeypatch.setenv(k, v)
+    on = client.get("/api/config").json()
+    assert on["ai_reading"] is True and AI_STAGE in on["stages"]
+
+
+def test_findings_json_carries_keys_places_and_evidence(ai_on, monkeypatch):
+    monkeypatch.setattr("fbcreview.ai.reader.read_document", _fake_reading([]))
+    store, files = FakeJobStore(), FakeStorage()
+    record, _ = _job(store, files)
+    assert record["state"] == "done", record.get("error")
+    body = json.loads(files.blobs["outputs/job-ai/findings.json"])
+    keys = [f["key"] for f in body["findings"]]
+    assert len(keys) == len(set(keys))
+    assert all("rect" in f and "evidence" in f for f in body["findings"])
+    assert body["summary"]["ai_reading"]["rejected"] == 1

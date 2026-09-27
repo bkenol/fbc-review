@@ -84,6 +84,7 @@ import {
   SheetRef,
 } from '../api';
 import { AnchorItem, Box, locateAnchors } from './anchor';
+import { engineBox, findingKey, viewerPage } from './findings';
 import {
   PageAnnotation,
   RawAnnotation,
@@ -119,6 +120,8 @@ export interface SheetAnnotation extends PageAnnotation {
 
 export interface PlacedFinding {
   finding: Finding;
+  /** `findingKey(finding)`: what the overlay tracks and the focus looks up. */
+  key: string;
   /** Null when the anchor text could not be found on the page. */
   box: Box | null;
 }
@@ -171,7 +174,10 @@ export class SheetViewer {
   readonly sheets = input<SheetRef[]>([]);
   /** Training mode. Without it the viewer reads and does not draw. */
   readonly canDraw = input(false);
+  /** The selected finding's fid: what markup drawn now is filed against. */
   readonly selectedFid = input<string>('');
+  /** The selected finding's key, for lighting it. Two findings can share a fid. */
+  readonly selectedKey = input<string>('');
   readonly selectedMarkupId = input<string>('');
   readonly selectedAnnotId = input<string>('');
   /** Set by the panel when a row is picked. See `FocusRequest`. */
@@ -279,14 +285,23 @@ export class SheetViewer {
    */
   private readonly onPage = computed(() =>
     this.findings().filter(
-      (f) => f.page === this.page() && f.scenario !== FindingScenarioEnum.AsDeclared,
+      (f) => viewerPage(f) === this.page() && f.scenario !== FindingScenarioEnum.AsDeclared,
     ),
   );
 
   protected readonly placed = computed<PlacedFinding[]>(() => {
     const boxes = this.located();
-    return this.onPage().map((finding) => ({ finding, box: boxes.get(finding.fid) ?? null }));
+    return this.onPage().map((finding) => {
+      const key = findingKey(finding);
+      return { finding, key, box: boxes.get(key) ?? null };
+    });
   });
+
+  /** Whether a placed finding is the selected one. */
+  protected isSelected(item: PlacedFinding): boolean {
+    const key = this.selectedKey();
+    return key ? item.key === key : item.finding.fid === this.selectedFid();
+  }
 
   protected readonly unplaced = computed(() => this.placed().filter((p) => !p.box).length);
 
@@ -574,9 +589,23 @@ export class SheetViewer {
     viewport: Viewport,
     token: number,
   ): Promise<void> {
-    const wanted = this.onPage().filter((f) => f.anchor);
+    const wanted = this.onPage().filter((f) => f.anchor || engineBox(f));
     if (!wanted.length) {
       this.located.set(new Map());
+      return;
+    }
+
+    // The engine's own placement, where the review carries one. The text
+    // layer is only read for the findings that still need searching for.
+    const found = new Map<string, Box | null>();
+    const search: Finding[] = [];
+    for (const finding of wanted) {
+      const box = engineBox(finding);
+      if (box) found.set(findingKey(finding), box);
+      else search.push(finding);
+    }
+    if (!search.length) {
+      if (token === this.renderToken) this.located.set(found);
       return;
     }
 
@@ -596,10 +625,9 @@ export class SheetViewer {
         };
       });
 
-    const found = new Map<string, Box | null>();
-    for (const finding of wanted) {
+    for (const finding of search) {
       const boxes = locateAnchors(items, finding.anchor);
-      found.set(finding.fid, boxes[finding.hit ?? 0] ?? null);
+      found.set(findingKey(finding), boxes[finding.hit ?? 0] ?? null);
     }
 
     if (token === this.renderToken) this.located.set(found);
@@ -666,9 +694,10 @@ export class SheetViewer {
     this.doc.set(layer);
   }
 
-  /** Jump to a finding's page, wherever it is in the set. */
+  /** Jump to a finding's page, wherever it is in the set — the cover sheet included. */
   showFinding(finding: Finding): void {
-    if (finding.page && finding.page !== this.page()) this.page.set(finding.page);
+    const page = viewerPage(finding);
+    if (page !== this.page()) this.page.set(page);
     this.findingPicked.emit(finding);
   }
 
@@ -832,7 +861,7 @@ export class SheetViewer {
   private sheetLabel(): string {
     const chip = this.here();
     if (chip?.read) return chip.code;
-    return this.findings().find((f) => f.page === this.page())?.sheet ?? '';
+    return this.findings().find((f) => viewerPage(f) === this.page())?.sheet ?? '';
   }
 
   // ── overlay geometry helpers, used by the template ──────────────────────

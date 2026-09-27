@@ -110,7 +110,7 @@ def fixture_count(f: ProjectFacts, out: RuleResult):
             + ", ".join(f"{_NAME.get(k, k)} ({pc.provided.get(k, 0):g} of {v})"
                         for k, v in short.items()) + "." + unisex,
             "FBC-B Table 2902.1 · 2902.1.1",
-            "Provide the missing fixtures, or state the approved basis for fewer."))
+            "Provide the missing fixtures, or state the approved basis for fewer.", box=pc.box))
     elif miscounted:
         out.findings.append(Finding(
             "P-02", "PLUMB.FIXTURE_COUNT", "OPEN", "MEDIUM", "Plumbing",
@@ -122,7 +122,7 @@ def fixture_count(f: ProjectFacts, out: RuleResult):
             + ", ".join(f"{_NAME.get(k, k)} {pc.required[k]:g}, not {v}"
                         for k, v in miscounted.items()) + "." + unisex,
             "FBC-B Table 2902.1 · 2902.1.1",
-            "Recompute the fixture count and correct the stated requirement."))
+            "Recompute the fixture count and correct the stated requirement.", box=pc.box))
     else:
         provided = (f" Provided: {_counts(pc.provided)}." if pc.provided else
                     " The calculation does not list what is provided.")
@@ -133,4 +133,4 @@ def fixture_count(f: ProjectFacts, out: RuleResult):
             "Each fixture ratio against Table 2902.1, the split and round-ups of 2902.1.1, and "
             "what is provided against what that requires.",
             f"{matches} {working}{provided}{unisex}",
-            "FBC-B Table 2902.1 · 2902.1.1 · 2902.2", "None."))
+            "FBC-B Table 2902.1 · 2902.1.1 · 2902.2", "None.", box=pc.box))

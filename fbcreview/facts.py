@@ -36,6 +36,8 @@ class CodeDatum:
     #: Provenance a finding must repeat — "read by AI and verified on G-0" —
     #: when the row was located only by the AI reader. Empty for a block row.
     note: str = ""
+    #: Where the row is printed, unrotated page points, when it is known.
+    box: Optional[Tuple[float, float, float, float]] = None
 
 
 @dataclass
@@ -82,6 +84,7 @@ class ExitDischarge:
     page: int = 0
     sheet: str = ""
     anchor: str = ""                           # the heading, as printed
+    box: Optional[Tuple[float, float, float, float]] = None
 
 
 @dataclass
@@ -101,6 +104,7 @@ class OccupancyRow:
     context: Tuple[str, ...] = ()
     page: int = 0
     sheet: str = ""
+    box: Optional[Tuple[float, float, float, float]] = None
 
 
 @dataclass
@@ -125,6 +129,7 @@ class PlumbingCount:
     page: int = 0
     sheet: str = ""
     anchor: str = ""
+    box: Optional[Tuple[float, float, float, float]] = None
 
 
 @dataclass

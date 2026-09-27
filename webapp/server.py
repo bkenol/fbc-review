@@ -40,7 +40,7 @@ from webapp.feedback_store import (ACCEPTED, ACTIONED, NEW, REJECTED,
                                    FeedbackStore, get_feedback_store)
 from webapp.jobs import DONE, JobStore, RateLimited, get_job_store, utcnow
 from webapp.storage import Storage, get_storage
-from webapp.worker import STAGES, run_review, stages_for
+from webapp.worker import STAGES, ai_config, run_review, stages_for
 
 logging_config.configure()
 log = logging.getLogger("fbc.api")
@@ -94,10 +94,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="FBC Code Review",
     version=API_VERSION,
-    summary="Deterministic Florida Building Code plan review.",
+    summary="Florida Building Code plan review: AI reads, rules decide.",
     description=(
-        "Upload a vector permit set, choose the review parameters, download a "
-        "marked-up PDF and a findings register. No model calls in the request path."
+        "Upload a permit set, choose the review parameters, download a marked-up PDF "
+        "and a findings register. The rules and the code corpus are pure Python. Where "
+        "a deployment turns it on, each sheet is also read by Claude, and every value it "
+        "proposes is found on the sheet before a rule may use it."
     ),
     lifespan=lifespan,
     responses={
@@ -314,7 +316,7 @@ def config(
             for k, v in EDITIONS.items()
         ],
         severities=list(SEVERITY_ORDER),
-        stages=list(STAGES),
+        stages=stages_for(False),
         max_upload_mb=cfg.max_upload_mb,
         max_pages=cfg.max_pages,
         retain_days=cfg.retain_days,
@@ -361,6 +363,7 @@ def config(
         calibration_knobs=[
             models.CalibrationKnob.model_validate(k) for k in calibration.knob_catalogue()
         ],
+        ai_reading=ai_config() is not None,
     )
 
 

@@ -366,6 +366,12 @@ contract, all verified in the code:
    viewer renders the upload, so an anchor that exists only in recovered OCR text
    is never found by the viewer.
 
+> **Fixed in Phase E** (`docs/ARCHITECTURE-V2.md` §3.8). The client converts
+> pages in one place (`web/src/app/viewer/findings.ts`, `viewerPage`); every
+> finding carries a unique `key`; and `findings.json` carries a `rect` in the
+> viewer's own coordinate space, found on the file the engine read, so an
+> OCR-only anchor is placed and nothing is searched one sheet late.
+
 ---
 
 ## 9. The training loop

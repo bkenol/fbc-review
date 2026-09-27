@@ -1941,6 +1941,25 @@ td .basis {
   font-style: italic;
   color: var(--text-muted);
 }
+
+/* ── where a finding's values were read ────────────────────────────────────
+ * The words as printed and the sheet they are on, so a reader can check the
+ * finding against the drawing in thirty seconds. Muted, like the basis note:
+ * provenance supports the finding, it is not the finding.
+ */
+td .evidence {
+  display: block;
+  margin-top: var(--space-1);
+  max-width: var(--measure);
+  font: var(--type-small);
+  color: var(--text-muted);
+}
+td .evidence .quote {
+  font-family: var(--font-mono, monospace);
+}
+td .evidence .ai-note {
+  font-style: italic;
+}
 /* A conflict is a status, not a seventh severity, so this tag takes the row's own
  * --sev rather than reaching for a hue. The system owns two accents and one deliberate
  * green; "where did this finding come from" does not earn a fourth.

@@ -12,6 +12,7 @@ model/abstention-diagnosis.ts
 model/abstention-kind-info.ts
 model/abstention.ts
 model/admin-overview.ts
+model/ai-reading-summary.ts
 model/assist-opinion.ts
 model/calibration-adjustment.ts
 model/calibration-change.ts
@@ -41,6 +42,7 @@ model/feedback-request.ts
 model/feedback-subject.ts
 model/feedback-verdict.ts
 model/feedback.ts
+model/finding-evidence.ts
 model/finding.ts
 model/findings-document.ts
 model/health.ts
