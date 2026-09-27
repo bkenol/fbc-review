@@ -1,5 +1,12 @@
 # Can this leave the chat?
 
+> **Status, 2026-09-27.** This is the original reasoning and it is kept as written. The
+> engine it describes is taken apart and measured in
+> [`docs/ENGINE-TEARDOWN.md`](docs/ENGINE-TEARDOWN.md), and the architecture now in force is
+> [`docs/ARCHITECTURE-V2.md`](docs/ARCHITECTURE-V2.md): the "Tier B" idea below became an AI
+> reader whose every value is verified against the sheet before a rule may use it, and the
+> "zero model calls" claim was withdrawn by the owner in favour of "AI reads, rules decide".
+
 **Short answer: yes for roughly 80 percent of it, and the 80 percent includes every
 finding that mattered on the test set. The remaining 20 percent needs a model, but it
 needs one *per new drawing vendor*, not per request — and it can be a cheap one.**

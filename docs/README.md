@@ -2,13 +2,15 @@
 
 | File | What it is |
 | --- | --- |
+| `ENGINE-TEARDOWN.md` | The engine as it stood on 2026-09-27, taken apart and measured against the real Sculpted set: data flow, fact model, rule and code corpus, output contract, and the ten reasons it reproduced 4 of 14 findings. Diagrams throughout. |
+| `ARCHITECTURE-V2.md` | **The architecture in force.** AI reads, rules decide: layout layer, field catalog, deterministic and AI readers, grounding verifier, fact store, and the DWG adapter design. |
 | `DEPLOYMENT-PROMPT.md` | The kickoff brief. Six phases, with rationale for the non-obvious choices and an explicit do-not list. |
 | `DEPLOYMENT.md` | The runbook, written during the build. Starts as a stub. |
 | `TRAINING-MODE.md` | How client feedback changes what the reviewer reports — the taxonomy, the calibration overlay, the triage, and the five properties that keep it safe. Built. |
 | `reference/` | Review findings from the two test permit sets. Context for what the output is meant to look like and where the engine's limits are. |
 
-`../ARCHITECTURE.md` covers the engine's three-tier design and why the review path is
-deterministic. `../CLAUDE.md` carries the standing rules.
+`../ARCHITECTURE.md` is the original three-tier reasoning, kept as written;
+`ARCHITECTURE-V2.md` supersedes it. `../CLAUDE.md` carries the standing rules.
 
 ## Feature prompts
 
