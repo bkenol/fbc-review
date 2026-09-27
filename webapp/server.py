@@ -984,6 +984,7 @@ def rerun_review(
         raster_pages=raster_pages,
         raster_regions=raster_regions,
         profile=_profile_for(parsed.mode, user, feedback),
+        rerun_of=job_id,
     )
     return JSONResponse({"id": new_id}, status_code=202)
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import tempfile
 import time
@@ -19,6 +20,9 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from fbcreview.ai.readings import (Readings, ReadingsCache, file_sha256, save_readings,
+                                   source_identity)
+from fbcreview.ai.reader import ReaderConfig
 from fbcreview.declaration import ProjectDeclaration
 from fbcreview.options import ReviewOptions
 from fbcreview.pipeline import build_facts
@@ -39,17 +43,35 @@ STAGES = [
 ]
 
 CONVERT_STAGE = "Rebuilding scanned sheets"
+AI_STAGE = "Reading sheets with AI"
+
+#: The file a review's AI readings are stored under, beside findings.json. A
+#: re-run of the same upload replays it rather than paying for the reading again,
+#: which is also what keeps a re-run's findings identical to the first run's.
+READINGS = "readings.json"
 
 
-def stages_for(convert_raster: bool) -> List[str]:
+def ai_config() -> Optional[ReaderConfig]:
+    """The AI reader's configuration, or None when this deployment has it off."""
+    return ReaderConfig.from_env()
+
+
+def stages_for(convert_raster: bool, ai_reading: Optional[bool] = None) -> List[str]:
     """The stage list a given job will actually move through.
 
-    A job that is not rebuilding scanned sheets should not display a stage that
-    does nothing, so the list is per job rather than global.
+    A job that is not rebuilding scanned sheets, or not reading them with AI,
+    should not display a stage that does nothing, so the list is per job rather
+    than global. The AI stage follows the rebuild: the model reads the same file
+    the engine grounds its readings against, OCR text included.
     """
-    if not convert_raster:
-        return list(STAGES)
-    return [STAGES[0], CONVERT_STAGE, *STAGES[1:]]
+    if ai_reading is None:
+        ai_reading = ai_config() is not None
+    out = [STAGES[0]]
+    if convert_raster:
+        out.append(CONVERT_STAGE)
+    if ai_reading:
+        out.append(AI_STAGE)
+    return [*out, *STAGES[1:]]
 
 
 def sheet_index(sheets) -> List[Dict[str, Any]]:
@@ -91,6 +113,7 @@ def run_review(
     raster_pages: Optional[List[int]] = None,
     raster_regions: Optional[Dict[int, List[Any]]] = None,
     profile: Optional[CalibrationProfile] = None,
+    rerun_of: Optional[str] = None,
 ) -> None:
     """Executed on a worker thread. Never raises — every failure is recorded
     on the job document instead, because nothing is waiting on the return."""
@@ -111,6 +134,7 @@ def run_review(
         # ── fetch ──────────────────────────────────────────────────────────
         src = workdir / "source.pdf"
         store_files.download_to(upload_blob, str(src))
+        upload = src
 
         # ── rebuild unreadable sheets, when asked ──────────────────────────
         if convert_raster and (raster_pages or raster_regions):
@@ -139,9 +163,26 @@ def run_review(
             if report is not None:
                 store.update(job_id, conversion=report.to_dict())
 
+        # ── AI reading, when this deployment has it on ─────────────────────
+        # Never the review's failure: `_ai_readings` returns None on any error
+        # and the deterministic reader has the set either way.
+        readings = None
+        ai = ai_config()
+        if ai is not None:
+            advance()
+            rebuild = None if src == upload else {
+                "raster_pages": sorted(int(p) for p in raster_pages or []),
+                "raster_regions": {str(p): [[round(float(v), 2) for v in r] for r in rs]
+                                   for p, rs in sorted((raster_regions or {}).items())},
+            }
+            readings = _ai_readings(str(src), str(upload), rebuild, ai, job_id, rerun_of,
+                                    store_files, workdir)
+            if readings is not None:
+                store.update(job_id, ai_reading=readings.summary())
+
         # ── extract ────────────────────────────────────────────────────────
         advance()
-        facts = build_facts(str(src))
+        facts = build_facts(str(src), readings=readings)
         pages = len(facts.sheets)
 
         # ── rules ──────────────────────────────────────────────────────────
@@ -209,6 +250,8 @@ def run_review(
             "pdf_name": pdf_name,
             "findings_count": len(findings),
             "sheet_index": sheet_index(facts.sheets),
+            # Counts only — never sheet text. None when AI reading was off.
+            "ai_reading": facts.meta.get("ai_reading"),
         }
 
         out_json = workdir / "findings.json"
@@ -325,6 +368,52 @@ def _declaration_report(reconciled) -> Optional[Dict[str, Any]]:
         "total_fields": len(FIELDS),
         "fields": fields,
     }
+
+
+def _ai_readings(src: str, upload: str, rebuild: Optional[Dict[str, Any]],
+                 config: ReaderConfig, job_id: str, rerun_of: Optional[str],
+                 store_files: "storage.Storage", workdir: Path) -> Optional[Readings]:
+    """The set's AI readings: replayed from the first run of this upload, or read now.
+
+    `src` is what the model reads and the engine grounds against — the upload,
+    or the file rebuilt from it. The readings are keyed by the upload and the
+    rebuild's parameters (`source_identity`), because a rebuilt file's bytes
+    differ on every run. Stored beside the job's other artefacts either way.
+    Returns None — and the review carries on deterministically — on any failure.
+    """
+    from fbcreview.ai.prompt import PROMPT_VERSION
+    from fbcreview.ai.reader import read_document
+    from fbcreview.ai.readings import load_readings
+
+    try:
+        sha = source_identity(file_sha256(upload), rebuild)
+        readings: Optional[Readings] = None
+        if rerun_of:
+            local = workdir / "parent-readings.json"
+            try:
+                store_files.download_to(storage.output_path(rerun_of, READINGS), str(local))
+                parent = load_readings(str(local))
+                if (parent.file_sha256, parent.model, parent.prompt_version) == (
+                        sha, config.model, PROMPT_VERSION):
+                    readings = parent
+            except Exception:                                  # noqa: BLE001 — none stored
+                readings = None
+        if readings is None:
+            cache_dir = os.environ.get("FBC_AI_CACHE_DIR") or str(
+                Path(tempfile.gettempdir()) / "fbc-ai-cache")
+            readings = read_document(src, config, cache=ReadingsCache(cache_dir),
+                                     identity=sha)
+
+        out = workdir / READINGS
+        save_readings(readings, str(out))
+        store_files.upload_file(str(out), storage.output_path(job_id, READINGS),
+                                "application/json")
+        log.info("ai reading done", extra={"job_id": job_id, **readings.summary()})
+        return readings
+    except Exception as exc:                                   # noqa: BLE001 — the floor holds
+        log.warning("ai reading skipped", extra={"job_id": job_id,
+                                                  "error": type(exc).__name__})
+        return None
 
 
 def _merge_reports(first, second):

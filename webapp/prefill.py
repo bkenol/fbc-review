@@ -14,8 +14,10 @@ because the declaration is an assertion by a person and the reconciliation is
 only worth running if the two sides are genuinely independent. A silently
 auto-accepted value would make every field agree with itself.
 
-No model call, in keeping with the rest of the review path: this is the same
-pure-Python parse the review runs, stopped after the facts are built.
+No model call: this is the same pure-Python parse the review runs, stopped
+after the facts are built. Prefill is interactive — the applicant is waiting on
+the form — and the AI sheet reader, when a deployment has it on, runs in the
+review itself, where its readings are grounded before use.
 """
 from __future__ import annotations
 

@@ -47,9 +47,15 @@ deterministic reader, and both write into the same store under the same checks.
 3. **Deterministic floor.** With AI reading switched off, unconfigured, over
    budget, refused or failing, the review completes on the deterministic reader
    alone. An AI failure is a smaller review, never a failed one.
-4. **Replayable.** Every reading is stored with the job and cached by
-   `(sha256 of the file, page, model, prompt version)`. Re-runs and the regression
-   gate replay stored readings; no test makes a network call.
+4. **Replayable.** Every set's readings are stored with the job
+   (`outputs/{job}/readings.json`) and cached by `(source identity, model,
+   prompt version)` — the source identity being the upload's SHA-256, or for a
+   set rebuilt from scanned sheets the upload's plus the rebuild's parameters,
+   because PyMuPDF writes a fresh document ID on every save and rebuilt bytes
+   never repeat. A pass with a transient failure (an API error, the deadline) is
+   stored with its job but not cached, so the next upload tries those sheets
+   again. Re-runs and the regression gate replay stored readings; no test makes
+   a network call.
 5. **Provenance is shown.** A value located by the model says so on the
    finding card: *read by AI, verified on sheet G-1*. A value two readers found
    independently says that too, and earns HIGH confidence.
@@ -291,18 +297,23 @@ sequenceDiagram
     participant FS as fact store
     participant RL as rules
 
-    K->>C: lookup (sha256, page, model, prompt v)
-    alt cached
-        C-->>K: SheetReading per page
-    else not cached
-        K->>AI: read_document(pdf)
-        par up to FBC_AI_CONCURRENCY sheets
-            AI->>API: messages.parse(system+catalog [cached], image, text layer, crops)
-            API-->>AI: SheetReading (fields, code rows, quotes)
+    alt a re-run, and the parent's readings.json matches
+        K->>K: replay the parent's readings (no call)
+    else
+        K->>AI: read_document(pdf, identity)
+        AI->>C: lookup (source identity, model, prompt v)
+        alt cached
+            C-->>AI: readings
+        else not cached
+            par up to FBC_AI_CONCURRENCY sheets, inside FBC_AI_DEADLINE_S
+                AI->>API: beta.messages.parse(system+catalog [cached], overview image, crops, text layer)
+                API-->>AI: SheetReading — per field: value, verbatim quote, role
+            end
+            AI->>C: store, unless a sheet failed transiently
         end
-        AI-->>K: readings (+ refusals, errors)
-        K->>C: store
+        AI-->>K: readings (+ refusals, errors, usage)
     end
+    K->>K: readings.json beside findings.json
     K->>X: build_facts(pdf, readings)
     X->>X: layout → deterministic claims
     X->>G: verify each AI proposal against the page text

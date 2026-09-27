@@ -144,6 +144,13 @@ FIELDS: Tuple[FieldSpec, ...] = (
         "roman", "Table 1604.5 risk category (I–IV)",
         declaration="risk_category"),
     FieldSpec(
+        "code_edition",
+        ("CODE EDITION", "BUILDING CODE EDITION", "APPLICABLE BUILDING CODES",
+         "APPLICABLE CODES", "APPLICABLE CODE", "BUILDING CODE", "GOVERNING CODE"),
+        "edition", "the Florida Building Code edition the set is designed to "
+                   "(e.g. \"2023 FLORIDA BUILDING CODE 8TH EDITION\")",
+        declaration="code_edition"),
+    FieldSpec(
         "zoning", ("ZONING", "ZONING DISTRICT", "ZONING CLASSIFICATION"),
         "text", "zoning district", disqualify=("FLOOD",), declaration="zoning"),
     FieldSpec(

@@ -1,9 +1,10 @@
 """Training mode: the taxonomy, the overlay, the triage, and the API around them.
 
-The load-bearing test in this file is
-`test_no_model_call_is_reachable_from_the_review_path`. Everything else here is
-a feature; that one is the product's central claim, and it is the claim this
-whole feature is most able to break by accident.
+`test_the_feedback_assist_stays_off_the_review_path` keeps the two model calls
+this service makes apart: the AI sheet reader, which the review may use under
+the guardrails in `CLAUDE.md` ("AI reads; rules decide", held by
+`tests/test_ai_guardrails.py`), and the feedback assist, which reads a
+reviewer's comment and must never reach a review.
 """
 from __future__ import annotations
 
@@ -68,29 +69,39 @@ def _reachable(*roots: str) -> set[str]:
     return seen
 
 
-def test_no_model_call_is_reachable_from_the_review_path():
-    """`CLAUDE.md`: the review path makes zero LLM calls.
+#: The one module on the review path allowed to import the Anthropic SDK: the AI
+#: sheet reader, whose output is grounded against the sheet before any rule sees
+#: it. See `CLAUDE.md`, "AI reads; rules decide".
+READER = "fbcreview.ai.reader"
 
-    Training mode adds the first model call this service has ever had, in
-    `webapp/assist.py`. It reads a feedback comment, on a background thread,
-    after a review has finished. If it ever becomes reachable from
-    `run_review`, the product's central claim is false — so the import graph is
-    a gate, not a comment.
+
+def test_the_feedback_assist_stays_off_the_review_path():
+    """Two model calls, kept apart.
+
+    Until 2026-09-27 `CLAUDE.md` said the review path makes zero model calls,
+    and this test enforced it. The owner withdrew that rule in favour of the AI
+    sheet reader and its guardrails. What still holds: `webapp/assist.py` reads
+    a feedback comment on a background thread, after a review has finished, and
+    must not become reachable from `run_review`; and the only module on the
+    review path that may reach the SDK is the reader itself.
     """
     review_path = _reachable("webapp.worker", "fbcreview.pipeline", "fbcreview.rules")
 
     assert "webapp.assist" not in review_path, (
-        "webapp.assist is reachable from the review path. The review makes zero "
-        "model calls; the assist reads feedback comments and belongs off it."
+        "webapp.assist is reachable from the review path. It reads feedback "
+        "comments and belongs off it; the review's model call is the AI reader."
     )
     assert "webapp.triage" not in review_path
 
     for module in sorted(review_path):
         path = _module_path(module)
-        if path is None:
+        if path is None or module == READER:
             continue
         offenders = {i for i in _local_imports(path) if i.split(".")[0] == "anthropic"}
-        assert not offenders, f"{module} imports {offenders} inside the review path"
+        assert not offenders, (
+            f"{module} imports {offenders} inside the review path; only {READER} "
+            f"may call a model, and its output is grounded before use"
+        )
 
 
 def test_an_identity_linked_key_names_its_workspace(monkeypatch):
@@ -704,7 +715,10 @@ def test_escalated_feedback_exports_as_a_prompt_in_the_house_style(owner_client)
     assert "type: runbook" in markdown
     assert "EGRESS.COMMON_PATH" in markdown
     assert "pytest tests/ -v" in markdown
-    assert "zero model calls" in markdown
+    # The standing rule it restates changed on 2026-09-27, when the owner
+    # replaced "zero model calls" with "AI reads; rules decide" in CLAUDE.md.
+    assert "AI reads; rules decide" in markdown
+    assert "grounded against the sheet" in markdown
 
 
 def test_an_issue_is_not_invented_when_github_is_not_configured(owner_client):

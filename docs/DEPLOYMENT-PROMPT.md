@@ -43,6 +43,11 @@ marked-up PDF: every original sheet with a review margin added on the left conta
 finding cards, colour-coded markers anchored on the drawing, plus a summary register
 section appended at the back. It also emits `findings.json`.
 
+> **Superseded 2026-09-27.** The zero-LLM property below was withdrawn by the owner. The
+> standing rule is now "AI reads; rules decide" in `CLAUDE.md`: an optional AI sheet reader
+> may propose values, every proposal is grounded against the sheet, and rules and the code
+> corpus stay pure Python. `CLAUDE.md` outranks this prompt wherever they differ.
+
 **Critical property to preserve: the review path makes zero LLM calls.** It is pure Python
 over PyMuPDF. A 35-sheet set takes about two seconds of CPU and produces a 16 MB PDF. Do
 not add an AI call anywhere in the request path. If you find yourself reaching for one, you

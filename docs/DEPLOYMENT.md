@@ -395,7 +395,10 @@ What limits the damage:
   concurrent and 10 reviews an hour rather than per-person
 - no Cloud Storage bucket and no Firestore in this mode — artefacts are
   files under `.devdata` on the workstation
-- the engine makes zero LLM calls, so an abusive upload costs CPU, not tokens
+- with AI sheet reading off (the default), the engine makes no model calls, so
+  an abusive upload costs CPU, not tokens. **With `FBC_AI_READING=on`, every
+  upload is up to `FBC_AI_MAX_SHEETS` paid API requests** — leave it off on an
+  unauthenticated tunnel, where anyone holding the URL would be spending the key
 
 `tunnel.sh` prints a warning naming this every run, read from `/healthz`'s
 `auth_required`, so it cannot be forgotten quietly.
@@ -1192,7 +1195,14 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_FEEDBACK_COLLECTION` | `feedback` | Firestore collection for submitted feedback |
 | `FBC_MARKUP_COLLECTION` | `markups` | Firestore collection for sheet markup |
 | `FBC_CALIBRATION_COLLECTION` | `calibration` | Firestore collection for calibration profile versions |
-| `ANTHROPIC_API_KEY` | unset | Summarising free-text feedback comments (`webapp/assist.py`). **Feedback path only** — never the review path, and `tests/test_training.py` walks the import graph to keep that true. Unset, comments route to a person unread. For a local run, `secrets/local.env` — see §6a. |
+| `ANTHROPIC_API_KEY` | unset | Two uses. Alone, it turns on summarising free-text feedback comments (`webapp/assist.py`), which runs after a review and never inside one — `tests/test_training.py` walks the import graph to keep that true; unset, comments route to a person unread. With `FBC_AI_READING=on` as well, it is also the AI sheet reader's credential. For a local run, `secrets/local.env` — see §6a. |
+| `FBC_AI_READING` | off | `on` adds the AI sheet reader to every review, when `ANTHROPIC_API_KEY` is also set. The key alone is not consent to send drawings to an API. See §6a, *AI sheet reading*. |
+| `FBC_AI_MODEL` | `claude-opus-5` | Model the sheet reader asks. |
+| `FBC_AI_EFFORT` | `medium` | `low`, `medium`, `high`, `xhigh` or `max`; anything else falls back to `medium` rather than failing every sheet. |
+| `FBC_AI_CONCURRENCY` | 6 | Sheets read in parallel. |
+| `FBC_AI_MAX_SHEETS` | 60 | Sheets past this many are not AI-read; the deterministic reader still reads them. |
+| `FBC_AI_TIMEOUT_S` / `FBC_AI_DEADLINE_S` | 240 / 900 | Seconds per sheet request, and for the whole set. Past the deadline the review carries on with what has been read. |
+| `FBC_AI_CACHE_DIR` | under the system temp dir | Readings cached by file hash, model and prompt version, so the same PDF is read once per instance. Holds sheet text. |
 | `FBC_GITHUB_REPO` | unset | `owner/repo` to open issues in from escalated feedback |
 | `FBC_GITHUB_TOKEN` | unset | Token for the above. Issues stay unavailable unless both are set. |
 
@@ -1257,12 +1267,14 @@ the person actually claimed. Keys are at
 
 **It is not the review path and it cannot become the review path.** It runs
 after a review has finished, on a background thread, against feedback a person
-submitted. `tests/test_training.py::test_no_model_call_is_reachable_from_the_review_path`
+submitted. `tests/test_training.py::test_the_feedback_assist_stays_off_the_review_path`
 walks the import graph from `webapp.worker` and `fbcreview` and fails if
-`anthropic` is reachable from either — including through a lazy import inside a
-function. A review still makes zero model calls with this set. Its opinion is
-advisory and one-directional: it may raise a disposition and can never lower
-one (`docs/TRAINING-MODE.md` §3.5).
+`webapp.assist` is reachable from either, or if anything on the review path
+other than the AI sheet reader imports `anthropic` — including through a lazy
+import inside a function. Setting the key does not turn AI sheet reading on;
+that takes `FBC_AI_READING=on` as well (below). Its opinion is advisory and
+one-directional: it may raise a disposition and can never lower one
+(`docs/TRAINING-MODE.md` §3.5).
 
 For Cloud Run, put the key in Secret Manager and mount it rather than setting it
 as a plain environment variable — see the block below §8.
@@ -1300,6 +1312,80 @@ which is exactly the key that needs the id supplied. Read it instead off any
 workspace-scoped key in the same organisation, or from the workspace's own page
 under **Organization settings → Workspaces**. It identifies the workspace, not
 the key, so the same `wrkspc_` value serves every key acting in it.
+
+#### AI sheet reading
+
+Off unless `FBC_AI_READING=on` **and** `ANTHROPIC_API_KEY` are both set — the
+key alone is not consent, because it may be there only for the comment assist.
+With both, every review gains a stage, *Reading sheets with AI*, between
+reading the PDF and building the facts:
+
+1. `fbcreview/ai/reader.py` sends each sheet to Claude as one request — an
+   overview image (long edge 1568 px), a crop of each pasted raster region, and
+   the sheet's positioned text layer — and gets back, as structured output, the
+   values the field catalog asks about, each with the verbatim text it read.
+2. `fbcreview/ai/grounding.py` finds that quote on the sheet and parses the
+   value out of it. A proposal it cannot place, or that the catalog says is some
+   other quantity, is recorded as rejected and never reaches a rule.
+3. What survives joins the deterministic reader's claims in the fact store,
+   scored below an exact deterministic match: it fills gaps and corroborates,
+   and cannot out-vote the deterministic reading or create a "set conflict".
+
+Rules, thresholds and code citations are unchanged and stay pure Python.
+`readings.json` is stored beside `findings.json`, and a re-run replays it rather
+than paying for a second read. The pass never fails a review: a sheet that
+errors, times out or is refused is simply not AI-read, and past
+`FBC_AI_DEADLINE_S` the review carries on with what it has. `CLAUDE.md`, "AI
+reads; rules decide", states the guardrails and `tests/test_ai_guardrails.py`
+holds each one. The job record's `ai_reading` carries counts — sheets read,
+proposals, accepted, rejected, token usage — and never sheet text.
+
+**What leaves the machine.** The images and text of every sheet reviewed go to
+the Anthropic API. Turn it on only where that is acceptable for the sets the
+deployment reviews, and never on the unauthenticated tunnel (§ *Exposure*),
+where anyone holding the URL would be spending the key.
+
+**Refusal fallbacks are on.** Each request carries the
+`server-side-fallback-2026-07-01` beta with `fallbacks: "default"`: if the
+configured model declines a sheet on policy grounds, the API re-runs that one
+request on the model Anthropic recommends for it. A sheet declined anyway is
+recorded in `readings.json` as refused and is not AI-read.
+
+**What it costs — estimated, not measured.** Built from the Sculpted set's own
+requests, rendered locally with no API call: 24 sheets come to about 65 k image
+tokens and 53 k text-layer tokens, plus a 1.7 k-token system prompt that is
+cached after the first sheet — about 120 k input tokens, or ≈ $0.60 at Claude
+Opus 5's $5 per million. Output is the uncertain half, because adaptive thinking
+decides how much to spend: at 1–3 k tokens a sheet it is ≈ $0.60–1.80 at $25 per
+million. So roughly **$1–3 per 24-sheet set**, which at 50 reviews a month is
+the largest line in §8 by two orders of magnitude. The job record's
+`ai_reading.usage` has the real numbers after the first live run; record them
+here.
+
+Locally, set both in `secrets/local.env` (the template documents every
+`FBC_AI_*` variable) and restart; `bash scripts/setup-secrets.sh --check` says
+whether it is on. From the command line, `python run.py set.pdf --ai
+--save-readings readings.json` reads a set once and `--readings readings.json`
+replays it with no API call. On Cloud Run, mount the key from Secret Manager —
+the same pattern as the GitHub token in §8 — and set the switch:
+
+```bash
+printf '%s' "$ANTHROPIC_KEY" | gcloud secrets create anthropic-api-key --data-file=-
+gcloud run services update fbc-review --region=us-east1 \
+  --update-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest" \
+  --update-env-vars="FBC_AI_READING=on"
+```
+
+The runtime service account (`${SA}`, as in §3) needs to read the secret:
+
+```bash
+gcloud secrets add-iam-policy-binding anthropic-api-key \
+  --member="serviceAccount:${SA}" --role="roles/secretmanager.secretAccessor"
+```
+
+**Not yet run** against the deployed service — this session had no key.
+Turning it off is `--remove-env-vars="FBC_AI_READING"`; reviews go back to the
+deterministic reader at once, and stored readings stay with their jobs.
 
 #### Issues from escalated feedback
 
@@ -1473,6 +1559,11 @@ Estimated, not measured — nothing is deployed. Order-of-magnitude, us-east1.
 
 The dominant line is the container image, not the compute. The $25 budget is a
 runaway alarm rather than a forecast.
+
+**AI sheet reading is not in this table.** Off by default; on, it is roughly
+$1–3 per 24-sheet set in API charges — $50–150 at 50 reviews a month, which
+would be nearly the whole bill. The estimate and its arithmetic are in §6a,
+*AI sheet reading*.
 
 **Caveat.** The opt-in raster rebuild changes the shape: OCR plus Hough
 transform on a large sheet is minutes of CPU, not seconds. Fifty *scanned* sets
@@ -1723,8 +1814,8 @@ it enables future rules, but no finding changes because of it today — the only
 geometric rule needs a semantic layer name that tracing cannot recover.
 
 **No model call was added anywhere.** OCR is Tesseract and vectorisation is a
-Hough transform; both are deterministic. The review path still makes zero LLM
-calls.
+Hough transform; both are deterministic. The raster rebuild still calls no
+model; AI sheet reading, which does, is a separate switch (§6a).
 
 ---
 
@@ -1776,6 +1867,7 @@ Each is inert unless configured and each says so on `/api/admin/overview`.
 | Immediate mail on an escalation, and the digest | `FBC_SMTP_*`, `FBC_MAIL_FROM`, `FBC_OWNER_EMAILS` | Feedback still queues; you read the queue on `/refine` |
 | A GitHub issue from a report | `FBC_GITHUB_REPO`, `FBC_GITHUB_TOKEN` | The prompt export still works; copy it by hand |
 | Free-text comments summarised before they reach you | `ANTHROPIC_API_KEY` | Any comment routes to you unread, which is what it did before |
+| Sheets also read by Claude, every value grounded before use | `ANTHROPIC_API_KEY` and `FBC_AI_READING=on` | The deterministic reader alone, as before — see §6a |
 
 Store the two secrets in Secret Manager and mount them, rather than setting
 them as plain environment variables:
@@ -1786,10 +1878,11 @@ gcloud run services update fbc-review --region=us-east1 \
   --update-secrets="FBC_GITHUB_TOKEN=fbc-github-token:latest"
 ```
 
-The GitHub token needs `issues: write` on that repository and nothing else. The
-Anthropic key is billed per comment summarised, which is a handful of calls a
-day rather than one per review — the review path makes no model calls at all,
-and that is a property the test suite enforces rather than a claim.
+The GitHub token needs `issues: write` on that repository and nothing else. For
+the comment assist, the Anthropic key is billed per comment summarised — a
+handful of calls a day rather than one per review; the test suite keeps the
+assist off the review path. AI sheet reading is billed per sheet reviewed and is
+off unless `FBC_AI_READING=on` (§6a).
 
 ### Turning it off again
 

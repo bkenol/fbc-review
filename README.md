@@ -1,12 +1,16 @@
 # fbcreview
 
-Deterministic Florida Building Code review of vector permit sets. PDF in, findings out,
-no model in the request path.
+Florida Building Code review of permit sets. PDF in, findings out. **AI reads; rules
+decide:** the rules and the code corpus are pure Python, and when a deployment turns it on,
+Claude also reads each sheet — every value it proposes is found on the sheet before a rule
+may use it. Off, the review is deterministic and calls no model.
 
 ```bash
 pip install -r requirements.txt
 
 python run.py path/to/permit-set.pdf --json findings.json   # CLI
+python run.py set.pdf --ai --save-readings readings.json     # also read sheets with Claude
+python run.py set.pdf --readings readings.json               # replay a reading, no API call
 uvicorn webapp.server:app --port 8000                        # web service -> http://127.0.0.1:8000
 ```
 
@@ -14,6 +18,10 @@ uvicorn webapp.server:app --port 8000                        # web service -> ht
 fbcreview/
   facts.py          typed project fact model — the contract between extraction and rules
   confidence.py     Evidence / Abstention — every value knows where it came from
+  layout/           each sheet laid out once: CAD text lines, label/value pairs, table rows
+  read/             the field catalog, value parsers and the deterministic reader
+  factstore.py      every reading of every field, resolved — with rivals and provenance
+  ai/               the optional AI sheet reader: prompt, cache, and the grounding check
   extract/
     document.py     sheet identification from the title block, CAD layer inventory
     scale.py        drawing scale from /Measure + printed labels, with abstention
@@ -29,7 +37,7 @@ webapp/             FastAPI service + drag-and-drop front end (see webapp/README
   feedback_schema.py  what a reviewer may say about a finding — data, not UI
   calibration.py      the levers feedback may move, applied after the corpus
   triage.py           where a report has to be fixed: a knob, code, or a person
-  assist.py           the one model call, on the feedback path and never the review
+  assist.py           the feedback-comment model call; never reaches a review
   notify.py           mail, the prompt export, and GitHub issues
 tests/              regression against the hand-established findings
 ARCHITECTURE.md     what mechanises, what does not, and what it costs
@@ -53,3 +61,7 @@ Design rules, in order of importance:
    this", where the rule was right, stops looking identical to "we could not read the part
    of the set that states it", which is a defect. It classifies the reason and never the
    drawing: it has not seen the sheet and never claims a value is printed on one.
+7. **AI reads; rules decide.** A model's output can only become a claim about where a value
+   is printed — never a finding, a severity, a threshold or a citation. A claim the grounding
+   check cannot find on the sheet is discarded, and one it keeps says it was read by AI.
+   `CLAUDE.md` has the full list; `tests/test_ai_guardrails.py` holds each item.

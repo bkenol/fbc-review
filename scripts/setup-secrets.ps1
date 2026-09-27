@@ -3,10 +3,10 @@
   Create secrets\local.env, and say what is still missing.
 
 .DESCRIPTION
-  Mail and the comment assist are both inert without their keys, and both are
-  inert *quietly* - a review still runs, feedback still queues, and the only
-  place that says otherwise is /admin. This is the thing you run to find out
-  where you actually stand, before wondering why no mail arrived.
+  Mail, the comment assist and AI sheet reading are all inert without their
+  keys, and all inert *quietly* - a review still runs, feedback still queues,
+  and the only place that says otherwise is /admin. This is the thing you run
+  to find out where you actually stand, before wondering why no mail arrived.
 
   It reads the file to see which names have values. It never prints a value.
 
@@ -89,7 +89,7 @@ Write-Bold 'Comment assist'
 if (Test-Set 'ANTHROPIC_API_KEY') {
     Write-Ok 'ANTHROPIC_API_KEY'
     Write-Info 'Free-text feedback comments will be summarised before they reach the'
-    Write-Info 'queue. The review path is unaffected and still makes zero model calls.'
+    Write-Info 'queue. This runs after a review has finished, never inside one.'
     if (Test-Set 'ANTHROPIC_WORKSPACE_ID') {
         Write-Ok 'ANTHROPIC_WORKSPACE_ID'
     } else {
@@ -104,6 +104,24 @@ if (Test-Set 'ANTHROPIC_API_KEY') {
     Write-Miss 'ANTHROPIC_API_KEY'
     Write-Info 'Comments route to a person unread, which is what they did before the'
     Write-Info 'assist existed. Keys: https://console.anthropic.com/settings/keys'
+}
+Write-Host ''
+
+Write-Bold 'AI sheet reading'
+$aiSwitch = "$(Get-Value 'FBC_AI_READING')".Trim().ToLowerInvariant()
+if (@('on', '1', 'true', 'yes') -contains $aiSwitch) {
+    if (Test-Set 'ANTHROPIC_API_KEY') {
+        Write-Ok 'FBC_AI_READING=on'
+        Write-Info 'Each sheet is also read by Claude. Every value it proposes is found'
+        Write-Info 'on the sheet before a rule may use it; the rules stay pure Python.'
+        Write-Info 'Sheet images and text of every reviewed set go to the Anthropic API.'
+    } else {
+        Write-Miss 'FBC_AI_READING=on, but ANTHROPIC_API_KEY is empty'
+        Write-Info 'Reviews stay deterministic until the key is set.'
+    }
+} else {
+    Write-Info 'Off: reviews use the deterministic reader only and call no model.'
+    Write-Info 'FBC_AI_READING=on, with ANTHROPIC_API_KEY, adds the AI reader.'
 }
 Write-Host ''
 
