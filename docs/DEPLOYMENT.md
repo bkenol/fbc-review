@@ -1203,6 +1203,9 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_AI_MAX_SHEETS` | 60 | Sheets past this many are not AI-read; the deterministic reader still reads them. |
 | `FBC_AI_TIMEOUT_S` / `FBC_AI_DEADLINE_S` | 240 / 900 | Seconds per sheet request, and for the whole set. Past the deadline the review carries on with what has been read. |
 | `FBC_AI_CACHE_DIR` | under the system temp dir | Readings cached by file hash, model and prompt version, so the same PDF is read once per instance. Holds sheet text. |
+| `FBC_AI_REVIEW` | on (with AI reading) | The result check: after the rules run, Claude checks the result and may send sheets back to be read again. `off` skips it. Never on without `FBC_AI_READING`. See §6a, *The result check*. |
+| `FBC_AI_MAX_PASSES` | 3 | Runs of the rules, the first included. 1–3; anything higher is held at 3. |
+| `FBC_AI_REVIEW_MODEL` / `FBC_AI_REVIEW_EFFORT` | the reader's model / `high` | Model and effort for the result check. |
 | `FBC_GITHUB_REPO` | unset | `owner/repo` to open issues in from escalated feedback |
 | `FBC_GITHUB_TOKEN` | unset | Token for the above. Issues stay unavailable unless both are set. |
 
@@ -1386,6 +1389,38 @@ gcloud secrets add-iam-policy-binding anthropic-api-key \
 **Not yet run** against the deployed service — this session had no key.
 Turning it off is `--remove-env-vars="FBC_AI_READING"`; reviews go back to the
 deterministic reader at once, and stored readings stay with their jobs.
+
+#### The result check
+
+With AI reading on, every review also gains a stage after the rules, *Checking
+the result with AI* (`FBC_AI_REVIEW=off` skips it):
+
+1. `fbcreview/ai/reviewer.py` sends one request: the review options and
+   declaration (what was asked for), the findings and abstentions, the facts the
+   rules used, the AI values the sheet check rejected, and each sheet's text.
+2. The answer is structured output (`ResultReview`): whether a re-read would
+   improve the result, which sheets to read again for which catalog facts, and
+   notes for the record. There is no field in which it could change a finding.
+3. When it asks, `fbcreview/ai/review.py` sends those sheets back to the same
+   reader with its pointer attached, grounds what comes back like any reading,
+   rebuilds the facts and runs the same rules again — then checks again.
+4. It stops when the check is satisfied, a re-read changes nothing, there is
+   nothing it may ask for, anything fails, or after `FBC_AI_MAX_PASSES` passes —
+   **three at most**, whatever is configured. The last pass's result is the
+   review in every case.
+
+`ai_review.json` is stored beside `findings.json` with every check, re-read and
+note, and a re-run replays it with no call. The job's `summary.ai_review`
+carries counts only — passes, sheets re-read, why it stopped — never the notes.
+
+**Cost and time.** One check per pass, plus a re-read of at most eight sheets
+per extra pass: at most three checks and two partial re-reads on top of the
+first read. Built locally from the Sculpted set with no API call, one check's
+packet is 107 k characters — about 27 k tokens, plus a 1 k-token system prompt
+— so ≈ $0.14 a check at Opus 5's $5 per million input, before output. Each
+extra pass also re-runs the engine: about 11 s on the same set. **Estimated, not
+measured** against the API; record `ai_review.usage` here after the first live
+run.
 
 #### Issues from escalated feedback
 

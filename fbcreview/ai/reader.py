@@ -143,14 +143,22 @@ def read_document(pdf_path: str, config: ReaderConfig, client=None,
                   sheet_titles: Optional[Dict[int, str]] = None,
                   cache: Optional[ReadingsCache] = None,
                   on_sheet: Optional[Callable[[int, int], None]] = None,
-                  identity: Optional[str] = None) -> Readings:
+                  identity: Optional[str] = None,
+                  focus: Optional[Dict[int, str]] = None) -> Readings:
     """Read every sheet of a set. Never raises for a sheet; see `Readings.errors`.
 
     `identity` is what the readings are keyed by — the file's SHA-256 unless the
     caller read a file it rebuilt from another (`readings.source_identity`).
+
+    `focus` reads only the pages it names, each request carrying that page's
+    text after the sheet — the result reviewer's re-reads
+    (`fbcreview.ai.review`). The request is otherwise the same one, under the
+    same rules, and what comes back is grounded like any reading. A focused
+    pass is never cached: it belongs to one review's trace, which is stored
+    with that job and replayed from there.
     """
     sha = identity or file_sha256(pdf_path)
-    if cache is not None:
+    if cache is not None and focus is None:
         hit = cache.get(sha, config.model, PROMPT_VERSION)
         if hit is not None:
             log.info("ai readings replayed from cache", extra={"sheets": len(hit.sheets)})
@@ -170,13 +178,19 @@ def read_document(pdf_path: str, config: ReaderConfig, client=None,
         codes = sheet_codes or {}
         titles = sheet_titles or {}
         total = doc.page_count
-        pages = list(range(min(total, config.max_sheets)))
-        for p in range(len(pages), total):
-            readings.errors[p] = "not read: over the sheet limit for AI reading"
+        if focus is None:
+            pages = list(range(min(total, config.max_sheets)))
+            for p in range(len(pages), total):
+                readings.errors[p] = "not read: over the sheet limit for AI reading"
+        else:
+            pages = sorted(p for p in focus if 0 <= p < total)[:config.max_sheets]
         # Build each request before the pool starts: PyMuPDF documents are not
         # safe to share across threads, and rendering is quick next to the call.
         requests = {p: sheet_content(doc[p], page_layout(doc[p]), codes.get(p, ""),
                                      titles.get(p, ""), total) for p in pages}
+        for p in pages:
+            if focus and focus.get(p):
+                requests[p].append({"type": "text", "text": focus[p]})
     finally:
         doc.close()
 
@@ -218,6 +232,6 @@ def read_document(pdf_path: str, config: ReaderConfig, client=None,
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 
-    if cache is not None:
+    if cache is not None and focus is None:
         cache.put(readings)
     return readings

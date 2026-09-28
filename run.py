@@ -3,6 +3,7 @@
 
 Usage: python run.py <permit-set.pdf> [--json out.json] [--declaration decl.json]
                      [--ai] [--readings readings.json] [--save-readings readings.json]
+                     [--review ai_review.json] [--save-review ai_review.json]
 
 `--declaration` takes a JSON object of ProjectDeclaration fields — what the
 applicant says the building is. It is a second source alongside the drawings,
@@ -17,6 +18,12 @@ is found on the sheet and parsed before a rule may use it, and the rules stay
 pure Python. `--save-readings` keeps what the model read; `--readings` replays
 a saved reading with no API call, so the same file and readings give the same
 findings. With neither flag the review is deterministic and calls nothing.
+
+With `--ai`, a reviewer model then checks the result against the sheets and may
+send sheets back to be read again, after which the same rules run again — at
+most three passes (`FBC_AI_MAX_PASSES`, `FBC_AI_REVIEW=off` to skip it). It
+cannot change a finding. `--save-review` keeps what it did; `--review` replays
+that, on top of `--readings`, with no API call.
 """
 import json, os, sys
 from fbcreview.declaration import ProjectDeclaration
@@ -52,6 +59,54 @@ def _readings(argv, path):
     readings = read_document(path, config, cache=ReadingsCache(cache) if cache else None)
     return readings, f"read by {config.model} at {config.effort} effort"
 
+def _review(argv, path, readings, first, declaration):
+    """(facts, result, readings, trace, how) after the result check, when there is one.
+
+    `how` is an error message, and the trace None, when a replay does not match.
+    """
+    replay_path = _arg(argv, "--review")
+    if readings is None or (replay_path is None and "--ai" not in argv):
+        return (*first, readings, None, None)
+    from fbcreview.ai import review as RV
+    from fbcreview.ai.reader import ReaderConfig, make_client, read_document
+    from fbcreview.ai.reviewer import (REVIEW_PROMPT_VERSION, ReviewerConfig, check_result,
+                                       system_prompt)
+
+    def run_pass(r):
+        f = build_facts(path, readings=r)
+        return f, run_all(f, None, declaration)
+
+    if replay_path:
+        replay = RV.load_trace(replay_path)
+        if (replay.file_sha256, replay.reader) != (readings.file_sha256,
+                                                   RV.reader_identity(readings)):
+            return (*first, readings, None,
+                    f"review rejected: {replay_path} was made from other readings")
+        trace = RV.ReviewTrace(replay.file_sha256, replay.model, replay.prompt_version,
+                               replay.max_passes, reader=replay.reader)
+        facts, res, final = RV.review_loop(first, readings, run_pass, None, None, trace,
+                                           replay=replay)
+        return facts, res, final, trace, f"replayed from {replay_path}"
+
+    reader = ReaderConfig.from_env({**os.environ, "FBC_AI_READING": "on"})
+    config = ReviewerConfig.from_env(reader)
+    if config is None:
+        return (*first, readings, None, None)
+    client, system = make_client(reader), system_prompt()
+    trace = RV.ReviewTrace(readings.file_sha256, config.model, REVIEW_PROMPT_VERSION,
+                           config.max_passes, reader=RV.reader_identity(readings))
+
+    def check(facts, result, number, history):
+        return check_result(client, config, system, RV.packet(
+            path, facts, result, None, declaration, number, config.max_passes, history))
+
+    def reread(focus):
+        return read_document(path, reader, client=client, identity=readings.file_sha256,
+                             focus=focus)
+
+    facts, res, final = RV.review_loop(first, readings, run_pass, check, reread, trace)
+    return facts, res, final, trace, f"checked by {config.model} at {config.effort} effort"
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__); return 2
@@ -79,6 +134,14 @@ def main(argv):
 
     facts = build_facts(path, readings=readings)
     res = run_all(facts, None, declaration)
+    facts, res, readings, trace, review_how = _review(argv, path, readings, (facts, res),
+                                                      declaration)
+    if trace is None and review_how:
+        print(review_how); return 2
+    save_review = _arg(argv, "--save-review")
+    if save_review and trace is not None:
+        from fbcreview.ai.review import save_trace
+        save_trace(trace, save_review)
 
     print(f"\nsource      {path}")
     print(f"sheets      {len(facts.sheets)}  ({', '.join(s.code for s in facts.sheets[:8])} …)")
@@ -96,6 +159,13 @@ def main(argv):
               + (f"; {ai['sheets_failed']} sheets not read" if ai["sheets_failed"] else ""))
         if save:
             print(f"            saved to {save}")
+    if trace is not None:
+        rv = trace.summary()
+        print(f"ai review   {rv['passes']} of at most {rv['max_passes']} passes {review_how}; "
+              f"stopped: {rv['outcome'].replace('_', ' ')}; {rv['sheets_reread']} sheets "
+              f"re-read; {rv['notes']} notes for the record")
+        if save_review:
+            print(f"            saved to {save_review}")
     if declaration is not None:
         rf = res.reconciled
         states = {}

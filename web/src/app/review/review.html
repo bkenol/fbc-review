@@ -504,6 +504,14 @@
           }
         </p>
       }
+      @if (summary.ai_review; as rv) {
+        <!-- What the result check did, in counts. It can send sheets back; the rules decide. -->
+        <p class="figures">
+          AI check · {{ rv.passes }} of at most {{ rv.max_passes }}
+          {{ rv.passes === 1 ? 'pass' : 'passes' }} · {{ rv.sheets_reread }} sheets read again ·
+          {{ reviewOutcome(rv.outcome) }}
+        </p>
+      }
     </section>
 
     <!-- ── 05 · declared versus drawn ───────────────────────────────────────

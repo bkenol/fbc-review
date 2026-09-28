@@ -41,3 +41,43 @@ class SheetReading(BaseModel):
 #: here — a severity, a verdict — fails the build rather than widening what a
 #: model can say.
 ALLOWED_KEYS = frozenset({"field", "value", "quote", "role"})
+
+
+# ── the result reviewer ──────────────────────────────────────────────────────
+# What the reviewer is allowed to say after the rules have run. Like the reading
+# schema, its shape is the guardrail: it can ask for named sheets to be read
+# again for named catalog facts, and it can leave a note for the audit record.
+# There is no field for a finding, a severity, a status or a verdict on
+# compliance, so there is no way for its output to add, remove, edit or re-rank
+# anything the rules decided.
+
+class RereadRequest(BaseModel):
+    """One sheet to read again, for facts the review should have found on it."""
+
+    page: int = Field(description="The sheet's page number in the set, 1-based, as listed "
+                                  "in the review packet.")
+    fields: List[str] = Field(description="Catalog keys to look for on that sheet, e.g. "
+                                          "'occupant_load'. Only keys from the catalog count.")
+    hint: str = Field(default="", description="Where on the sheet, or in what words, the value "
+                                              "appears to be printed. One or two sentences.")
+
+
+class ResultReview(BaseModel):
+    """The reviewer's check of one pass: re-reads to try, and notes for the record."""
+
+    meets_request: bool = Field(description="True when no re-read of any sheet would make this "
+                                            "review more complete or more faithful to the set "
+                                            "and to what the user asked for.")
+    rereads: List[RereadRequest] = Field(
+        default_factory=list,
+        description="Sheets the readers appear to have missed or misread a catalog fact on. "
+                    "Empty when meets_request is true.")
+    notes: List[str] = Field(
+        default_factory=list,
+        description="Concerns a re-read cannot fix, one sentence each, for the audit record.")
+
+
+#: The only keys each reviewer model may carry. Held by a test, like
+#: `ALLOWED_KEYS`: a field added here widens what a model can say about a result.
+REVIEW_ALLOWED_KEYS = frozenset({"meets_request", "rereads", "notes"})
+REREAD_ALLOWED_KEYS = frozenset({"page", "fields", "hint"})

@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 from fbcreview.ai.readings import (Readings, ReadingsCache, file_sha256, save_readings,
                                    source_identity)
 from fbcreview.ai.reader import ReaderConfig
+from fbcreview.ai.reviewer import ReviewerConfig
 from fbcreview.declaration import ProjectDeclaration
 from fbcreview.options import ReviewOptions
 from fbcreview.payload import findings_payload
@@ -45,11 +46,15 @@ STAGES = [
 
 CONVERT_STAGE = "Rebuilding scanned sheets"
 AI_STAGE = "Reading sheets with AI"
+REVIEW_STAGE = "Checking the result with AI"
 
 #: The file a review's AI readings are stored under, beside findings.json. A
 #: re-run of the same upload replays it rather than paying for the reading again,
 #: which is also what keeps a re-run's findings identical to the first run's.
 READINGS = "readings.json"
+#: What the result reviewer did — every check, re-read and pass — stored the same
+#: way and replayed on a re-run, so a re-run reaches the same findings with no call.
+AI_REVIEW = "ai_review.json"
 
 
 def ai_config() -> Optional[ReaderConfig]:
@@ -57,22 +62,35 @@ def ai_config() -> Optional[ReaderConfig]:
     return ReaderConfig.from_env()
 
 
-def stages_for(convert_raster: bool, ai_reading: Optional[bool] = None) -> List[str]:
+def reviewer_config() -> Optional[ReviewerConfig]:
+    """The result reviewer's configuration, or None — always None with AI reading off."""
+    return ReviewerConfig.from_env(ai_config())
+
+
+def stages_for(convert_raster: bool, ai_reading: Optional[bool] = None,
+               ai_review: Optional[bool] = None) -> List[str]:
     """The stage list a given job will actually move through.
 
     A job that is not rebuilding scanned sheets, or not reading them with AI,
     should not display a stage that does nothing, so the list is per job rather
     than global. The AI stage follows the rebuild: the model reads the same file
-    the engine grounds its readings against, OCR text included.
+    the engine grounds its readings against, OCR text included. The review
+    stage follows the rules, whose result it checks; any further passes it asks
+    for run inside it.
     """
     if ai_reading is None:
         ai_reading = ai_config() is not None
+    if ai_review is None:
+        ai_review = ai_reading and reviewer_config() is not None
     out = [STAGES[0]]
     if convert_raster:
         out.append(CONVERT_STAGE)
     if ai_reading:
         out.append(AI_STAGE)
-    return [*out, *STAGES[1:]]
+    out += STAGES[1:3]
+    if ai_reading and ai_review:
+        out.append(REVIEW_STAGE)
+    return [*out, *STAGES[3:]]
 
 
 def sheet_index(sheets) -> List[Dict[str, Any]]:
@@ -169,6 +187,7 @@ def run_review(
         # and the deterministic reader has the set either way.
         readings = None
         ai = ai_config()
+        checker = ReviewerConfig.from_env(ai)
         if ai is not None:
             advance()
             rebuild = None if src == upload else {
@@ -189,6 +208,23 @@ def run_review(
         # ── rules ──────────────────────────────────────────────────────────
         advance()
         result = run_all(facts, options, declaration)
+
+        # ── the result check, when AI reading is on ────────────────────────
+        # A reviewer model checks the result against the request and the
+        # sheets; where it finds a fact the readers missed, those sheets are
+        # read again and the same rules run again — at most three passes in
+        # all. It can only cause a re-read, never change a finding, and any
+        # failure leaves the last pass's result standing.
+        review_summary = None
+        if checker is not None:
+            advance()
+            if readings is not None:
+                facts, result, readings, trace = _ai_review(
+                    str(src), (facts, result), readings, ai, checker, options, declaration,
+                    job_id, rerun_of, store_files, workdir)
+                if trace is not None:
+                    review_summary = trace.summary()
+                    store.update(job_id, ai_review=review_summary)
 
         # ── calibration ────────────────────────────────────────────────────
         # Applied here, between the corpus and the renderer, so the marked-up
@@ -255,6 +291,8 @@ def run_review(
             "sheet_index": sheet_index(facts.sheets),
             # Counts only — never sheet text. None when AI reading was off.
             "ai_reading": facts.meta.get("ai_reading"),
+            # Counts only — never the reviewer's notes. None when it did not run.
+            "ai_review": review_summary,
         }
 
         out_json = workdir / "findings.json"
@@ -417,6 +455,71 @@ def _ai_readings(src: str, upload: str, rebuild: Optional[Dict[str, Any]],
         log.warning("ai reading skipped", extra={"job_id": job_id,
                                                   "error": type(exc).__name__})
         return None
+
+
+def _ai_review(src: str, first, readings: Readings, reader: ReaderConfig,
+               config: ReviewerConfig, options, declaration, job_id: str,
+               rerun_of: Optional[str], store_files: "storage.Storage", workdir: Path):
+    """Check the result, and re-read and re-run while the check asks — at most 3 passes.
+
+    Returns (facts, result, readings, trace). On any failure outside the loop's
+    own handling, the first pass is returned with no trace: the floor holds.
+    A re-run whose parent stored a trace made from these same readings replays
+    it — no call, the same passes, the same findings.
+    """
+    from fbcreview.ai import review as RV
+    from fbcreview.ai.reader import make_client, read_document
+    from fbcreview.ai.reviewer import REVIEW_PROMPT_VERSION, check_result, system_prompt
+
+    facts0, result0 = first
+    try:
+        replay = None
+        if rerun_of:
+            local = workdir / "parent-ai-review.json"
+            try:
+                store_files.download_to(storage.output_path(rerun_of, AI_REVIEW), str(local))
+                parent = RV.load_trace(str(local))
+                if RV.replayable(parent, readings, config.model, REVIEW_PROMPT_VERSION,
+                                 config.max_passes):
+                    replay = parent
+            except Exception:                                  # noqa: BLE001 — none stored
+                replay = None
+
+        trace = RV.ReviewTrace(readings.file_sha256, config.model, REVIEW_PROMPT_VERSION,
+                               config.max_passes, reader=RV.reader_identity(readings))
+        system = system_prompt()
+        client = None
+
+        def _client():
+            nonlocal client
+            client = client or make_client(reader)
+            return client
+
+        def run_pass(r):
+            f = build_facts(src, readings=r)
+            return f, run_all(f, options, declaration)
+
+        def check(facts, result, number, history):
+            content = RV.packet(src, facts, result, options, declaration, number,
+                                config.max_passes, history)
+            return check_result(_client(), config, system, content)
+
+        def reread(focus):
+            return read_document(src, reader, client=_client(),
+                                 identity=readings.file_sha256, focus=focus)
+
+        facts, result, final = RV.review_loop(first, readings, run_pass, check, reread,
+                                              trace, replay=replay)
+        out = workdir / AI_REVIEW
+        RV.save_trace(trace, str(out))
+        store_files.upload_file(str(out), storage.output_path(job_id, AI_REVIEW),
+                                "application/json")
+        log.info("ai review done", extra={"job_id": job_id, **trace.summary()})
+        return facts, result, final, trace
+    except Exception as exc:                                   # noqa: BLE001 — the floor holds
+        log.warning("ai review skipped", extra={"job_id": job_id,
+                                                 "error": type(exc).__name__})
+        return facts0, result0, readings, None
 
 
 def _merge_reports(first, second):

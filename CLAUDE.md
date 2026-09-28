@@ -35,9 +35,17 @@ The review path may call a model — decided by the owner on 2026-09-27, replaci
    stored with the job. Tests and re-runs replay them. No test makes a network call.
 5. **Provenance is visible.** A value the model located says so on the finding.
 6. **`fbcreview/rules` and `fbcreview/codes` never import `fbcreview/ai` or `anthropic`.**
+7. **AI checks; it cannot change a result.** Decided by the owner on 2026-09-28. After the
+   rules run, a reviewer model checks the result against what the user asked for and the
+   sheets. Its output (`ResultReview`) can only name sheets to read again for named catalog
+   facts — the re-read is grounded like any reading, and the same rules run again — or leave
+   a note for the audit record. It never adds, removes, edits or re-ranks a finding. At most
+   **three passes**, however it is configured; a failed check keeps the last pass. Its trace
+   is stored with the job (`ai_review.json`) and replayed like readings.
 
 If you find yourself letting a model decide whether something complies, or choosing a
-threshold, you have misread the problem: that is the rule corpus's job.
+threshold, you have misread the problem: that is the rule corpus's job. The same goes for
+letting the reviewer "fix" a finding: it can only send a sheet back to be read.
 
 ## Ownership boundaries
 

@@ -797,6 +797,12 @@ class ConfigResponse(BaseModel):
         description="Whether this deployment reads sheets with the AI reader "
                     "(`FBC_AI_READING=on` with a key). Rules are pure Python either way.",
     )
+    ai_review: bool = Field(
+        default=False,
+        description="Whether a reviewer model checks each result and may send sheets back "
+                    "to be read again, for at most three passes. Only ever on with AI "
+                    "reading; `FBC_AI_REVIEW=off` turns it off.",
+    )
 
 
 # ── findings ──────────────────────────────────────────────────────────────
@@ -981,6 +987,23 @@ class AiReadingSummary(BaseModel):
     usage: Dict[str, int] = Field(default_factory=dict)
 
 
+class AiReviewSummary(BaseModel):
+    """Counts only — never the reviewer's notes. See `fbcreview/ai/review.py`."""
+
+    model: str
+    prompt_version: str
+    passes: int = Field(description="Runs of the rules, the first included. At most 3.")
+    max_passes: int
+    reviews: int = Field(description="Checks the reviewer completed.")
+    outcome: str = Field(description="Why the loop stopped: meets_request, max_passes, "
+                                     "no_change, nothing_to_reread, review_failed or "
+                                     "reread_failed. The last pass's result stands in "
+                                     "every case.")
+    sheets_reread: int
+    notes: int = Field(description="Notes left for the audit record; kept with the job.")
+    usage: Dict[str, int] = Field(default_factory=dict)
+
+
 class Summary(BaseModel):
     """Counts and provenance for a finished review.
 
@@ -1017,6 +1040,10 @@ class Summary(BaseModel):
     ai_reading: Optional[AiReadingSummary] = Field(
         default=None,
         description="What the AI sheet reader did on this review. Null when it was off.",
+    )
+    ai_review: Optional[AiReviewSummary] = Field(
+        default=None,
+        description="What the result reviewer did on this review. Null when it did not run.",
     )
 
 # ── what kind of PDF was uploaded ─────────────────────────────────────────

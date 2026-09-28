@@ -40,7 +40,7 @@ from webapp.feedback_store import (ACCEPTED, ACTIONED, NEW, REJECTED,
                                    FeedbackStore, get_feedback_store)
 from webapp.jobs import DONE, JobStore, RateLimited, get_job_store, utcnow
 from webapp.storage import Storage, get_storage
-from webapp.worker import STAGES, ai_config, run_review, stages_for
+from webapp.worker import STAGES, ai_config, reviewer_config, run_review, stages_for
 
 logging_config.configure()
 log = logging.getLogger("fbc.api")
@@ -364,6 +364,7 @@ def config(
             models.CalibrationKnob.model_validate(k) for k in calibration.knob_catalogue()
         ],
         ai_reading=ai_config() is not None,
+        ai_review=reviewer_config() is not None,
     )
 
 

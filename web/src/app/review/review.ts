@@ -30,6 +30,19 @@ const TALLY = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'MEASURED', 'VERIFIED'] as c
 /** The worker's name for the AI reading stage (`webapp/worker.py`, `AI_STAGE`). */
 const AI_STAGE = 'Reading sheets with AI';
 
+/** The worker's name for the result check (`webapp/worker.py`, `REVIEW_STAGE`). */
+const REVIEW_STAGE = 'Checking the result with AI';
+
+/** Why a result check stopped, in words. Every outcome leaves the last pass standing. */
+const REVIEW_OUTCOME: Record<string, string> = {
+  meets_request: 'nothing left a re-read would improve',
+  max_passes: 'stopped at the pass limit',
+  no_change: 'a re-read changed nothing',
+  nothing_to_reread: 'nothing a re-read could fix',
+  review_failed: 'the check did not complete — first pass kept',
+  reread_failed: 'a re-read did not complete — last pass kept',
+};
+
 /**
  * What each stage is actually doing, keyed by the stage name the server sends.
  *
@@ -52,6 +65,10 @@ const STAGE_DETAIL: Record<string, string> = {
     'Pulling the door, RTU and panel schedules and the code-analysis blocks off the sheets.',
   'Running rules':
     'Checking every stated value against the section it cites, and redoing the arithmetic.',
+  [REVIEW_STAGE]:
+    'Claude checks the result against your request and the sheets. Where a value was ' +
+    'missed, those sheets are read again and the rules run again — three passes at most. ' +
+    'It cannot change a finding.',
   'Rendering the markup': 'Placing a marker at each finding, on the sheet it belongs to.',
   Delivering: 'Writing the marked-up set and findings.json, and signing the download links.',
 };
@@ -152,6 +169,11 @@ export class Review implements OnDestroy {
 
   /** Whether this review's sheets are read by the AI reader as well. */
   protected readonly aiReading = computed(() => this.stages().includes(AI_STAGE));
+
+  /** Why the result check stopped, in words, for the summary line. */
+  protected reviewOutcome(outcome: string): string {
+    return REVIEW_OUTCOME[outcome] ?? outcome.replaceAll('_', ' ');
+  }
 
   /** How far along the traverse is, 0-100. Stations, not guessed seconds. */
   protected readonly progressPercent = computed(() => {

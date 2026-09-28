@@ -3,6 +3,7 @@ export * from './abstention-diagnosis';
 export * from './abstention-kind-info';
 export * from './admin-overview';
 export * from './ai-reading-summary';
+export * from './ai-review-summary';
 export * from './assist-opinion';
 export * from './calibration-adjustment';
 export * from './calibration-change';

@@ -233,6 +233,66 @@
         "title": "AiReadingSummary",
         "type": "object"
       },
+      "AiReviewSummary": {
+        "description": "Counts only \u2014 never the reviewer's notes. See `fbcreview/ai/review.py`.",
+        "properties": {
+          "max_passes": {
+            "title": "Max Passes",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "notes": {
+            "description": "Notes left for the audit record; kept with the job.",
+            "title": "Notes",
+            "type": "integer"
+          },
+          "outcome": {
+            "description": "Why the loop stopped: meets_request, max_passes, no_change, nothing_to_reread, review_failed or reread_failed. The last pass's result stands in every case.",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "passes": {
+            "description": "Runs of the rules, the first included. At most 3.",
+            "title": "Passes",
+            "type": "integer"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "reviews": {
+            "description": "Checks the reviewer completed.",
+            "title": "Reviews",
+            "type": "integer"
+          },
+          "sheets_reread": {
+            "title": "Sheets Reread",
+            "type": "integer"
+          },
+          "usage": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "model",
+          "prompt_version",
+          "passes",
+          "max_passes",
+          "reviews",
+          "outcome",
+          "sheets_reread",
+          "notes"
+        ],
+        "title": "AiReviewSummary",
+        "type": "object"
+      },
       "AssistOpinion": {
         "description": "What `webapp.assist` made of a free-text comment.\n\nRecorded so the owner can see what was said about their user's words, and\ntyped so the client can show it. Advisory in the strict sense: the triage\nmay raise a disposition on the strength of it and may never lower one.",
         "properties": {
@@ -621,6 +681,12 @@
             "default": false,
             "description": "Whether this deployment reads sheets with the AI reader (`FBC_AI_READING=on` with a key). Rules are pure Python either way.",
             "title": "Ai Reading",
+            "type": "boolean"
+          },
+          "ai_review": {
+            "default": false,
+            "description": "Whether a reviewer model checks each result and may send sheets back to be read again, for at most three passes. Only ever on with AI reading; `FBC_AI_REVIEW=off` turns it off.",
+            "title": "Ai Review",
             "type": "boolean"
           },
           "calibration_knobs": {
@@ -3290,6 +3356,17 @@
               }
             ],
             "description": "What the AI sheet reader did on this review. Null when it was off."
+          },
+          "ai_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AiReviewSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the result reviewer did on this review. Null when it did not run."
           },
           "annotations": {
             "title": "Annotations",
