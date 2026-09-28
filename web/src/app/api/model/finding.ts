@@ -7,6 +7,7 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { FindingAiRevision } from './finding-ai-revision';
 import { FindingEvidence } from './finding-evidence';
 
 
@@ -15,6 +16,10 @@ import { FindingEvidence } from './finding-evidence';
  */
 export interface Finding { 
     action?: string;
+    /**
+     * Present when the AI result review revised or raised this finding. Absent on every finding the rules alone decided.
+     */
+    ai_revision?: FindingAiRevision | null;
     anchor: string;
     /**
      * What the finding rests on. `declaration` means the drawings do not state the value it depends on, and the card says so — the markup must never attribute to the drawings something the drawings do not say.

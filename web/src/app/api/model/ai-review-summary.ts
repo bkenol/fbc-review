@@ -13,6 +13,17 @@
  * Counts only — never the reviewer\'s notes. See `fbcreview/ai/review.py`.
  */
 export interface AiReviewSummary { 
+    edits_applied?: number;
+    /**
+     * Edits not applied — a quote not found on the sheet, an unknown key.
+     */
+    edits_rejected?: number;
+    findings_added?: number;
+    findings_revised?: number;
+    /**
+     * Each is also an abstention saying it was withdrawn.
+     */
+    findings_withdrawn?: number;
     max_passes: number;
     model: string;
     /**
@@ -20,18 +31,22 @@ export interface AiReviewSummary {
      */
     notes: number;
     /**
-     * Why the loop stopped: meets_request, max_passes, no_change, nothing_to_reread, review_failed or reread_failed. The last pass\'s result stands in every case.
+     * Why the loop stopped: meets_request, max_passes, no_change, review_failed or reread_failed. The last good state stands in every case.
      */
     outcome: string;
     /**
-     * Runs of the rules, the first included. At most 3.
+     * AI passes run — check, edit, verify. At most 3.
      */
     passes: number;
     prompt_version: string;
     /**
-     * Checks the reviewer completed.
+     * Passes the reviewer completed.
      */
     reviews: number;
+    /**
+     * Runs of the rules, the first included.
+     */
+    rule_runs?: number;
     sheets_reread: number;
     usage?: { [key: string]: number; };
 }

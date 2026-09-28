@@ -134,6 +134,15 @@
               @if (finding.action) {
                 <p class="side-line"><span class="dim">Do</span> {{ finding.action }}</p>
               }
+              @if (finding.ai_revision; as rv) {
+                <p class="side-line ai-revision">
+                  <span class="dim">{{ rv.op === 'add' ? 'Raised' : 'Revised' }} by AI</span>
+                  pass {{ rv.pass }} — {{ rv.reason }}
+                  @if (rv.was?.['severity']; as was) {
+                    · was {{ was }}
+                  }
+                </p>
+              }
               <!-- Where each value it rests on was read, and by what. -->
               @for (e of finding.evidence ?? []; track $index) {
                 <p class="side-line">

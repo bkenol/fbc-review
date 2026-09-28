@@ -35,12 +35,12 @@ const REVIEW_STAGE = 'Checking the result with AI';
 
 /** Why a result check stopped, in words. Every outcome leaves the last pass standing. */
 const REVIEW_OUTCOME: Record<string, string> = {
-  meets_request: 'nothing left a re-read would improve',
+  meets_request: 'the reviewer is satisfied',
   max_passes: 'stopped at the pass limit',
-  no_change: 'a re-read changed nothing',
-  nothing_to_reread: 'nothing a re-read could fix',
-  review_failed: 'the check did not complete — first pass kept',
-  reread_failed: 'a re-read did not complete — last pass kept',
+  no_change: 'a pass changed nothing',
+  nothing_to_reread: 'nothing left to change',
+  review_failed: 'a pass did not complete — last good state kept',
+  reread_failed: 'a re-read did not complete — last good state kept',
 };
 
 /**
@@ -66,9 +66,9 @@ const STAGE_DETAIL: Record<string, string> = {
   'Running rules':
     'Checking every stated value against the section it cites, and redoing the arithmetic.',
   [REVIEW_STAGE]:
-    'Claude checks the result against your request and the sheets. Where a value was ' +
-    'missed, those sheets are read again and the rules run again — three passes at most. ' +
-    'It cannot change a finding.',
+    'Claude checks the result against your request and the sheets, then corrects it — ' +
+    'revising, adding or withdrawing findings, each labelled — and re-reads sheets where a ' +
+    'value was missed. Check, edit, verify: three passes at most.',
   'Rendering the markup': 'Placing a marker at each finding, on the sheet it belongs to.',
   Delivering: 'Writing the marked-up set and findings.json, and signing the download links.',
 };

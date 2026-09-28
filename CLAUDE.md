@@ -20,10 +20,10 @@ output is supposed to look like.
 The review path may call a model — decided by the owner on 2026-09-27, replacing the old
 "zero LLM calls" rule. What it may do is narrow, and every line below is enforced by a test:
 
-1. **A model's output can only become a claim** — "this value is printed here on this
+1. **The reader's output can only become a claim** — "this value is printed here on this
    sheet". Never a finding, a severity, a code threshold, a citation or an abstention
-   reason. Compliance is decided by pure-Python rules over the fact store and the
-   hand-verified code corpus.
+   reason. The first decision on compliance is made by pure-Python rules over the fact
+   store and the hand-verified code corpus; the reviewer in rule 7 may then change it.
 2. **Grounded or discarded.** Every AI-proposed value carries a verbatim quote, and
    `fbcreview/ai/grounding.py` must find that quote on that page's text (live or OCR) and
    re-derive the value from it with the catalog parser. A proposal that fails is kept for
@@ -35,17 +35,28 @@ The review path may call a model — decided by the owner on 2026-09-27, replaci
    stored with the job. Tests and re-runs replay them. No test makes a network call.
 5. **Provenance is visible.** A value the model located says so on the finding.
 6. **`fbcreview/rules` and `fbcreview/codes` never import `fbcreview/ai` or `anthropic`.**
-7. **AI checks; it cannot change a result.** Decided by the owner on 2026-09-28. After the
-   rules run, a reviewer model checks the result against what the user asked for and the
-   sheets. Its output (`ResultReview`) can only name sheets to read again for named catalog
-   facts — the re-read is grounded like any reading, and the same rules run again — or leave
-   a note for the audit record. It never adds, removes, edits or re-ranks a finding. At most
-   **three passes**, however it is configured; a failed check keeps the last pass. Its trace
-   is stored with the job (`ai_review.json`) and replayed like readings.
+7. **AI reviews and corrects the result.** Decided by the owner on 2026-09-28, and amended
+   the same day to let the reviewer change findings directly. After the rules run, a
+   reviewer model checks the result against what the user asked for and the sheets, and
+   may **revise** a finding (severity, status, title, result, remedy, citation), **add** one
+   the rules missed, or **withdraw** one — as well as send sheets back to be read again and
+   leave notes. Pass 1 checks, pass 2 actively edits, pass 3 verifies: at most **three
+   passes**, however it is configured. What holds for every edit, and is enforced in
+   `fbcreview/ai/review.py` and by tests:
+   - **Labelled.** Every applied edit is marked on the finding — its result says it was
+     revised or raised by the AI review and why, and `findings.json` carries `ai_revision`.
+     An AI-edited value never passes for a rule's.
+   - **Evidenced.** Adding or withdrawing a finding, or changing a severity or status, needs
+     a quote printed on the sheet; an edit whose quote is not found is not applied.
+   - **Withdrawn is not passed.** A withdrawn finding becomes an abstention saying so.
+   - **Replayable, with a floor.** The trace is stored with the job (`ai_review.json`) and
+     replayed like readings; a failed pass keeps the last good state.
+   - **The code corpus is untouched.** The reviewer changes findings, never
+     `fbcreview/codes/`, and a citation it adds is its own, not a corpus row.
 
-If you find yourself letting a model decide whether something complies, or choosing a
-threshold, you have misread the problem: that is the rule corpus's job. The same goes for
-letting the reviewer "fix" a finding: it can only send a sheet back to be read.
+If you find yourself letting the *reader* decide whether something complies, or letting any
+model write a threshold into the code corpus, you have misread the problem. The reviewer is
+the one place a model may change a finding, and only in the labelled, evidenced way above.
 
 ## Ownership boundaries
 

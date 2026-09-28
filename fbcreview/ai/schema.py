@@ -44,12 +44,12 @@ ALLOWED_KEYS = frozenset({"field", "value", "quote", "role"})
 
 
 # ── the result reviewer ──────────────────────────────────────────────────────
-# What the reviewer is allowed to say after the rules have run. Like the reading
-# schema, its shape is the guardrail: it can ask for named sheets to be read
-# again for named catalog facts, and it can leave a note for the audit record.
-# There is no field for a finding, a severity, a status or a verdict on
-# compliance, so there is no way for its output to add, remove, edit or re-rank
-# anything the rules decided.
+# What the reviewer may say after the rules have run (`CLAUDE.md`, rule 7, as
+# amended by the owner on 2026-09-28): sheets to read again, direct edits to
+# the findings, and notes for the audit record. Every edit is validated before
+# it is applied (`fbcreview.ai.review.apply_edits`): an edit that adds or
+# withdraws a finding, or changes a severity or status, must quote text that is
+# printed on the sheet, and every applied edit is labelled on the finding.
 
 class RereadRequest(BaseModel):
     """One sheet to read again, for facts the review should have found on it."""
@@ -62,22 +62,55 @@ class RereadRequest(BaseModel):
                                               "appears to be printed. One or two sentences.")
 
 
-class ResultReview(BaseModel):
-    """The reviewer's check of one pass: re-reads to try, and notes for the record."""
+class FindingEdit(BaseModel):
+    """One direct change to the review's findings."""
 
-    meets_request: bool = Field(description="True when no re-read of any sheet would make this "
-                                            "review more complete or more faithful to the set "
-                                            "and to what the user asked for.")
+    op: Literal["revise", "add", "withdraw"] = Field(
+        description="'revise' changes an existing finding, 'add' raises one the rules missed, "
+                    "'withdraw' removes one the sheets or the request show is wrong.")
+    key: str = Field(default="", description="For revise and withdraw: the finding's key as "
+                                             "listed in the packet.")
+    severity: Literal["", "CRITICAL", "HIGH", "MEDIUM", "LOW", "VERIFIED"] = Field(
+        default="", description="The new severity. Empty leaves it as it is.")
+    status: Literal["", "OPEN", "PASS"] = Field(
+        default="", description="OPEN for a problem to act on, PASS for a check that passed. "
+                                "Empty leaves it as it is.")
+    title: str = Field(default="", description="New one-line title. Empty leaves it.")
+    result: str = Field(default="", description="New statement of what was found. Empty "
+                                                "leaves it.")
+    remedy: str = Field(default="", description="What the applicant should do. Empty leaves it.")
+    code: str = Field(default="", description="Code section cited, e.g. 'FBC-B 1010.1.1'. "
+                                              "Empty leaves it.")
+    page: int = Field(default=0, description="1-based page the quote is printed on. Required "
+                                             "for add; for revise and withdraw, defaults to the "
+                                             "finding's own page.")
+    quote: str = Field(default="", description="The shortest verbatim run of the sheet's text "
+                                               "that supports this edit, exactly as printed. "
+                                               "Required to add or withdraw a finding or to "
+                                               "change a severity or status.")
+    reason: str = Field(description="Why, in one or two sentences. Shown on the finding.")
+
+
+class ResultReview(BaseModel):
+    """The reviewer's check of one pass: re-reads, direct edits, and notes."""
+
+    meets_request: bool = Field(description="True when, after the edits in this answer, the "
+                                            "review is complete, faithful to the set and to "
+                                            "what the user asked for.")
     rereads: List[RereadRequest] = Field(
         default_factory=list,
-        description="Sheets the readers appear to have missed or misread a catalog fact on. "
-                    "Empty when meets_request is true.")
+        description="Sheets the readers appear to have missed or misread a catalog fact on.")
+    edits: List[FindingEdit] = Field(
+        default_factory=list,
+        description="Direct changes to the findings, applied in order.")
     notes: List[str] = Field(
         default_factory=list,
-        description="Concerns a re-read cannot fix, one sentence each, for the audit record.")
+        description="Anything else worth keeping for the audit record, one sentence each.")
 
 
-#: The only keys each reviewer model may carry. Held by a test, like
-#: `ALLOWED_KEYS`: a field added here widens what a model can say about a result.
-REVIEW_ALLOWED_KEYS = frozenset({"meets_request", "rereads", "notes"})
+#: The keys each reviewer model may carry. Held by a test, like `ALLOWED_KEYS`,
+#: so widening what a model can say about a result is a deliberate change.
+REVIEW_ALLOWED_KEYS = frozenset({"meets_request", "rereads", "edits", "notes"})
 REREAD_ALLOWED_KEYS = frozenset({"page", "fields", "hint"})
+EDIT_ALLOWED_KEYS = frozenset({"op", "key", "severity", "status", "title", "result", "remedy",
+                               "code", "page", "quote", "reason"})

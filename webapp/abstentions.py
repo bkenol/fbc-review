@@ -73,12 +73,17 @@ OPTION = "option"
 #: states nothing twice.  Nothing to fix, and saying so is different from
 #: saying nothing was stated.
 NOT_APPLICABLE = "not_applicable"
+#: The rule found something and the AI result review took it back, with a
+#: reason and a quote from the sheet (`fbcreview/ai/review.py`). Not a pass:
+#: a person should read the reason and decide whether the withdrawal stands.
+WITHDRAWN = "withdrawn"
 #: The rule raised.  An engine bug, always.
 ERROR = "error"
 #: No pattern matched.  Said plainly rather than filed under a guess.
 UNKNOWN = "unknown"
 
-KINDS = (EXTRACTION, GEOMETRY, CORPUS, ABSENT, NOT_APPLICABLE, OPTION, ERROR, UNKNOWN)
+KINDS = (EXTRACTION, GEOMETRY, CORPUS, ABSENT, NOT_APPLICABLE, OPTION, WITHDRAWN, ERROR,
+         UNKNOWN)
 
 
 @dataclass(frozen=True)
@@ -160,6 +165,15 @@ KIND_CATALOGUE: Tuple[Kind, ...] = (
         False,
     ),
     Kind(
+        WITHDRAWN,
+        "Withdrawn by the AI review",
+        "The rule raised a finding and the AI result review withdrew it.",
+        "The detail says what was withdrawn and why, and the review quoted the sheet "
+        "text it relied on. Check that text: if the withdrawal is wrong, report it, "
+        "and the finding the rule made is the one that stands.",
+        True,
+    ),
+    Kind(
         ERROR,
         "The rule failed",
         "The rule raised rather than deciding.",
@@ -188,6 +202,7 @@ _BY_KEY: Dict[str, Kind] = {k.key: k for k in KIND_CATALOGUE}
 # landing in UNKNOWN.
 _PATTERNS: Tuple[Tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"rule raised"), ERROR),
+    (re.compile(r"withdrawn by the ai result review"), WITHDRAWN),
     (re.compile(r"switched off in the review options"), OPTION),
     # Corpus gaps name the table they could not find a row in.
     (re.compile(r"not carried in this build'?s corpus"), CORPUS),

@@ -236,6 +236,33 @@
       "AiReviewSummary": {
         "description": "Counts only \u2014 never the reviewer's notes. See `fbcreview/ai/review.py`.",
         "properties": {
+          "edits_applied": {
+            "default": 0,
+            "title": "Edits Applied",
+            "type": "integer"
+          },
+          "edits_rejected": {
+            "default": 0,
+            "description": "Edits not applied \u2014 a quote not found on the sheet, an unknown key.",
+            "title": "Edits Rejected",
+            "type": "integer"
+          },
+          "findings_added": {
+            "default": 0,
+            "title": "Findings Added",
+            "type": "integer"
+          },
+          "findings_revised": {
+            "default": 0,
+            "title": "Findings Revised",
+            "type": "integer"
+          },
+          "findings_withdrawn": {
+            "default": 0,
+            "description": "Each is also an abstention saying it was withdrawn.",
+            "title": "Findings Withdrawn",
+            "type": "integer"
+          },
           "max_passes": {
             "title": "Max Passes",
             "type": "integer"
@@ -250,12 +277,12 @@
             "type": "integer"
           },
           "outcome": {
-            "description": "Why the loop stopped: meets_request, max_passes, no_change, nothing_to_reread, review_failed or reread_failed. The last pass's result stands in every case.",
+            "description": "Why the loop stopped: meets_request, max_passes, no_change, review_failed or reread_failed. The last good state stands in every case.",
             "title": "Outcome",
             "type": "string"
           },
           "passes": {
-            "description": "Runs of the rules, the first included. At most 3.",
+            "description": "AI passes run \u2014 check, edit, verify. At most 3.",
             "title": "Passes",
             "type": "integer"
           },
@@ -264,8 +291,14 @@
             "type": "string"
           },
           "reviews": {
-            "description": "Checks the reviewer completed.",
+            "description": "Passes the reviewer completed.",
             "title": "Reviews",
+            "type": "integer"
+          },
+          "rule_runs": {
+            "default": 1,
+            "description": "Runs of the rules, the first included.",
+            "title": "Rule Runs",
             "type": "integer"
           },
           "sheets_reread": {
@@ -1583,6 +1616,17 @@
             "title": "Action",
             "type": "string"
           },
+          "ai_revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FindingAiRevision"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when the AI result review revised or raised this finding. Absent on every finding the rules alone decided."
+          },
           "anchor": {
             "title": "Anchor",
             "type": "string"
@@ -1721,6 +1765,71 @@
           "code"
         ],
         "title": "Finding",
+        "type": "object"
+      },
+      "FindingAiRevision": {
+        "description": "What the AI result review did to a finding. See `fbcreview/ai/review.py`.",
+        "properties": {
+          "changed": {
+            "description": "Which fields a revision changed.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed",
+            "type": "array"
+          },
+          "op": {
+            "description": "`add` when the AI review raised the finding itself; `revise` when it changed one a rule produced.",
+            "enum": [
+              "revise",
+              "add"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "1-based page of the quote.",
+            "title": "Page"
+          },
+          "pass": {
+            "description": "The pass that last changed it (1-3).",
+            "title": "Pass",
+            "type": "integer"
+          },
+          "quote": {
+            "default": "",
+            "description": "Sheet text the edit rests on, as printed \u2014 found on the page before the edit applied.",
+            "title": "Quote",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why, in the reviewer's words. Also appended to `result`.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "was": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The status and severity before the revision.",
+            "title": "Was",
+            "type": "object"
+          }
+        },
+        "required": [
+          "op",
+          "pass",
+          "reason"
+        ],
+        "title": "FindingAiRevision",
         "type": "object"
       },
       "FindingEvidence": {

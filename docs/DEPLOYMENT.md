@@ -1393,25 +1393,37 @@ deterministic reader at once, and stored readings stay with their jobs.
 #### The result check
 
 With AI reading on, every review also gains a stage after the rules, *Checking
-the result with AI* (`FBC_AI_REVIEW=off` skips it):
+the result with AI* (`FBC_AI_REVIEW=off` skips it). Since 2026-09-28 the
+reviewer corrects the result directly:
 
-1. `fbcreview/ai/reviewer.py` sends one request: the review options and
-   declaration (what was asked for), the findings and abstentions, the facts the
-   rules used, the AI values the sheet check rejected, and each sheet's text.
-2. The answer is structured output (`ResultReview`): whether a re-read would
-   improve the result, which sheets to read again for which catalog facts, and
-   notes for the record. There is no field in which it could change a finding.
-3. When it asks, `fbcreview/ai/review.py` sends those sheets back to the same
-   reader with its pointer attached, grounds what comes back like any reading,
-   rebuilds the facts and runs the same rules again — then checks again.
-4. It stops when the check is satisfied, a re-read changes nothing, there is
-   nothing it may ask for, anything fails, or after `FBC_AI_MAX_PASSES` passes —
-   **three at most**, whatever is configured. The last pass's result is the
-   review in every case.
+1. `fbcreview/ai/reviewer.py` sends one request per pass: the pass's job, the
+   review options and declaration (what was asked for), the findings with their
+   keys, the abstentions, the facts the rules used, the AI values the sheet
+   check rejected, earlier passes' notes and edits, and each sheet's text.
+2. The answer (`ResultReview`) can revise, add or withdraw findings, ask for
+   sheets to be read again, and leave notes.
+3. `fbcreview/ai/review.py` validates and applies the edits. Adding or
+   withdrawing a finding, or moving a severity or status, needs a quote printed
+   on the sheet; anything that fails is recorded and not applied. Every applied
+   edit is labelled on the finding — in its result text, so the PDF shows it,
+   and as `ai_revision` in `findings.json`. A withdrawn finding becomes an
+   abstention. Re-reads re-run the rules and the edits are re-applied on top.
+4. **Pass 1 checks, pass 2 edits actively, pass 3 verifies** — three passes at
+   most, whatever `FBC_AI_MAX_PASSES` says. After pass 1, a pass that changes
+   nothing ends the loop. A failed pass keeps the last good state.
+5. Calibration applies after, so a promoted profile keeps the last word.
 
-`ai_review.json` is stored beside `findings.json` with every check, re-read and
-note, and a re-run replays it with no call. The job's `summary.ai_review`
-carries counts only — passes, sheets re-read, why it stopped — never the notes.
+`ai_review.json` is stored beside `findings.json` with every answer, edit,
+re-read and note, and a re-run replays it with no call. The job's
+`summary.ai_review` carries counts only — passes, findings revised, added and
+withdrawn, edits not applied, sheets re-read, why it stopped — never the notes
+or reasons.
+
+**What this changes for the people reading a review.** Findings can now be
+raised, re-levelled or withdrawn by a model, not only by the hand-verified rule
+corpus. Each one says so on its card and in the PDF, and the weighty ones rest
+on a quote from the sheet — but a citation the reviewer adds is its own, not a
+corpus row. Turn it on knowing that.
 
 **Cost and time.** One check per pass, plus a re-read of at most eight sheets
 per extra pass: at most three checks and two partial re-reads on top of the

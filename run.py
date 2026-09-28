@@ -19,11 +19,12 @@ pure Python. `--save-readings` keeps what the model read; `--readings` replays
 a saved reading with no API call, so the same file and readings give the same
 findings. With neither flag the review is deterministic and calls nothing.
 
-With `--ai`, a reviewer model then checks the result against the sheets and may
-send sheets back to be read again, after which the same rules run again — at
-most three passes (`FBC_AI_MAX_PASSES`, `FBC_AI_REVIEW=off` to skip it). It
-cannot change a finding. `--save-review` keeps what it did; `--review` replays
-that, on top of `--readings`, with no API call.
+With `--ai`, a reviewer model then reviews and corrects the result: it edits
+findings directly — each edit labelled on the finding — and may send sheets back
+to be read again, after which the rules run again. Check, edit, verify: at most
+three passes (`FBC_AI_MAX_PASSES`, `FBC_AI_REVIEW=off` to skip it).
+`--save-review` keeps what it did; `--review` replays that, on top of
+`--readings`, with no API call.
 """
 import json, os, sys
 from fbcreview.declaration import ProjectDeclaration
@@ -85,7 +86,7 @@ def _review(argv, path, readings, first, declaration):
         trace = RV.ReviewTrace(replay.file_sha256, replay.model, replay.prompt_version,
                                replay.max_passes, reader=replay.reader)
         facts, res, final = RV.review_loop(first, readings, run_pass, None, None, trace,
-                                           replay=replay)
+                                           replay=replay, pdf_path=path)
         return facts, res, final, trace, f"replayed from {replay_path}"
 
     reader = ReaderConfig.from_env({**os.environ, "FBC_AI_READING": "on"})
@@ -96,15 +97,16 @@ def _review(argv, path, readings, first, declaration):
     trace = RV.ReviewTrace(readings.file_sha256, config.model, REVIEW_PROMPT_VERSION,
                            config.max_passes, reader=RV.reader_identity(readings))
 
-    def check(facts, result, number, history):
+    def check(facts, state, number, history):
         return check_result(client, config, system, RV.packet(
-            path, facts, result, None, declaration, number, config.max_passes, history))
+            path, facts, state, None, declaration, number, config.max_passes, history))
 
     def reread(focus):
         return read_document(path, reader, client=client, identity=readings.file_sha256,
                              focus=focus)
 
-    facts, res, final = RV.review_loop(first, readings, run_pass, check, reread, trace)
+    facts, res, final = RV.review_loop(first, readings, run_pass, check, reread, trace,
+                                       pdf_path=path)
     return facts, res, final, trace, f"checked by {config.model} at {config.effort} effort"
 
 def main(argv):
@@ -162,8 +164,9 @@ def main(argv):
     if trace is not None:
         rv = trace.summary()
         print(f"ai review   {rv['passes']} of at most {rv['max_passes']} passes {review_how}; "
-              f"stopped: {rv['outcome'].replace('_', ' ')}; {rv['sheets_reread']} sheets "
-              f"re-read; {rv['notes']} notes for the record")
+              f"stopped: {rv['outcome'].replace('_', ' ')}; {rv['findings_revised']} revised, "
+              f"{rv['findings_added']} added, {rv['findings_withdrawn']} withdrawn, "
+              f"{rv['edits_rejected']} edits not applied; {rv['sheets_reread']} sheets re-read")
         if save_review:
             print(f"            saved to {save_review}")
     if declaration is not None:
@@ -192,7 +195,8 @@ def main(argv):
     if "--json" in argv:
         out = _arg(argv, "--json")
         from fbcreview.payload import findings_payload
-        json.dump({"findings": findings_payload(path, facts, res.findings),
+        json.dump({"findings": findings_payload(path, facts, res.findings,
+                                                revisions=trace.revision_map() if trace else None),
                    "abstentions": [a.__dict__ for a in res.abstentions],
                    "declaration": declaration.to_dict() if declaration else None,
                    "meta": {k: v for k, v in facts.meta.items()

@@ -65,13 +65,14 @@ deterministic reader, and both write into the same store under the same checks.
 7. **The five properties in `CLAUDE.md` still hold.** Abstention stays honest,
    every value carries provenance, an inferred value never masquerades as a
    stated one, the code corpus stays hand-transcribed, the regression gate holds.
-8. **AI checks; it cannot change a result.** Added 2026-09-28 at the owner's
-   direction (§4.1). After the rules run, a reviewer model checks the result
-   against what the user asked for and the sheets' text. It can send named
-   sheets back to be read again for named catalog facts — what comes back is
-   grounded like any reading — or leave a note for the audit record. It cannot
-   add, remove, edit or re-rank a finding. Three passes at most; a failed check
-   leaves the last pass standing.
+8. **AI reviews and corrects the result.** Added 2026-09-28 at the owner's
+   direction and amended the same day to let the reviewer change findings
+   directly (§4.1). After the rules run, a reviewer model may revise, add or
+   withdraw findings, send sheets back to be read, and leave notes — check,
+   edit, verify, three passes at most. Every applied edit is labelled on the
+   finding; adding, withdrawing or moving a severity or status needs a quote
+   printed on the sheet; a withdrawn finding becomes an abstention; the code
+   corpus is never touched; a failed pass keeps the last good state.
 
 ---
 
@@ -359,47 +360,55 @@ sequenceDiagram
     RL-->>K: findings with rect + evidence
 ```
 
-### 4.1 The result check — read, decide, check, at most three passes
+### 4.1 The result review — check, edit, verify, at most three passes
 
 Decided by the owner on 2026-09-28: an initial AI reader, the pure-Python rules,
-then an AI reviewer that looks at the finished result and checks it is what was
-asked for; if it is not, the review is repeated — three passes at most — and
-everything else about the output stays as it was.
+then an AI reviewer that makes sure the result is what was asked for, repeating
+the review when it is not — three passes at most — with the output otherwise
+unchanged. Amended the same day: the reviewer may change findings directly, and
+its second pass is the active one.
 
 ```mermaid
 flowchart LR
-    R1[AI + deterministic read] --> F1[facts] --> P1[rules · pass 1]
-    P1 --> C{AI check<br/>ResultReview}
-    C -- meets_request --> OUT[render · findings.json · markup]
-    C -- "re-read sheet p for fields k" --> RR[same reader, focused<br/>+ the check's pointer]
-    RR --> G[grounding gate] --> F2[facts, rebuilt] --> P2[rules · pass n+1]
-    P2 --> C
-    C -- "3 passes · no change · nothing to ask · any failure" --> OUT
+    R1[AI + deterministic read] --> P1[rules]
+    P1 --> C1{pass 1 · CHECK<br/>notes, re-reads,<br/>plain contradictions}
+    C1 -- "re-read" --> RR[same reader, focused] --> G[grounding gate] --> P2[rules again<br/>edits re-applied]
+    C1 --> C2{pass 2 · EDIT<br/>revise · add · withdraw<br/>act on every note}
+    P2 --> C2
+    C2 --> C3{pass 3 · VERIFY<br/>correct the edits}
+    C1 -- satisfied --> OUT[render · findings.json · markup]
+    C2 -- "satisfied · no change" --> OUT
+    C3 --> OUT
 ```
 
-- **What the check sees** (`fbcreview/ai/review.py`, `packet`): the review
-  options and declaration — what the user asked for, with any email address
-  dropped — the findings and abstentions, the facts the rules used, the AI
-  values the sheet check rejected, earlier re-reads in this review, and each
-  sheet's text (6 k characters a sheet, 90 k a set).
-- **What it can say** (`schema.ResultReview`): `meets_request`, `rereads`
-  (page, catalog keys, a hint) and `notes`. Nothing else; a test holds the key
-  set, as it does for `FieldReading`.
-- **What a re-read is**: `reader.read_document(focus=…)` — the same request for
-  those sheets only, with the check's facts and pointer appended, never cached.
-  Its values are merged into the set's readings and grounded like any other, so
-  a pointer at a value the sheet does not print changes nothing.
-- **What stops it**: the check is satisfied (`meets_request`); the pass limit
-  (`max_passes`, `FBC_AI_MAX_PASSES`, held at 3 by the loop itself); a re-read
-  that changes nothing (`no_change`); nothing the check may ask for — unknown
-  page, unknown key, already re-read (`nothing_to_reread`); a check or re-read
-  that fails (`review_failed`, `reread_failed`). The last pass stands in every
-  case, so the check can only ever make a review more complete.
-- **Notes** go to `ai_review.json` with the job — the audit record — and never
-  into a finding, the markup or a log. `summary.ai_review` carries counts only.
-- **Replay**: `ai_review.json` holds every check and every re-read. A re-run
-  whose readings match replays it with no call and reaches the same findings;
-  `run.py --review` does the same from the command line.
+- **What it sees** (`fbcreview/ai/review.py`, `packet`): this pass's job, the
+  review options and declaration (email dropped), every finding with its key
+  and any AI label so far, the abstentions, the facts the rules used, the AI
+  values the sheet check rejected, what earlier passes noted and edited, and
+  each sheet's text (6 k characters a sheet, 90 k a set).
+- **What it can say** (`schema.ResultReview`): `edits` (`FindingEdit`: revise,
+  add or withdraw, with severity, status, title, result, remedy, citation, page,
+  quote, reason), `rereads`, `notes`, `meets_request`. Tests hold the key sets.
+- **What an edit must carry** (`apply_edits`): a reason, always. A quote printed
+  on the page — found by the grounding gate's own locator — to add or withdraw a
+  finding or to move its severity or status; wording-only revisions need none.
+  Severity and status must agree (a PASS carries VERIFIED; an OPEN finding a
+  problem severity). An edit that fails is recorded with why, and not applied.
+- **How it shows**: the finding's `result` ends with *[Revised by AI review,
+  pass n: reason]* or *[Raised by AI review…]*, so the marked-up PDF says it;
+  `findings.json` carries `ai_revision` (op, pass, reason, changed fields, what
+  the severity and status were, quote, page); the client shows it on the card.
+  An added finding has rule id `AI.REVIEW`, fid `AI-nn`, and says it is not
+  from the hand-verified corpus. A withdrawn finding becomes an abstention.
+- **The passes**: pass 1 checks and hands problems on as notes, and the loop
+  continues to pass 2 even when pass 1 changed nothing; pass 2 is told to be
+  active and to act on every note; pass 3 verifies the edits. After pass 1, a
+  pass that changes nothing ends the loop. Re-reads re-run the rules, and the
+  accepted edits are re-applied on top of the new result.
+- **Order**: rules → AI review → calibration, so a promoted calibration profile
+  still has the last word.
+- **Replay**: `ai_review.json` holds every answer and re-read; validation is
+  deterministic, so a re-run replays it with no call to the same findings.
 
 ---
 
@@ -442,7 +451,7 @@ reproduce-before-you-change rule as everything else.
 | `tests/test_ai_guardrails.py` | rules never import `ai`; a review with AI off completes; an ungrounded claim never reaches a rule; the same readings give the same findings |
 | `tests/test_ai_reader.py` | the reader's request, through the real SDK over a mock transport; refusal, error, deadline, sheet limit, cache |
 | `tests/test_worker_ai.py`, `tests/test_cli.py` | the worker stage and `run.py --ai` / `--readings`, with readings built in code — no test makes a network call |
-| `tests/test_ai_review.py`, `tests/test_worker_ai_review.py` | the result check: it can say nothing but re-reads and notes; re-read values are grounded; the result is always the rules' own over the final readings; never more than three passes; every failure keeps the last pass; a stored trace replays with no call |
+| `tests/test_ai_review.py`, `tests/test_worker_ai_review.py` | the result review: revise, add and withdraw apply and are labelled; an edit without a quote on the sheet is not applied; a withdrawal is an abstention; pass 2 acts on pass 1's notes; never more than three passes; every failure keeps the last good state; a stored trace replays with no call |
 | `scripts/scorecard.py` | how much of the hand review the engine reproduces — the number to move |
 
 ---
@@ -471,7 +480,7 @@ reproduce-before-you-change rule as everything else.
 | D | stated-row fallback, findings anchored where their evidence is, eight new checks, a false-conflict fix | 10 / 14 · 10 / 36 |
 | E | frontend conformance: one page base, unique keys, `rect` placement (30/30 findings placed on Sculpted), evidence on cards, the AI stage and summary | unchanged, by design |
 | F | the real ITEC Alico Park set | pending — needs the PDF |
-| G | the result check: AI reviewer, focused re-reads, up to three passes, `ai_review.json` replay (§4.1) | unchanged with AI off, by design |
+| G | the result review: AI reviewer that edits findings directly (labelled, evidenced), focused re-reads, check / edit / verify, `ai_review.json` replay (§4.1) | unchanged with AI off, by design |
 
 Of the four open register entries still missed, three (M-06 interior finish
 classes, M-07 the accessible counter, M-08 trap seal protection) need checks on

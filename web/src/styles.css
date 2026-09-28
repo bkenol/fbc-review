@@ -1960,6 +1960,20 @@ td .evidence .quote {
 td .evidence .ai-note {
   font-style: italic;
 }
+/* What the AI result review did to this finding. Same muted register as the
+ * evidence line, with a left rule so an AI-revised finding is recognisable at a
+ * glance without spending a colour on it.
+ */
+td .ai-revision,
+.side-line.ai-revision {
+  display: block;
+  margin-top: var(--space-1);
+  padding-left: var(--space-2);
+  border-left: 2px solid currentColor;
+  max-width: var(--measure);
+  font: var(--type-small);
+  color: var(--text-muted);
+}
 /* A conflict is a status, not a seventh severity, so this tag takes the row's own
  * --sev rather than reaching for a hue. The system owns two accents and one deliberate
  * green; "where did this finding come from" does not earn a fourth.

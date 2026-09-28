@@ -8,7 +8,8 @@ import pytest
 from conftest import FakeJobStore, FakeStorage, make_pdf
 from fbcreview.ai.prompt import PROMPT_VERSION
 from fbcreview.ai.readings import Readings, file_sha256
-from fbcreview.ai.schema import FieldReading, RereadRequest, ResultReview, SheetReading
+from fbcreview.ai.schema import (FieldReading, FindingEdit, RereadRequest, ResultReview,
+                                 SheetReading)
 from fbcreview.options import ReviewOptions
 from webapp import storage as storage_mod
 from webapp.worker import AI_REVIEW, AI_STAGE, REVIEW_STAGE, run_review, stages_for
@@ -156,3 +157,23 @@ def test_config_says_whether_results_are_checked(client, monkeypatch):
     monkeypatch.delenv("FBC_AI_REVIEW", raising=False)
     on = client.get("/api/config").json()
     assert on["ai_review"] is True and REVIEW_STAGE in on["stages"]
+
+
+def test_an_edit_reaches_findings_json_labelled(ai_on, monkeypatch):
+    """An AI-raised finding lands in findings.json with its label and a place on the sheet."""
+    add = FindingEdit(op="add", severity="LOW", title="Travel distance stated without a path",
+                      result="The sheet states 250 FT but shows no measured path.",
+                      page=1, quote="TRAVEL DISTANCE 250 FT", reason="Printed on the first sheet.")
+    reads, checks = [], []
+    monkeypatch.setattr("fbcreview.ai.reader.read_document", _reader(reads))
+    monkeypatch.setattr("fbcreview.ai.reviewer.check_result",
+                        _checker(checks, [ResultReview(meets_request=True, edits=[add])]))
+    store, files = FakeJobStore(), FakeStorage()
+    record, _ = _job(store, files)
+    assert record["state"] == "done", record.get("error")
+    body = json.loads(files.blobs["outputs/job-rv/findings.json"])
+    raised = [f for f in body["findings"] if f["rule_id"] == "AI.REVIEW"]
+    assert len(raised) == 1 and raised[0]["ai_revision"]["op"] == "add"
+    assert "Raised by AI review" in raised[0]["result"] and raised[0]["rect"]
+    assert all("ai_revision" not in f for f in body["findings"] if f["rule_id"] != "AI.REVIEW")
+    assert record["summary"]["ai_review"]["findings_added"] == 1

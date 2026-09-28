@@ -106,6 +106,13 @@ def _evidence(doc: Optional[pymupdf.Document], facts, rule_id: str) -> List[Dict
     return out
 
 
+def finding_identity(f) -> tuple:
+    """What names one finding across a re-level or a re-order: calibration may
+    change its severity, never these. How the AI review's labels find their
+    finding again after calibration (`fbcreview/ai/review.py`)."""
+    return (f.fid, f.rule_id, f.sheet, f.page, f.scenario)
+
+
 def _keys(findings: Sequence) -> List[str]:
     """`fid`, made unique within the review: `H-03`, `H-03~2`; a declared twin is `M-04@as_declared`."""
     seen: Dict[str, int] = {}
@@ -137,8 +144,15 @@ def _rect(doc: Optional[pymupdf.Document], f, evidence) -> Optional[List[float]]
     return next((e["rect"] for e in evidence if e["page"] == f.page and e["rect"]), None)
 
 
-def findings_payload(pdf_path: Optional[str], facts, findings: Sequence) -> List[Dict[str, Any]]:
-    """Every finding as `findings.json` carries it. `pdf_path` is the file the engine read."""
+def findings_payload(pdf_path: Optional[str], facts, findings: Sequence,
+                     revisions: Optional[Dict[tuple, Dict[str, Any]]] = None
+                     ) -> List[Dict[str, Any]]:
+    """Every finding as `findings.json` carries it. `pdf_path` is the file the engine read.
+
+    `revisions` are the AI result review's labels by `finding_identity`; a
+    finding it revised or raised carries its label as `ai_revision`, and every
+    other finding carries none — the key is absent, not null.
+    """
     doc = None
     if pdf_path:
         try:
@@ -152,6 +166,9 @@ def findings_payload(pdf_path: Optional[str], facts, findings: Sequence) -> List
             d["key"] = key
             d["evidence"] = _evidence(doc, facts, f.rule_id)
             d["rect"] = _rect(doc, f, d["evidence"])
+            label = (revisions or {}).get(finding_identity(f))
+            if label is not None:
+                d["ai_revision"] = label
             out.append(d)
         return out
     finally:

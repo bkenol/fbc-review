@@ -832,6 +832,25 @@ class FindingEvidence(BaseModel):
     note: str = ""
 
 
+class FindingAiRevision(BaseModel):
+    """What the AI result review did to a finding. See `fbcreview/ai/review.py`."""
+
+    op: Literal["revise", "add"] = Field(description="`add` when the AI review raised the "
+                                                      "finding itself; `revise` when it "
+                                                      "changed one a rule produced.")
+    pass_: int = Field(alias="pass", description="The pass that last changed it (1-3).")
+    reason: str = Field(description="Why, in the reviewer's words. Also appended to `result`.")
+    changed: List[str] = Field(default_factory=list,
+                               description="Which fields a revision changed.")
+    was: Dict[str, str] = Field(default_factory=dict,
+                                description="The status and severity before the revision.")
+    quote: str = Field(default="", description="Sheet text the edit rests on, as printed — "
+                                               "found on the page before the edit applied.")
+    page: Optional[int] = Field(default=None, description="1-based page of the quote.")
+
+    model_config = {"populate_by_name": True}
+
+
 class Finding(BaseModel):
     """One rule outcome. Mirrors `fbcreview.rules.Finding`, plus what the viewer needs."""
 
@@ -887,6 +906,11 @@ class Finding(BaseModel):
     evidence: List[FindingEvidence] = Field(
         default_factory=list,
         description="The readings the rule's inputs rest on, and which reader found each.",
+    )
+    ai_revision: Optional[FindingAiRevision] = Field(
+        default=None,
+        description="Present when the AI result review revised or raised this finding. "
+                    "Absent on every finding the rules alone decided.",
     )
 
 
@@ -992,14 +1016,21 @@ class AiReviewSummary(BaseModel):
 
     model: str
     prompt_version: str
-    passes: int = Field(description="Runs of the rules, the first included. At most 3.")
+    passes: int = Field(description="AI passes run — check, edit, verify. At most 3.")
     max_passes: int
-    reviews: int = Field(description="Checks the reviewer completed.")
+    rule_runs: int = Field(default=1, description="Runs of the rules, the first included.")
+    reviews: int = Field(description="Passes the reviewer completed.")
     outcome: str = Field(description="Why the loop stopped: meets_request, max_passes, "
-                                     "no_change, nothing_to_reread, review_failed or "
-                                     "reread_failed. The last pass's result stands in "
-                                     "every case.")
+                                     "no_change, review_failed or reread_failed. The last "
+                                     "good state stands in every case.")
     sheets_reread: int
+    edits_applied: int = 0
+    edits_rejected: int = Field(default=0, description="Edits not applied — a quote not "
+                                                       "found on the sheet, an unknown key.")
+    findings_revised: int = 0
+    findings_added: int = 0
+    findings_withdrawn: int = Field(default=0, description="Each is also an abstention "
+                                                           "saying it was withdrawn.")
     notes: int = Field(description="Notes left for the audit record; kept with the job.")
     usage: Dict[str, int] = Field(default_factory=dict)
 

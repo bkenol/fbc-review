@@ -507,9 +507,10 @@
       @if (summary.ai_review; as rv) {
         <!-- What the result check did, in counts. It can send sheets back; the rules decide. -->
         <p class="figures">
-          AI check · {{ rv.passes }} of at most {{ rv.max_passes }}
-          {{ rv.passes === 1 ? 'pass' : 'passes' }} · {{ rv.sheets_reread }} sheets read again ·
-          {{ reviewOutcome(rv.outcome) }}
+          AI review · {{ rv.passes }} of at most {{ rv.max_passes }}
+          {{ rv.passes === 1 ? 'pass' : 'passes' }} · {{ rv.findings_revised ?? 0 }} revised ·
+          {{ rv.findings_added ?? 0 }} added · {{ rv.findings_withdrawn ?? 0 }} withdrawn ·
+          {{ rv.sheets_reread }} sheets read again · {{ reviewOutcome(rv.outcome) }}
         </p>
       }
     </section>
@@ -630,6 +631,17 @@
                     }
                     @if (finding.scenario !== 'both') {
                       <span class="basis">{{ scenarioNote(finding) }}</span>
+                    }
+                    <!-- What the AI result review did to this finding, when it did
+                         anything: the finding says so, and why. -->
+                    @if (finding.ai_revision; as rv) {
+                      <span class="ai-revision">
+                        {{ rv.op === 'add' ? 'Raised' : 'Revised' }} by AI review, pass
+                        {{ rv.pass }}: {{ rv.reason }}
+                        @if (rv.was?.['severity']; as was) {
+                          · was {{ was }}
+                        }
+                      </span>
                     }
                     <!-- Where each value this rests on was read, and by what. A value
                          only the AI reader found says so. -->

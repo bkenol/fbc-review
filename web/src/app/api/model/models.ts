@@ -34,6 +34,7 @@ export * from './feedback-request';
 export * from './feedback-subject';
 export * from './feedback-verdict';
 export * from './finding';
+export * from './finding-ai-revision';
 export * from './finding-evidence';
 export * from './findings-document';
 export * from './health';

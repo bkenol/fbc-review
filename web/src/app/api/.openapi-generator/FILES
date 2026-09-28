@@ -43,6 +43,7 @@ model/feedback-request.ts
 model/feedback-subject.ts
 model/feedback-verdict.ts
 model/feedback.ts
+model/finding-ai-revision.ts
 model/finding-evidence.ts
 model/finding.ts
 model/findings-document.ts

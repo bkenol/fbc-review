@@ -209,13 +209,15 @@ def run_review(
         advance()
         result = run_all(facts, options, declaration)
 
-        # ── the result check, when AI reading is on ────────────────────────
+        # ── the result review, when AI reading is on ───────────────────────
         # A reviewer model checks the result against the request and the
-        # sheets; where it finds a fact the readers missed, those sheets are
-        # read again and the same rules run again — at most three passes in
-        # all. It can only cause a re-read, never change a finding, and any
-        # failure leaves the last pass's result standing.
+        # sheets, and corrects it: it edits findings directly (every edit
+        # labelled, and the weighty ones backed by a quote printed on the
+        # sheet) and can send sheets back to be read, after which the rules
+        # run again. Check, edit, verify — three passes at most. Any failure
+        # leaves the last good state standing. Calibration still applies after.
         review_summary = None
+        review_labels = None
         if checker is not None:
             advance()
             if readings is not None:
@@ -224,6 +226,7 @@ def run_review(
                     job_id, rerun_of, store_files, workdir)
                 if trace is not None:
                     review_summary = trace.summary()
+                    review_labels = trace.revision_map()
                     store.update(job_id, ai_review=review_summary)
 
         # ── calibration ────────────────────────────────────────────────────
@@ -259,7 +262,7 @@ def run_review(
 
         # Each finding with a unique key, where to draw it on the file the
         # engine read, and the readings it rests on (`fbcreview/payload.py`).
-        findings = findings_payload(str(src), facts, result.findings)
+        findings = findings_payload(str(src), facts, result.findings, revisions=review_labels)
         abstentions = [
             {"rule": a.rule_id, "reason": a.reason, "detail": getattr(a, "detail", "") or ""}
             for a in result.abstentions
@@ -460,7 +463,7 @@ def _ai_readings(src: str, upload: str, rebuild: Optional[Dict[str, Any]],
 def _ai_review(src: str, first, readings: Readings, reader: ReaderConfig,
                config: ReviewerConfig, options, declaration, job_id: str,
                rerun_of: Optional[str], store_files: "storage.Storage", workdir: Path):
-    """Check the result, and re-read and re-run while the check asks — at most 3 passes.
+    """Review and correct the result — check, edit, verify, at most 3 passes.
 
     Returns (facts, result, readings, trace). On any failure outside the loop's
     own handling, the first pass is returned with no trace: the floor holds.
@@ -499,8 +502,8 @@ def _ai_review(src: str, first, readings: Readings, reader: ReaderConfig,
             f = build_facts(src, readings=r)
             return f, run_all(f, options, declaration)
 
-        def check(facts, result, number, history):
-            content = RV.packet(src, facts, result, options, declaration, number,
+        def check(facts, state, number, history):
+            content = RV.packet(src, facts, state, options, declaration, number,
                                 config.max_passes, history)
             return check_result(_client(), config, system, content)
 
@@ -509,7 +512,7 @@ def _ai_review(src: str, first, readings: Readings, reader: ReaderConfig,
                                  identity=readings.file_sha256, focus=focus)
 
         facts, result, final = RV.review_loop(first, readings, run_pass, check, reread,
-                                              trace, replay=replay)
+                                              trace, replay=replay, pdf_path=src)
         out = workdir / AI_REVIEW
         RV.save_trace(trace, str(out))
         store_files.upload_file(str(out), storage.output_path(job_id, AI_REVIEW),
