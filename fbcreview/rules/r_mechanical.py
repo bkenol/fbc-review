@@ -51,3 +51,66 @@ def outdoor_air(f: ProjectFacts, out: RuleResult):
             "Outdoor Air Calculations recomputed and compared against the scheduled unit capacity.",
             f"Required {required:.0f} CFM; {unit.mark} delivers {scheduled:.0f} CFM.",
             "FBC-M 403.3.1.1", "None."))
+
+
+@rule("MECH.OUTDOOR_AIR_ARITHMETIC")
+def outdoor_air_arithmetic(f: ProjectFacts, out: RuleResult):
+    """The Outdoor Air Calculations block recomputed from its own inputs.
+
+    Each zone's people from its area and density, each zone's breathing-zone
+    airflow as Rp x Pz + Ra x Az (FBC-M 403.3.1.1.1, Equation 4-1), and the
+    total from the zones. Only the sheet's own numbers are used: this checks
+    the arithmetic, not the Table 403.3.1.1 rates chosen, and says so.
+    """
+    sched = f.schedule("OCCUPANT DENSITY")
+    rows = [v for v in f.ventilation if v.total_cfm is not None]
+    if sched is None or not rows:
+        out.abstentions.append(Abstention(
+            "MECH.OUTDOOR_AIR_ARITHMETIC", "outdoor-air calculation rows not extracted"))
+        return
+    problems, lines, exact = [], [], 0.0
+    for v in rows:
+        pz = v.persons or 0.0
+        if v.area_sf and v.density_per_1000 is not None and v.persons is not None:
+            people = v.area_sf * v.density_per_1000 / 1000.0
+            if abs(v.persons - people) >= 1.0:
+                problems.append(f"{v.room.title()}: {v.area_sf:g} SF at {v.density_per_1000:g} "
+                                f"per 1,000 SF is {people:.1f} people, not {v.persons:g}")
+        vbz = (v.rp_cfm_person or 0.0) * pz + (v.ra_cfm_sf or 0.0) * (v.area_sf or 0.0)
+        exact += vbz
+        terms = []
+        if v.rp_cfm_person and pz:
+            terms.append(f"{v.rp_cfm_person:g} x {pz:g}")
+        if v.ra_cfm_sf and v.area_sf:
+            terms.append(f"{v.ra_cfm_sf:g} x {v.area_sf:g}")
+        lines.append(f"{v.room.title()} {' + '.join(terms) or '0'} = {vbz:.1f} "
+                     f"(stated {v.total_cfm:g})")
+        if abs(v.total_cfm - vbz) > 1.0:
+            problems.append(f"{v.room.title()}: {' + '.join(terms)} is {vbz:.1f} CFM, "
+                            f"not {v.total_cfm:g}")
+    stated_total = f.meta.get("oa_required_cfm")
+    if stated_total is not None and abs(stated_total - exact) > max(1.0, 0.5 * len(rows)):
+        problems.append(f"the zones add up to {exact:.1f} CFM, not the {stated_total:g} stated")
+    total_note = (f" Recomputed total {exact:.1f} CFM against {stated_total:g} stated."
+                  if stated_total is not None else f" Recomputed total {exact:.1f} CFM.")
+    body = "; ".join(lines) + "." + total_note
+    if problems:
+        out.findings.append(Finding(
+            "M-OA", "MECH.OUTDOOR_AIR_ARITHMETIC", "OPEN", "MEDIUM", "Mechanical",
+            sched.page, sched.sheet, "OUTDOOR AIR CALCULATIONS",
+            "The outdoor-air calculation does not add up",
+            "Every line of the Outdoor Air Calculations block recomputed from its own inputs.",
+            f"{body} Does not reconcile: " + "; ".join(problems) + ".",
+            "FBC-M 403.3.1.1.1 · Equation 4-1",
+            "Correct the calculation, then re-check the scheduled outdoor air against the "
+            "corrected total.", box=sched.bbox))
+    else:
+        out.findings.append(Finding(
+            "V-35", "MECH.OUTDOOR_AIR_ARITHMETIC", "PASS", "VERIFIED", "Mechanical",
+            sched.page, sched.sheet, "OUTDOOR AIR CALCULATIONS",
+            "The outdoor-air arithmetic is correct",
+            "Every line of the Outdoor Air Calculations block recomputed from its own inputs "
+            "(people from area and density; Rp x Pz + Ra x Az per zone; the total). The rates "
+            "chosen from Table 403.3.1.1 are not checked here.",
+            body + " Every difference is rounding.",
+            "FBC-M 403.3.1.1.1 · Equation 4-1", "None.", box=sched.bbox))

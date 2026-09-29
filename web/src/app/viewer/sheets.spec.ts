@@ -13,10 +13,21 @@ function sheet(page: number, code: string, read = true): SheetRef {
   return { page, code, title: '', discipline: '', read };
 }
 
-function finding(page: number, severity: FindingSeverityEnum, status = FindingStatusEnum.Open): Finding {
+/**
+ * A finding on sheet `sheetNumber`, counted from 1 as the rail counts them.
+ *
+ * Built the way `findings.json` carries it: the engine numbers pages from 0.
+ * These fixtures used to put the viewer's number in `page`, which is the
+ * off-by-one the rail itself had — every finding counted one chip late.
+ */
+function finding(
+  sheetNumber: number,
+  severity: FindingSeverityEnum,
+  status = FindingStatusEnum.Open,
+): Finding {
   return {
-    fid: `F-${page}-${severity}`,
-    page,
+    fid: `F-${sheetNumber}-${severity}`,
+    page: sheetNumber - 1,
     severity,
     status,
     anchor: '',

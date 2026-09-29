@@ -229,7 +229,9 @@ def feature_prompt(record: Dict[str, Any], job: Optional[Dict[str, Any]] = None)
         f"# Feedback {record.get('id', '')} — {DISPOSITION_LABELS.get(disposition, disposition)}",
         "",
         "`CLAUDE.md` carries the standing rules and outranks anything here that "
-        "contradicts it. In particular: the review path makes zero model calls, "
+        "contradicts it. In particular: AI reads; rules decide — a model may only "
+        "propose where a value is printed, every proposal is grounded against the "
+        "sheet before a rule sees it, and the rules and code corpus never call one; "
         "and `tests/` is not to be edited to make a change pass.",
         "",
         "## What was reported",

@@ -1,4 +1,8 @@
-"""PDF in, findings out. No model in this path."""
+"""PDF in, findings out.
+
+No model is called from here. When the AI reader ran, its readings arrive as data
+(`readings=`) and are grounded against the sheet before anything may use them.
+"""
 from __future__ import annotations
 import re
 from typing import Dict, List, Optional
@@ -10,10 +14,17 @@ from .extract.document import sheet_index, page_geometry, ocg_names
 from .extract.blocks import code_data_block, labelled_values, normalise, to_feet, to_inches
 from .extract.formblocks import FormRow, find_value, form_block
 from .extract.schedules import find_schedule, split_merged_row
+from .factstore import FactStore
+from .layout import page_layout
+from .read import read_layouts
+from .read.groups import exit_discharges, occupancy_rows
+from .read.plumbing import plumbing_count
+from .read.tables import ventilation_rows, ventilation_total
+from .read.tags import ceiling_tags
 from .rules import run_all, RuleResult, registered
 from .rules import (r_egress, r_doors, r_mechanical, r_electrical,   # noqa: F401
                     r_crosssheet, r_geometry, r_declaration, r_heightarea,
-                    r_occupancy, r_structural, r_code)
+                    r_occupancy, r_structural, r_code, r_plumbing)
 from .declaration import ProjectDeclaration
 
 _FTIN = re.compile(r"(\d+)\s*'\s*-\s*(\d+)")
@@ -120,11 +131,20 @@ def _leaf_inches(raw: str):
     return to_inches(raw)
 
 
-def build_facts(path: str) -> ProjectFacts:
+def build_facts(path: str, readings=None) -> ProjectFacts:
+    """Read a permit set into `ProjectFacts`.
+
+    `readings` are AI sheet readings (`fbcreview.ai.readings.Readings`) produced
+    earlier — by the worker, or replayed from a recording. They are data here:
+    this function makes no network call. Each proposal is grounded against the
+    page it names before it may enter the fact store, and omitting `readings`
+    gives the deterministic review.
+    """
     doc = pymupdf.open(path)
     text = {p: doc[p].get_text() for p in range(doc.page_count)}
     facts = ProjectFacts(source_path=path, text_by_page=text)
     facts.sheets = sheet_index(doc, text)
+    _read_facts(doc, facts, readings)
     facts.meta["cad_layers"] = ocg_names(doc)
     facts.meta["native_vector"] = len(facts.meta["cad_layers"]) > 0
 
@@ -189,9 +209,25 @@ def build_facts(path: str) -> ProjectFacts:
                     facts.meta["area_m1_sf"] = float(nums[0])
                     facts.meta["oa_persons"] = float(nums[1])
                     facts.meta["oa_required_cfm"] = float(nums[2])
-            parts = split_merged_row(r)
-            if parts:
-                for p in parts:
+        # One row per room, from the table re-read inside its own box; the
+        # whole-page read merges rooms (`read/tables.py`). Only when that
+        # cannot be read as a table does the old repair get a turn.
+        if "oa_required_cfm" not in facts.meta:
+            totals = ventilation_total(doc, oa)
+            if totals is not None:
+                area, persons, cfm = totals
+                facts.meta["oa_required_cfm"] = cfm
+                if area is not None:
+                    facts.meta["area_m1_sf"] = area
+                if persons is not None:
+                    facts.meta["oa_persons"] = persons
+        rows = ventilation_rows(doc, oa)
+        if rows is not None:
+            facts.ventilation = rows
+        else:
+            for r in oa.rows:
+                parts = split_merged_row(r)
+                for p in parts or []:
                     v = list(p.fields.values())
                     facts.ventilation.append(VentilationRow(
                         p.mark, _f(v, 1), _f(v, 2), _f(v, 3), _f(v, 4), _f(v, 5), _f(v, 6)))
@@ -256,6 +292,7 @@ def build_facts(path: str) -> ProjectFacts:
         break
 
     _read_form_blocks(doc, facts, text)
+    _bridge_store(facts)
 
     electrical = [s for s in facts.sheets if _series(s.code).startswith("E")]
     rating = _first_match(
@@ -357,6 +394,59 @@ def _read_form_blocks(doc, facts: ProjectFacts, text: Dict[int, str]) -> None:
         facts.meta["form_reads"] = reads
 
 
+# ── the fact store ──────────────────────────────────────────────────────────
+#
+# Every sheet is laid out once (`fbcreview.layout`) and read against the field
+# catalog (`fbcreview.read`); AI readings, when there are any, are grounded
+# against the same layouts. The result is one `FactStore` on `facts.store`.
+#
+# The rules that predate the store read a handful of `meta` keys. `_bridge_store`
+# writes the store's resolved value into each of those keys, so a fact the old
+# extractors could not reach — the occupant load on G-1, lost to a window that
+# grew into the next table — now arrives, with its provenance recorded beside it
+# under `meta["fact_sources"]`.
+
+def _read_facts(doc, facts: ProjectFacts, readings=None) -> None:
+    codes = {s.index: s.code for s in facts.sheets}
+    layouts = {p: page_layout(doc[p]) for p in range(doc.page_count)}
+    store = FactStore()
+    store.extend(read_layouts(layouts, codes))
+    facts.discharges = exit_discharges(layouts, codes)
+    facts.occupancy_rows = occupancy_rows(layouts, codes)
+    facts.plumbing = plumbing_count(layouts, codes)
+    facts.ceilings = ceiling_tags(layouts, facts.sheets)
+    if readings is not None:
+        from .ai.grounding import ground_readings
+        ground_readings(readings, layouts, codes, store)
+        facts.meta["ai_reading"] = readings.summary()
+    facts.store = store
+    facts.meta["rotation"] = {p: doc[p].rotation for p in range(doc.page_count)
+                              if doc[p].rotation}
+
+
+#: meta key the pre-store rules read → (catalog field, how to write it).
+_BRIDGE = {
+    "occupant_load": ("occupant_load", float),
+    "stated_capacity_factor": ("egress_width_factor", float),
+    "risk_category": ("risk_category", str),
+    "sprinklered": ("sprinkler_system", lambda v: v in ("NFPA13", "NFPA13R", "NFPA13D", "YES")),
+}
+
+
+def _bridge_store(facts: ProjectFacts) -> None:
+    store = facts.store
+    if store is None:
+        return
+    sources = facts.meta.setdefault("fact_sources", {})
+    for key, (field_key, cast) in _BRIDGE.items():
+        r = store.resolve(field_key)
+        if r is None:
+            continue
+        facts.meta[key] = cast(r.value)
+        sources[key] = r.best.as_meta()
+    facts.meta["facts"] = store.summary()
+
+
 def _f(vals, i):
     try:
         return float(re.sub(r"[^\d.\-]", "", vals[i]) or 0) or None
@@ -364,11 +454,11 @@ def _f(vals, i):
         return None
 
 
-def review(path: str, options=None, declaration=None) -> RuleResult:
+def review(path: str, options=None, declaration=None, readings=None) -> RuleResult:
     """PDF in, findings out.
 
     `declaration` is a ProjectDeclaration — the answers the applicant gave before
-    uploading. Omitting it reproduces the review exactly as it ran before the
-    declaration existed.
+    uploading. `readings` are recorded AI sheet readings; omitting them gives the
+    deterministic review.
     """
-    return run_all(build_facts(path), options, declaration)
+    return run_all(build_facts(path, readings=readings), options, declaration)

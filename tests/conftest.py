@@ -289,6 +289,19 @@ class FakeFeedbackStore:
 
 
 # ── pdf builders ──────────────────────────────────────────────────────────
+@pytest.fixture(autouse=True)
+def _result_check_off_unless_a_test_turns_it_on(monkeypatch):
+    """No test makes a network call.
+
+    With AI reading on, the result check runs by default and makes its own API
+    request. A test that turns AI reading on to exercise the reader patches the
+    reader, not the check, so here the check is off unless the test itself turns
+    it on — `tests/test_ai_review.py` and `tests/test_worker_ai_review.py` do,
+    with the check patched.
+    """
+    monkeypatch.setenv("FBC_AI_REVIEW", "off")
+
+
 def make_pdf(pages: int = 1, text: str = "SHEET G-0") -> bytes:
     """A plausible plotted sheet: vector linework plus live text.
 

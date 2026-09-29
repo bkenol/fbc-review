@@ -3,9 +3,11 @@
 **This module is not in the review path and must never be.**  It is imported by
 `webapp.triage`, which runs after a review has finished, on a background thread,
 against feedback a person submitted.  `webapp.worker.run_review` does not import
-it, `fbcreview` does not import it, and `tests/test_no_model_in_review_path.py`
-walks the import graph to keep it that way.  The product's central claim — a
-plan review that makes zero model calls — is unaffected by anything here.
+it, `fbcreview` does not import it, and
+`tests/test_training.py::test_the_feedback_assist_stays_off_the_review_path`
+walks the import graph to keep it that way.  The review's own model call is the
+AI sheet reader (`fbcreview/ai/reader.py`), whose readings are grounded against
+the sheet before any rule sees them; nothing here can reach a review.
 
 Everything else about a submission is answered against
 `webapp.feedback_schema` and triaged deterministically.  The comment is the

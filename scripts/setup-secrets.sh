@@ -5,10 +5,10 @@
 #     bash scripts/setup-secrets.sh            copy the template if absent, then check
 #     bash scripts/setup-secrets.sh --check    check only, change nothing
 #
-# Mail and the comment assist are both inert without their keys, and both are
-# inert *quietly* — a review still runs, feedback still queues, and the only
-# place that says otherwise is /admin. This is the thing you run to find out
-# where you actually stand, before wondering why no mail arrived.
+# Mail, the comment assist and AI sheet reading are all inert without their
+# keys, and all inert *quietly* — a review still runs, feedback still queues,
+# and the only place that says otherwise is /admin. This is the thing you run
+# to find out where you actually stand, before wondering why no mail arrived.
 #
 # It reads the file to see which names have values. It never prints a value.
 set -euo pipefail
@@ -84,7 +84,7 @@ bold 'Comment assist'
 if has ANTHROPIC_API_KEY; then
   ok 'ANTHROPIC_API_KEY'
   info 'Free-text feedback comments will be summarised before they reach the'
-  info 'queue. The review path is unaffected and still makes zero model calls.'
+  info 'queue. This runs after a review has finished, never inside one.'
   if has ANTHROPIC_WORKSPACE_ID; then
     ok 'ANTHROPIC_WORKSPACE_ID'
   else
@@ -100,6 +100,30 @@ else
   info 'Comments route to a person unread, which is what they did before the'
   info 'assist existed. Keys: https://console.anthropic.com/settings/keys'
 fi
+echo
+
+bold 'AI sheet reading'
+# `|| true`: grep finds nothing when the name is absent, and under pipefail
+# that would end the script here rather than report "off".
+AI_SWITCH="$(value_of FBC_AI_READING || true)"
+AI_SWITCH="$(printf '%s' "$AI_SWITCH" | tr '[:upper:]' '[:lower:]')"
+case "$AI_SWITCH" in
+  on|1|true|yes)
+    if has ANTHROPIC_API_KEY; then
+      ok 'FBC_AI_READING=on'
+      info 'Each sheet is also read by Claude. Every value it proposes is found'
+      info 'on the sheet before a rule may use it; the rules stay pure Python.'
+      info 'Sheet images and text of every reviewed set go to the Anthropic API.'
+    else
+      warn 'FBC_AI_READING=on, but ANTHROPIC_API_KEY is empty'
+      info 'Reviews stay deterministic until the key is set.'
+    fi
+    ;;
+  *)
+    info 'Off: reviews use the deterministic reader only and call no model.'
+    info 'FBC_AI_READING=on, with ANTHROPIC_API_KEY, adds the AI reader.'
+    ;;
+esac
 echo
 
 bold 'Issues from escalated feedback'

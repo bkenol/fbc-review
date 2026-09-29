@@ -77,9 +77,18 @@ export class App {
    * hand-counted "twelve", which stopped being true the first time a rule was
    * added — so it counts the registry the server publishes instead. Before
    * config arrives it says nothing about the number rather than a stale one.
+   * "Zero model calls" is said only by a deployment that makes none.
    */
   protected readonly claim = computed(() => {
-    const rules = this.reviews.config()?.rules?.length ?? 0;
+    const config = this.reviews.config();
+    const rules = config?.rules?.length ?? 0;
+    // Only true where it is true: a deployment with the AI reader on reads
+    // every sheet with Claude, and then the claim is what makes that safe.
+    if (config?.ai_reading) {
+      return rules
+        ? `${rules} rules in Python. Every value checked against the sheet.`
+        : 'Every value checked against the sheet.';
+    }
     return rules
       ? `${rules} rules, zero model calls, fifteen seconds.`
       : 'Zero model calls, fifteen seconds.';

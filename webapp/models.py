@@ -792,11 +792,67 @@ class ConfigResponse(BaseModel):
         description="Every lever the overlay has. The closed list this publishes is "
                     "what makes the triage split decidable rather than a judgement."
     )
+    ai_reading: bool = Field(
+        default=False,
+        description="Whether this deployment reads sheets with the AI reader "
+                    "(`FBC_AI_READING=on` with a key). Rules are pure Python either way.",
+    )
+    ai_review: bool = Field(
+        default=False,
+        description="Whether a reviewer model checks each result and may send sheets back "
+                    "to be read again, for at most three passes. Only ever on with AI "
+                    "reading; `FBC_AI_REVIEW=off` turns it off.",
+    )
 
 
 # ── findings ──────────────────────────────────────────────────────────────
+class FindingEvidence(BaseModel):
+    """One reading a finding rests on: the value, the words as printed, and where.
+
+    Written by `fbcreview/payload.py`. `method` says which reader found it —
+    `pair`, `line` and `table` are the layout reader; `ai` is the AI sheet
+    reader, whose readings are used only after the quote has been found on the
+    sheet, and `note` says so in words a card can show.
+    """
+
+    field: str = Field(description="The catalog field, e.g. `egress.common_path`.")
+    role: str = Field(default="", description="`required`, `provided`, or empty.")
+    value: str = Field(description="The value as a card shows it.")
+    quote: str = Field(description="The words the value was read from, as printed.")
+    sheet: str
+    page: int = Field(description="0-based, like `Finding.page`.")
+    rect: Optional[List[float]] = Field(
+        default=None,
+        description="Where it is printed: pdf.js viewport space at scale 1 on the source page.",
+    )
+    method: str
+    confidence: str
+    sheets: List[str] = Field(default_factory=list,
+                              description="Every sheet that states the same value.")
+    note: str = ""
+
+
+class FindingAiRevision(BaseModel):
+    """What the AI result review did to a finding. See `fbcreview/ai/review.py`."""
+
+    op: Literal["revise", "add"] = Field(description="`add` when the AI review raised the "
+                                                      "finding itself; `revise` when it "
+                                                      "changed one a rule produced.")
+    pass_: int = Field(alias="pass", description="The pass that last changed it (1-3).")
+    reason: str = Field(description="Why, in the reviewer's words. Also appended to `result`.")
+    changed: List[str] = Field(default_factory=list,
+                               description="Which fields a revision changed.")
+    was: Dict[str, str] = Field(default_factory=dict,
+                                description="The status and severity before the revision.")
+    quote: str = Field(default="", description="Sheet text the edit rests on, as printed — "
+                                               "found on the page before the edit applied.")
+    page: Optional[int] = Field(default=None, description="1-based page of the quote.")
+
+    model_config = {"populate_by_name": True}
+
+
 class Finding(BaseModel):
-    """One rule outcome. Mirrors `fbcreview.rules.Finding`."""
+    """One rule outcome. Mirrors `fbcreview.rules.Finding`, plus what the viewer needs."""
 
     fid: str
     rule_id: str
@@ -829,6 +885,32 @@ class Finding(BaseModel):
             "the value it depends on, and the card says so — the markup must never "
             "attribute to the drawings something the drawings do not say."
         ),
+    )
+    key: str = Field(
+        default="",
+        description=(
+            "Unique within one review. `fid` is not — two under-width doors are two "
+            "H-03s — so anything the client keys, tracks or selects uses this. Empty "
+            "on a review written before it existed; fall back to `fid`."
+        ),
+    )
+    rect: Optional[List[float]] = Field(
+        default=None,
+        description=(
+            "Where to draw the marker: [x0, y0, x1, y1] in pdf.js viewport space at "
+            "scale 1 on the uploaded set's page (points, origin top-left, rotation "
+            "applied). Null when it could not be placed; `anchor` and `hit` remain "
+            "the fallback."
+        ),
+    )
+    evidence: List[FindingEvidence] = Field(
+        default_factory=list,
+        description="The readings the rule's inputs rest on, and which reader found each.",
+    )
+    ai_revision: Optional[FindingAiRevision] = Field(
+        default=None,
+        description="Present when the AI result review revised or raised this finding. "
+                    "Absent on every finding the rules alone decided.",
     )
 
 
@@ -916,6 +998,43 @@ class SheetRef(BaseModel):
     )
 
 
+class AiReadingSummary(BaseModel):
+    """Counts only — never sheet text. See `fbcreview/ai/readings.py`."""
+
+    model: str
+    prompt_version: str
+    sheets_read: int
+    sheets_failed: int
+    proposals: int = Field(description="Values the model proposed.")
+    accepted: int = Field(description="Proposals found on the sheet and used.")
+    rejected: int = Field(description="Proposals the sheet did not bear out; never used.")
+    usage: Dict[str, int] = Field(default_factory=dict)
+
+
+class AiReviewSummary(BaseModel):
+    """Counts only — never the reviewer's notes. See `fbcreview/ai/review.py`."""
+
+    model: str
+    prompt_version: str
+    passes: int = Field(description="AI passes run — check, edit, verify. At most 3.")
+    max_passes: int
+    rule_runs: int = Field(default=1, description="Runs of the rules, the first included.")
+    reviews: int = Field(description="Passes the reviewer completed.")
+    outcome: str = Field(description="Why the loop stopped: meets_request, max_passes, "
+                                     "no_change, review_failed or reread_failed. The last "
+                                     "good state stands in every case.")
+    sheets_reread: int
+    edits_applied: int = 0
+    edits_rejected: int = Field(default=0, description="Edits not applied — a quote not "
+                                                       "found on the sheet, an unknown key.")
+    findings_revised: int = 0
+    findings_added: int = 0
+    findings_withdrawn: int = Field(default=0, description="Each is also an abstention "
+                                                           "saying it was withdrawn.")
+    notes: int = Field(description="Notes left for the audit record; kept with the job.")
+    usage: Dict[str, int] = Field(default_factory=dict)
+
+
 class Summary(BaseModel):
     """Counts and provenance for a finished review.
 
@@ -949,7 +1068,14 @@ class Summary(BaseModel):
                     "this was recorded, which the client treats as 'label the "
                     "sheets by page number' rather than as an error.",
     )
-
+    ai_reading: Optional[AiReadingSummary] = Field(
+        default=None,
+        description="What the AI sheet reader did on this review. Null when it was off.",
+    )
+    ai_review: Optional[AiReviewSummary] = Field(
+        default=None,
+        description="What the result reviewer did on this review. Null when it did not run.",
+    )
 
 # ── what kind of PDF was uploaded ─────────────────────────────────────────
 class RasterRegion(BaseModel):

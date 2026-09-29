@@ -5,8 +5,9 @@
  *
  * This was "Training", and the word was doing damage. It promises a model
  * learning a check from examples, which is exactly what this cannot do and is
- * never going to do — the review path makes zero model calls. What actually
- * happens is that a reviewer's argument moves a named, versioned lever on a
+ * never going to do — no rule learns from examples, and the AI sheet reader,
+ * where a deployment has it on, only reads sheets; nothing here trains it. What
+ * actually happens is that a reviewer's argument moves a named, versioned lever on a
  * rule somebody wrote by hand, and the analysis the next review produces is
  * sharper for it. "Refine analysis" says that; "training" says something else
  * and then has to be walked back in the first paragraph of the page.

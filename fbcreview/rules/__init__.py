@@ -14,7 +14,7 @@ finding records which reading produced it.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from ..confidence import Abstention
 from ..facts import ProjectFacts
 
@@ -52,13 +52,20 @@ class Finding:
     #: resting on user input must say so; the markup may never attribute to the
     #: drawings something the drawings do not state.
     basis: str = "drawings"
+    #: Where the finding's subject is printed on `page`, in unrotated page
+    #: points, when the rule knows it better than `anchor` can say — the table
+    #: row, not the first place the room's name appears. Placement only
+    #: (`fbcreview/payload.py`): it is not part of the record `to_dict` returns.
+    box: Optional[Tuple[float, float, float, float]] = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("box", None)
+        return d
 
     def same_content(self, other: "Finding") -> bool:
         """Equal in everything except which scenario produced it."""
-        a, b = asdict(self), asdict(other)
+        a, b = self.to_dict(), other.to_dict()
         a.pop("scenario"), b.pop("scenario")
         return a == b
 
@@ -73,6 +80,29 @@ class RuleResult:
 
 
 _REGISTRY: Dict[str, Callable[[ProjectFacts, RuleResult], None]] = {}
+_LOADED = False
+
+
+def _load() -> None:
+    """Import every `r_*` module, which is what registers its rules.
+
+    Until this existed the registry was filled only as a side effect of
+    importing `fbcreview.pipeline`, so `run_all` reached any other way — a test
+    that builds facts by hand, a script — ran zero rules and returned an empty,
+    silent review. Found by running `tests/test_factstore.py` on its own.
+    Discovered rather than listed, so a new rule module cannot be forgotten.
+    """
+    global _LOADED
+    if _LOADED:
+        return
+    import importlib
+    import pkgutil
+    for mod in sorted(m.name for m in pkgutil.iter_modules(__path__)):
+        if mod.startswith("r_"):
+            importlib.import_module(f"{__name__}.{mod}")
+    # DOC.SHEET_NUMBERS lives beside the sheet index it checks.
+    importlib.import_module("fbcreview.extract.document")
+    _LOADED = True
 
 
 def rule(rule_id: str):
@@ -172,6 +202,7 @@ def run_all(facts: ProjectFacts, options=None, declaration=None) -> RuleResult:
     """
     from ..reconcile import reconcile
 
+    _load()
     if options is not None:
         facts.meta["options"] = options
 
@@ -195,4 +226,5 @@ def run_all(facts: ProjectFacts, options=None, declaration=None) -> RuleResult:
 
 
 def registered() -> List[str]:
+    _load()
     return sorted(_REGISTRY)

@@ -179,6 +179,153 @@
         "title": "AdminOverview",
         "type": "object"
       },
+      "AiReadingSummary": {
+        "description": "Counts only \u2014 never sheet text. See `fbcreview/ai/readings.py`.",
+        "properties": {
+          "accepted": {
+            "description": "Proposals found on the sheet and used.",
+            "title": "Accepted",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "proposals": {
+            "description": "Values the model proposed.",
+            "title": "Proposals",
+            "type": "integer"
+          },
+          "rejected": {
+            "description": "Proposals the sheet did not bear out; never used.",
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "sheets_failed": {
+            "title": "Sheets Failed",
+            "type": "integer"
+          },
+          "sheets_read": {
+            "title": "Sheets Read",
+            "type": "integer"
+          },
+          "usage": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "model",
+          "prompt_version",
+          "sheets_read",
+          "sheets_failed",
+          "proposals",
+          "accepted",
+          "rejected"
+        ],
+        "title": "AiReadingSummary",
+        "type": "object"
+      },
+      "AiReviewSummary": {
+        "description": "Counts only \u2014 never the reviewer's notes. See `fbcreview/ai/review.py`.",
+        "properties": {
+          "edits_applied": {
+            "default": 0,
+            "title": "Edits Applied",
+            "type": "integer"
+          },
+          "edits_rejected": {
+            "default": 0,
+            "description": "Edits not applied \u2014 a quote not found on the sheet, an unknown key.",
+            "title": "Edits Rejected",
+            "type": "integer"
+          },
+          "findings_added": {
+            "default": 0,
+            "title": "Findings Added",
+            "type": "integer"
+          },
+          "findings_revised": {
+            "default": 0,
+            "title": "Findings Revised",
+            "type": "integer"
+          },
+          "findings_withdrawn": {
+            "default": 0,
+            "description": "Each is also an abstention saying it was withdrawn.",
+            "title": "Findings Withdrawn",
+            "type": "integer"
+          },
+          "max_passes": {
+            "title": "Max Passes",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "notes": {
+            "description": "Notes left for the audit record; kept with the job.",
+            "title": "Notes",
+            "type": "integer"
+          },
+          "outcome": {
+            "description": "Why the loop stopped: meets_request, max_passes, no_change, review_failed or reread_failed. The last good state stands in every case.",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "passes": {
+            "description": "AI passes run \u2014 check, edit, verify. At most 3.",
+            "title": "Passes",
+            "type": "integer"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "reviews": {
+            "description": "Passes the reviewer completed.",
+            "title": "Reviews",
+            "type": "integer"
+          },
+          "rule_runs": {
+            "default": 1,
+            "description": "Runs of the rules, the first included.",
+            "title": "Rule Runs",
+            "type": "integer"
+          },
+          "sheets_reread": {
+            "title": "Sheets Reread",
+            "type": "integer"
+          },
+          "usage": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "model",
+          "prompt_version",
+          "passes",
+          "max_passes",
+          "reviews",
+          "outcome",
+          "sheets_reread",
+          "notes"
+        ],
+        "title": "AiReviewSummary",
+        "type": "object"
+      },
       "AssistOpinion": {
         "description": "What `webapp.assist` made of a free-text comment.\n\nRecorded so the owner can see what was said about their user's words, and\ntyped so the client can show it. Advisory in the strict sense: the triage\nmay raise a disposition on the strength of it and may never lower one.",
         "properties": {
@@ -562,6 +709,18 @@
             },
             "title": "Abstention Kinds",
             "type": "array"
+          },
+          "ai_reading": {
+            "default": false,
+            "description": "Whether this deployment reads sheets with the AI reader (`FBC_AI_READING=on` with a key). Rules are pure Python either way.",
+            "title": "Ai Reading",
+            "type": "boolean"
+          },
+          "ai_review": {
+            "default": false,
+            "description": "Whether a reviewer model checks each result and may send sheets back to be read again, for at most three passes. Only ever on with AI reading; `FBC_AI_REVIEW=off` turns it off.",
+            "title": "Ai Review",
+            "type": "boolean"
           },
           "calibration_knobs": {
             "description": "Every lever the overlay has. The closed list this publishes is what makes the triage split decidable rather than a judgement.",
@@ -1450,12 +1609,23 @@
         "type": "object"
       },
       "Finding": {
-        "description": "One rule outcome. Mirrors `fbcreview.rules.Finding`.",
+        "description": "One rule outcome. Mirrors `fbcreview.rules.Finding`, plus what the viewer needs.",
         "properties": {
           "action": {
             "default": "",
             "title": "Action",
             "type": "string"
+          },
+          "ai_revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FindingAiRevision"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when the AI result review revised or raised this finding. Absent on every finding the rules alone decided."
           },
           "anchor": {
             "title": "Anchor",
@@ -1489,6 +1659,14 @@
             "title": "Discipline",
             "type": "string"
           },
+          "evidence": {
+            "description": "The readings the rule's inputs rest on, and which reader found each.",
+            "items": {
+              "$ref": "#/components/schemas/FindingEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
           "fid": {
             "title": "Fid",
             "type": "string"
@@ -1498,9 +1676,30 @@
             "title": "Hit",
             "type": "integer"
           },
+          "key": {
+            "default": "",
+            "description": "Unique within one review. `fid` is not \u2014 two under-width doors are two H-03s \u2014 so anything the client keys, tracks or selects uses this. Empty on a review written before it existed; fall back to `fid`.",
+            "title": "Key",
+            "type": "string"
+          },
           "page": {
             "title": "Page",
             "type": "integer"
+          },
+          "rect": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where to draw the marker: [x0, y0, x1, y1] in pdf.js viewport space at scale 1 on the uploaded set's page (points, origin top-left, rotation applied). Null when it could not be placed; `anchor` and `hit` remain the fallback.",
+            "title": "Rect"
           },
           "result": {
             "title": "Result",
@@ -1566,6 +1765,153 @@
           "code"
         ],
         "title": "Finding",
+        "type": "object"
+      },
+      "FindingAiRevision": {
+        "description": "What the AI result review did to a finding. See `fbcreview/ai/review.py`.",
+        "properties": {
+          "changed": {
+            "description": "Which fields a revision changed.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed",
+            "type": "array"
+          },
+          "op": {
+            "description": "`add` when the AI review raised the finding itself; `revise` when it changed one a rule produced.",
+            "enum": [
+              "revise",
+              "add"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "1-based page of the quote.",
+            "title": "Page"
+          },
+          "pass": {
+            "description": "The pass that last changed it (1-3).",
+            "title": "Pass",
+            "type": "integer"
+          },
+          "quote": {
+            "default": "",
+            "description": "Sheet text the edit rests on, as printed \u2014 found on the page before the edit applied.",
+            "title": "Quote",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why, in the reviewer's words. Also appended to `result`.",
+            "title": "Reason",
+            "type": "string"
+          },
+          "was": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The status and severity before the revision.",
+            "title": "Was",
+            "type": "object"
+          }
+        },
+        "required": [
+          "op",
+          "pass",
+          "reason"
+        ],
+        "title": "FindingAiRevision",
+        "type": "object"
+      },
+      "FindingEvidence": {
+        "description": "One reading a finding rests on: the value, the words as printed, and where.\n\nWritten by `fbcreview/payload.py`. `method` says which reader found it \u2014\n`pair`, `line` and `table` are the layout reader; `ai` is the AI sheet\nreader, whose readings are used only after the quote has been found on the\nsheet, and `note` says so in words a card can show.",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "string"
+          },
+          "field": {
+            "description": "The catalog field, e.g. `egress.common_path`.",
+            "title": "Field",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          },
+          "page": {
+            "description": "0-based, like `Finding.page`.",
+            "title": "Page",
+            "type": "integer"
+          },
+          "quote": {
+            "description": "The words the value was read from, as printed.",
+            "title": "Quote",
+            "type": "string"
+          },
+          "rect": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where it is printed: pdf.js viewport space at scale 1 on the source page.",
+            "title": "Rect"
+          },
+          "role": {
+            "default": "",
+            "description": "`required`, `provided`, or empty.",
+            "title": "Role",
+            "type": "string"
+          },
+          "sheet": {
+            "title": "Sheet",
+            "type": "string"
+          },
+          "sheets": {
+            "description": "Every sheet that states the same value.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Sheets",
+            "type": "array"
+          },
+          "value": {
+            "description": "The value as a card shows it.",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "value",
+          "quote",
+          "sheet",
+          "page",
+          "method",
+          "confidence"
+        ],
+        "title": "FindingEvidence",
         "type": "object"
       },
       "FindingsDocument": {
@@ -3109,6 +3455,28 @@
             "title": "Abstentions",
             "type": "array"
           },
+          "ai_reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AiReadingSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the AI sheet reader did on this review. Null when it was off."
+          },
+          "ai_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AiReviewSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the result reviewer did on this review. Null when it did not run."
+          },
           "annotations": {
             "title": "Annotations",
             "type": "integer"
@@ -3321,8 +3689,8 @@
     }
   },
   "info": {
-    "description": "Upload a vector permit set, choose the review parameters, download a marked-up PDF and a findings register. No model calls in the request path.",
-    "summary": "Deterministic Florida Building Code plan review.",
+    "description": "Upload a permit set, choose the review parameters, download a marked-up PDF and a findings register. The rules and the code corpus are pure Python. Where a deployment turns it on, each sheet is also read by Claude, and every value it proposes is found on the sheet before a rule may use it.",
+    "summary": "Florida Building Code plan review: AI reads, rules decide.",
     "title": "FBC Code Review",
     "version": "1.0.0"
   },

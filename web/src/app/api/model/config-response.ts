@@ -28,6 +28,14 @@ export interface ConfigResponse {
      */
     abstention_kinds?: Array<AbstentionKindInfo>;
     /**
+     * Whether this deployment reads sheets with the AI reader (`FBC_AI_READING=on` with a key). Rules are pure Python either way.
+     */
+    ai_reading?: boolean;
+    /**
+     * Whether a reviewer model checks each result and may send sheets back to be read again, for at most three passes. Only ever on with AI reading; `FBC_AI_REVIEW=off` turns it off.
+     */
+    ai_review?: boolean;
+    /**
      * Every lever the overlay has. The closed list this publishes is what makes the triage split decidable rather than a judgement.
      */
     calibration_knobs: Array<CalibrationKnob>;

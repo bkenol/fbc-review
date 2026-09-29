@@ -363,15 +363,16 @@
           }
 
           <!-- ── the review's findings ────────────────────────────────────
-               Boxed on the anchor text the engine cites, at the occurrence its
-               `hit` names, so this and the marked-up PDF mark the same row. -->
+               Boxed where the engine placed it (`rect`) — the same place the
+               marked-up PDF marks — or, on a review without one, on the anchor
+               text the engine cites at the occurrence its `hit` names. -->
           @if (showFindings() && !burntIn()) {
-            @for (item of placed(); track item.finding.fid) {
+            @for (item of placed(); track item.key) {
               @if (item.box; as box) {
                 <g
                   class="pin"
-                  [class.selected]="item.finding.fid === selectedFid()"
-                  [class.lit]="item.finding.fid === flash()"
+                  [class.selected]="isSelected(item)"
+                  [class.lit]="item.key === flash()"
                   [attr.data-severity]="item.finding.severity"
                   (click)="showFinding(item.finding)"
                 >

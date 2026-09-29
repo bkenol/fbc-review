@@ -170,10 +170,15 @@ class Renderer:
         if f.scenario == "as_declared":
             return None
         pg = self.doc[f.page]
-        hits = pg.search_for(f.anchor) if f.anchor else []
-        if len(hits) <= f.hit:
-            return None
-        r = hits[f.hit]
+        if f.box:
+            # The rule knows the row it is about. Source coordinates; the
+            # widened page puts the original drawing at x=GUTTER.
+            r = pymupdf.Rect(f.box) + (GUTTER, 0, GUTTER, 0)
+        else:
+            hits = pg.search_for(f.anchor) if f.anchor else []
+            if len(hits) <= f.hit:
+                return None
+            r = hits[f.hit]
         b = pymupdf.Rect(r.x0 - 3, r.y0 - 3, r.x1 + 3, r.y1 + 3)
         c = SEVC.get(f.severity, GRY)
         divergent = self.diverges(f) or f.status == "CONFLICT"

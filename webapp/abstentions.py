@@ -68,12 +68,22 @@ CORPUS = "corpus"
 ABSENT = "absent"
 #: Switched off in the review options.  Working as asked.
 OPTION = "option"
+#: The check covers a case this building is not — a posting rule for assembly
+#: spaces on a business occupancy, a cross-sheet comparison on a set that
+#: states nothing twice.  Nothing to fix, and saying so is different from
+#: saying nothing was stated.
+NOT_APPLICABLE = "not_applicable"
+#: The rule found something and the AI result review took it back, with a
+#: reason and a quote from the sheet (`fbcreview/ai/review.py`). Not a pass:
+#: a person should read the reason and decide whether the withdrawal stands.
+WITHDRAWN = "withdrawn"
 #: The rule raised.  An engine bug, always.
 ERROR = "error"
 #: No pattern matched.  Said plainly rather than filed under a guess.
 UNKNOWN = "unknown"
 
-KINDS = (EXTRACTION, GEOMETRY, CORPUS, ABSENT, OPTION, ERROR, UNKNOWN)
+KINDS = (EXTRACTION, GEOMETRY, CORPUS, ABSENT, NOT_APPLICABLE, OPTION, WITHDRAWN, ERROR,
+         UNKNOWN)
 
 
 @dataclass(frozen=True)
@@ -140,11 +150,28 @@ KIND_CATALOGUE: Tuple[Kind, ...] = (
         False,
     ),
     Kind(
+        NOT_APPLICABLE,
+        "Does not apply",
+        "The check covers a case this building is not.",
+        "Nothing to fix. Report it only if the building is in fact the case the check "
+        "covers — for example, if the occupancy the set states is wrong.",
+        False,
+    ),
+    Kind(
         OPTION,
         "Switched off",
         "This check was disabled in the review options.",
         "Turn the option back on and re-run. Nothing is wrong.",
         False,
+    ),
+    Kind(
+        WITHDRAWN,
+        "Withdrawn by the AI review",
+        "The rule raised a finding and the AI result review withdrew it.",
+        "The detail says what was withdrawn and why, and the review quoted the sheet "
+        "text it relied on. Check that text: if the withdrawal is wrong, report it, "
+        "and the finding the rule made is the one that stands.",
+        True,
     ),
     Kind(
         ERROR,
@@ -175,6 +202,7 @@ _BY_KEY: Dict[str, Kind] = {k.key: k for k in KIND_CATALOGUE}
 # landing in UNKNOWN.
 _PATTERNS: Tuple[Tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"rule raised"), ERROR),
+    (re.compile(r"withdrawn by the ai result review"), WITHDRAWN),
     (re.compile(r"switched off in the review options"), OPTION),
     # Corpus gaps name the table they could not find a row in.
     (re.compile(r"not carried in this build'?s corpus"), CORPUS),
@@ -189,6 +217,10 @@ _PATTERNS: Tuple[Tuple[re.Pattern[str], str], ...] = (
     # revise when the set turns out to carry unread pasted tables.
     (re.compile(r"neither the drawings nor the declaration state this"), ABSENT),
     (re.compile(r"not stated on the drawings and not answered"), ABSENT),
+    (re.compile(r"does not name a table 1004\.5 function"), ABSENT),
+    # The check does not cover this building, and said why.
+    (re.compile(r"applies only to"), NOT_APPLICABLE),
+    (re.compile(r"nothing to compare"), NOT_APPLICABLE),
     # Everything else the corpus says is some flavour of "we could not get it".
     (re.compile(r"not extracted"), EXTRACTION),
     (re.compile(r"no parseable"), EXTRACTION),

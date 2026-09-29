@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
-"""Deterministic FBC review.
+"""FBC review from the command line.
 
 Usage: python run.py <permit-set.pdf> [--json out.json] [--declaration decl.json]
+                     [--ai] [--readings readings.json] [--save-readings readings.json]
+                     [--review ai_review.json] [--save-review ai_review.json]
 
 `--declaration` takes a JSON object of ProjectDeclaration fields — what the
 applicant says the building is. It is a second source alongside the drawings,
 never an override: agreement raises confidence, disagreement is reported, and a
 field left out is left out rather than defaulted.
+
+`--ai` also reads each sheet with Claude. It needs ANTHROPIC_API_KEY, from the
+environment or `secrets/local.env` (see the "AI sheet reading" section of
+`secrets/local.env.example`), and it sends the sheets' images and text to the
+Anthropic API. The model only proposes where a value is printed; each proposal
+is found on the sheet and parsed before a rule may use it, and the rules stay
+pure Python. `--save-readings` keeps what the model read; `--readings` replays
+a saved reading with no API call, so the same file and readings give the same
+findings. With neither flag the review is deterministic and calls nothing.
+
+With `--ai`, a reviewer model then reviews and corrects the result: it edits
+findings directly — each edit labelled on the finding — and may send sheets back
+to be read again, after which the rules run again. Check, edit, verify: at most
+three passes (`FBC_AI_MAX_PASSES`, `FBC_AI_REVIEW=off` to skip it).
+`--save-review` keeps what it did; `--review` replays that, on top of
+`--readings`, with no API call.
 """
-import json, sys
+import json, os, sys
 from fbcreview.declaration import ProjectDeclaration
 from fbcreview.declaration_schema import validate
 from fbcreview.pipeline import build_facts
@@ -16,6 +34,80 @@ from fbcreview.rules import run_all, registered
 
 def _arg(argv, flag):
     return argv[argv.index(flag) + 1] if flag in argv else None
+
+def _readings(argv, path):
+    """(readings or None, how they were obtained), or (None, error) to stop on."""
+    replay = _arg(argv, "--readings")
+    if replay:
+        from fbcreview.ai.readings import file_sha256, load_readings
+        readings = load_readings(replay)
+        # Readings name the file they were read from. Grounding would reject
+        # nearly everything from another file, but "nearly" is the problem.
+        if readings.file_sha256 and readings.file_sha256 != file_sha256(path):
+            return None, f"readings rejected: {replay} was read from a different file"
+        return readings, f"replayed from {replay}"
+    if "--ai" not in argv:
+        return None, None
+    from webapp import envfile
+    envfile.load()
+    from fbcreview.ai.reader import ReaderConfig, read_document
+    from fbcreview.ai.readings import ReadingsCache
+    # Passing --ai is the consent FBC_AI_READING stands for in a deployment.
+    config = ReaderConfig.from_env({**os.environ, "FBC_AI_READING": "on"})
+    if config is None:
+        return None, "--ai needs ANTHROPIC_API_KEY (see secrets/local.env.example)"
+    cache = os.environ.get("FBC_AI_CACHE_DIR")
+    readings = read_document(path, config, cache=ReadingsCache(cache) if cache else None)
+    return readings, f"read by {config.model} at {config.effort} effort"
+
+def _review(argv, path, readings, first, declaration):
+    """(facts, result, readings, trace, how) after the result check, when there is one.
+
+    `how` is an error message, and the trace None, when a replay does not match.
+    """
+    replay_path = _arg(argv, "--review")
+    if readings is None or (replay_path is None and "--ai" not in argv):
+        return (*first, readings, None, None)
+    from fbcreview.ai import review as RV
+    from fbcreview.ai.reader import ReaderConfig, make_client, read_document
+    from fbcreview.ai.reviewer import (REVIEW_PROMPT_VERSION, ReviewerConfig, check_result,
+                                       system_prompt)
+
+    def run_pass(r):
+        f = build_facts(path, readings=r)
+        return f, run_all(f, None, declaration)
+
+    if replay_path:
+        replay = RV.load_trace(replay_path)
+        if (replay.file_sha256, replay.reader) != (readings.file_sha256,
+                                                   RV.reader_identity(readings)):
+            return (*first, readings, None,
+                    f"review rejected: {replay_path} was made from other readings")
+        trace = RV.ReviewTrace(replay.file_sha256, replay.model, replay.prompt_version,
+                               replay.max_passes, reader=replay.reader)
+        facts, res, final = RV.review_loop(first, readings, run_pass, None, None, trace,
+                                           replay=replay, pdf_path=path)
+        return facts, res, final, trace, f"replayed from {replay_path}"
+
+    reader = ReaderConfig.from_env({**os.environ, "FBC_AI_READING": "on"})
+    config = ReviewerConfig.from_env(reader)
+    if config is None:
+        return (*first, readings, None, None)
+    client, system = make_client(reader), system_prompt()
+    trace = RV.ReviewTrace(readings.file_sha256, config.model, REVIEW_PROMPT_VERSION,
+                           config.max_passes, reader=RV.reader_identity(readings))
+
+    def check(facts, state, number, history):
+        return check_result(client, config, system, RV.packet(
+            path, facts, state, None, declaration, number, config.max_passes, history))
+
+    def reread(focus):
+        return read_document(path, reader, client=client, identity=readings.file_sha256,
+                             focus=focus)
+
+    facts, res, final = RV.review_loop(first, readings, run_pass, check, reread, trace,
+                                       pdf_path=path)
+    return facts, res, final, trace, f"checked by {config.model} at {config.effort} effort"
 
 def main(argv):
     if len(argv) < 2:
@@ -34,8 +126,24 @@ def main(argv):
             return 2
         declaration = ProjectDeclaration.from_dict(raw)
 
-    facts = build_facts(path)
+    readings, how = _readings(argv, path)
+    if readings is None and how:
+        print(how); return 2
+    save = _arg(argv, "--save-readings")
+    if save and readings is not None:
+        from fbcreview.ai.readings import save_readings
+        save_readings(readings, save)
+
+    facts = build_facts(path, readings=readings)
     res = run_all(facts, None, declaration)
+    facts, res, readings, trace, review_how = _review(argv, path, readings, (facts, res),
+                                                      declaration)
+    if trace is None and review_how:
+        print(review_how); return 2
+    save_review = _arg(argv, "--save-review")
+    if save_review and trace is not None:
+        from fbcreview.ai.review import save_trace
+        save_trace(trace, save_review)
 
     print(f"\nsource      {path}")
     print(f"sheets      {len(facts.sheets)}  ({', '.join(s.code for s in facts.sheets[:8])} …)")
@@ -43,7 +151,24 @@ def main(argv):
     print(f"code data   {len(facts.code_data)} cited rows extracted")
     print(f"schedules   {', '.join(s.name for s in facts.schedules) or '—'}")
     print(f"doors       {len(facts.doors)}")
-    print(f"rules       {len(registered())} registered, 0 model calls")
+    print(f"rules       {len(registered())} registered, pure Python")
+    if readings is None:
+        print("ai reading  off — deterministic reading only, no model called")
+    else:
+        ai = readings.summary()
+        print(f"ai reading  {ai['sheets_read']} sheets {how}; "
+              f"{ai['accepted']} values found on the sheet, {ai['rejected']} rejected"
+              + (f"; {ai['sheets_failed']} sheets not read" if ai["sheets_failed"] else ""))
+        if save:
+            print(f"            saved to {save}")
+    if trace is not None:
+        rv = trace.summary()
+        print(f"ai review   {rv['passes']} of at most {rv['max_passes']} passes {review_how}; "
+              f"stopped: {rv['outcome'].replace('_', ' ')}; {rv['findings_revised']} revised, "
+              f"{rv['findings_added']} added, {rv['findings_withdrawn']} withdrawn, "
+              f"{rv['edits_rejected']} edits not applied; {rv['sheets_reread']} sheets re-read")
+        if save_review:
+            print(f"            saved to {save_review}")
     if declaration is not None:
         rf = res.reconciled
         states = {}
@@ -69,7 +194,9 @@ def main(argv):
 
     if "--json" in argv:
         out = _arg(argv, "--json")
-        json.dump({"findings": [f.to_dict() for f in res.findings],
+        from fbcreview.payload import findings_payload
+        json.dump({"findings": findings_payload(path, facts, res.findings,
+                                                revisions=trace.revision_map() if trace else None),
                    "abstentions": [a.__dict__ for a in res.abstentions],
                    "declaration": declaration.to_dict() if declaration else None,
                    "meta": {k: v for k, v in facts.meta.items()

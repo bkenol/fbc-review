@@ -26,6 +26,15 @@ None of it is implemented yet.
 
 The one rule that did not move: **the review path makes zero LLM calls.** See §0.
 
+> **Superseded 2026-09-27.** The owner withdrew the zero-LLM rule in favour of
+> "AI reads; rules decide" (`CLAUDE.md`; `docs/ARCHITECTURE-V2.md`). A model may
+> now propose where a value is printed, and every proposal is grounded against
+> the sheet before a rule sees it. Nothing else in this plan moves: the ladder's
+> tiers are still deterministic, a measured value is still never laundered into
+> a stated one, and the AI reader's output enters the same fact store as a claim
+> with its own provenance. Where §0 and item 7 of §10 say "zero model calls",
+> read "no model call outside `fbcreview/ai/`, and none in a rule".
+
 ---
 
 ## 0. On "the AI model"
@@ -476,9 +485,11 @@ Nothing ships on "it seems better".
 6. **Basis is never laundered.** A test asserts no `CRITICAL` or `HIGH` finding
    has a `measured` input, and that `reconcile.py` never uses a `measured` value
    as the drawn half of a declared-vs-drawn comparison.
-7. **The review path still makes zero model calls.**
-   `tests/test_training.py::test_no_model_call_is_reachable_from_the_review_path`
-   continues to pass unchanged.
+7. **No model call outside `fbcreview/ai/`, and none in a rule.**
+   `tests/test_ai_guardrails.py` (rules and the code corpus cannot reach the
+   model) and `tests/test_training.py::test_the_feedback_assist_stays_off_the_review_path`
+   continue to pass unchanged. (Until 2026-09-27 this read "zero model calls";
+   see the note under *Status*.)
 8. **Runtime.** The two-second budget for a 35-sheet set is a product claim.
    §6 runs only on the pages a rule actually asks about, and only when tiers
    above returned nothing. Measure it; if the ladder pushes a 35-sheet set past
@@ -507,10 +518,14 @@ Phase 5 is where the interesting work is and where it can go wrong.
 
 ## 12. Do not
 
-- **Do not add a model call to the review path.** Not for extraction, not for
-  "just this one hard field", not behind a flag. This is the one property
-  `CLAUDE.md` still calls non-negotiable, and it survived the boundary change
-  that made the rest of this document actionable.
+- **Do not add a model call outside `fbcreview/ai/`.** Not in a tier of this
+  ladder, not in a rule, not in the code corpus, not for "just this one hard
+  field". Until 2026-09-27 this bullet forbade any model call in the review
+  path; §0 said relitigating that belonged in `CLAUDE.md`, and that is where the
+  owner changed it ("AI reads; rules decide"). The one reader lives in
+  `fbcreview/ai/`, it only ever quotes what a sheet prints, and grounding checks
+  every quote before a rule sees it. Every tier here stays deterministic, and a
+  measured value is still never presented as a stated one.
 - **Do not let a measured value reach a `CRITICAL` finding**, silently become a
   declared one, or serve as the drawn half of a declared-vs-drawn check.
 - **Do not widen `_PATTERNS` in place** as a shortcut. The literals are the

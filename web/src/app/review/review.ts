@@ -22,9 +22,26 @@ import {
 import { AuthService } from '../core/auth';
 import { DeclarationForm } from './declaration/declaration-form';
 import { ReviewService } from './review-service';
+import { findingKey } from '../viewer/findings';
 
 /** Tally order. VERIFIED and MEASURED last: they are coverage, not problems. */
 const TALLY = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'MEASURED', 'VERIFIED'] as const;
+
+/** The worker's name for the AI reading stage (`webapp/worker.py`, `AI_STAGE`). */
+const AI_STAGE = 'Reading sheets with AI';
+
+/** The worker's name for the result check (`webapp/worker.py`, `REVIEW_STAGE`). */
+const REVIEW_STAGE = 'Checking the result with AI';
+
+/** Why a result check stopped, in words. Every outcome leaves the last pass standing. */
+const REVIEW_OUTCOME: Record<string, string> = {
+  meets_request: 'the reviewer is satisfied',
+  max_passes: 'stopped at the pass limit',
+  no_change: 'a pass changed nothing',
+  nothing_to_reread: 'nothing left to change',
+  review_failed: 'a pass did not complete — last good state kept',
+  reread_failed: 'a re-read did not complete — last good state kept',
+};
 
 /**
  * What each stage is actually doing, keyed by the stage name the server sends.
@@ -41,10 +58,17 @@ const STAGE_DETAIL: Record<string, string> = {
   'Reading the PDF': 'Opening every sheet, indexing sheet numbers and reading the CAD layers.',
   'Rebuilding scanned sheets':
     'OCR over the raster pages, and tracing their linework back into vectors.',
+  [AI_STAGE]:
+    'Claude reads each sheet and says where each value is printed. Nothing it says is ' +
+    'used until the same words are found on the sheet.',
   'Extracting schedules and code data':
     'Pulling the door, RTU and panel schedules and the code-analysis blocks off the sheets.',
   'Running rules':
     'Checking every stated value against the section it cites, and redoing the arithmetic.',
+  [REVIEW_STAGE]:
+    'Claude checks the result against your request and the sheets, then corrects it — ' +
+    'revising, adding or withdrawing findings, each labelled — and re-reads sheets where a ' +
+    'value was missed. Check, edit, verify: three passes at most.',
   'Rendering the markup': 'Placing a marker at each finding, on the sheet it belongs to.',
   Delivering: 'Writing the marked-up set and findings.json, and signing the download links.',
 };
@@ -143,12 +167,23 @@ export class Review implements OnDestroy {
   protected readonly stageIndex = computed(() => this.job()?.stage ?? 0);
   protected readonly stages = computed(() => this.job()?.stages ?? []);
 
+  /** Whether this review's sheets are read by the AI reader as well. */
+  protected readonly aiReading = computed(() => this.stages().includes(AI_STAGE));
+
+  /** Why the result check stopped, in words, for the summary line. */
+  protected reviewOutcome(outcome: string): string {
+    return REVIEW_OUTCOME[outcome] ?? outcome.replaceAll('_', ' ');
+  }
+
   /** How far along the traverse is, 0-100. Stations, not guessed seconds. */
   protected readonly progressPercent = computed(() => {
     const total = this.stages().length;
     if (total <= 1) return 0;
     return Math.round((this.stageIndex() / (total - 1)) * 100);
   });
+
+  /** A finding's identity within this review. See `viewer/findings.ts`. */
+  protected readonly key = findingKey;
 
   protected stageDetail(stage: string): string {
     return STAGE_DETAIL[stage] ?? '';

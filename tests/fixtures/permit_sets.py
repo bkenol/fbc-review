@@ -230,6 +230,10 @@ def sculpted_like(pages: int = 8) -> bytes:
                 "MIN. CORRIDOR WIDTH (1020.3): 44\" 60\"",
                 "AREA: 1,436 SF",
                 "RISK CATEGORY: III",
+                # The real G-0 states this in its PROJECT DATA block. The
+                # fixture left it out, and the egress rules used to pass here
+                # only because they assumed Group A-3 when nothing said so.
+                "OCCUPANCY: ASSEMBLY (A-3)",
             ]
             y = 580
             for row in rows:
@@ -268,8 +272,8 @@ DIVERGENCE_CODE_ROWS = [
     "SPRINKLER SYSTEM: NFPA 13",
 ]
 
-#: The same building, declared as Type V-B. Table 506.2 allows 69,000 SF for
-#: Group B / II-B / sprinklered single storey and 27,000 SF for V-B, and
+#: The same building, declared as Type V-B. Table 506.2 allows 92,000 SF for
+#: Group B / II-B / sprinklered single storey and 36,000 SF for V-B, and
 #: Table 504.3 allows 75 ft against 60 ft — so 40,000 SF at 62 ft passes as
 #: drawn and fails as declared, on two separate rules.
 DIVERGENCE_DECLARATION = {

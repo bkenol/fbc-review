@@ -1,7 +1,9 @@
 # FBC Code Review — web service
 
 Drag in a permit set, choose the review parameters, get back a marked-up PDF and a findings
-JSON. **No model calls in the request path** — see `../ARCHITECTURE.md`.
+JSON. **AI reads; rules decide** — the rules and the code corpus are pure Python; with
+`FBC_AI_READING=on`, Claude also reads each sheet, and every value it proposes is found on
+the sheet before a rule may use it. See `../docs/ARCHITECTURE-V2.md`.
 
 ## Run it
 

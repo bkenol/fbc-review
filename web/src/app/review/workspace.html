@@ -61,6 +61,7 @@
         [sheets]="sheetIndex()"
         [canDraw]="trainingOn()"
         [selectedFid]="selectedFinding()?.fid ?? ''"
+        [selectedKey]="selectedFinding() ? key(selectedFinding()!) : ''"
         [selectedMarkupId]="selectedMarkup()?.id ?? ''"
         [selectedAnnotId]="selectedAnnot()?.id ?? ''"
         [focus]="focus()"
@@ -132,6 +133,25 @@
               }
               @if (finding.action) {
                 <p class="side-line"><span class="dim">Do</span> {{ finding.action }}</p>
+              }
+              @if (finding.ai_revision; as rv) {
+                <p class="side-line ai-revision">
+                  <span class="dim">{{ rv.op === 'add' ? 'Raised' : 'Revised' }} by AI</span>
+                  pass {{ rv.pass }} — {{ rv.reason }}
+                  @if (rv.was?.['severity']; as was) {
+                    · was {{ was }}
+                  }
+                </p>
+              }
+              <!-- Where each value it rests on was read, and by what. -->
+              @for (e of finding.evidence ?? []; track $index) {
+                <p class="side-line">
+                  <span class="dim">Read</span>
+                  {{ e.sheet }} “{{ e.quote }}”
+                  @if (e.note) {
+                    <span class="dim">({{ e.note }})</span>
+                  }
+                </p>
               }
               <button type="button" class="inline" (click)="clearSelection()">Close</button>
             </div>
@@ -373,11 +393,11 @@
           @switch (tab()) {
             @case ('findings') {
               <div class="side-list">
-                @for (finding of findings() ?? []; track finding.fid) {
+                @for (finding of findings() ?? []; track key(finding)) {
                   <button
                     type="button"
                     class="side-row"
-                    [class.on]="selectedFinding()?.fid === finding.fid"
+                    [class.on]="!!selectedFinding() && key(selectedFinding()!) === key(finding)"
                     [attr.data-severity]="finding.severity"
                     (click)="openFinding(finding)"
                   >

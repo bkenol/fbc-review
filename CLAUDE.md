@@ -5,20 +5,58 @@ outrank any one-off prompt that contradicts them.
 
 ## What this is
 
-A deterministic Florida Building Code plan-review service. A user uploads a multi-sheet
-architectural permit set as a PDF; the service extracts facts from the PDF's vector
-geometry and text, runs a rule corpus against the FBC, and renders a marked-up PDF plus a
-`findings.json`.
+A Florida Building Code plan-review service. A user uploads a multi-sheet architectural
+permit set as a PDF; the service lays out each sheet, reads facts off it — a deterministic
+reader and, when configured, an AI reader whose every value is verified against the sheet —
+runs a rule corpus against the FBC, and renders a marked-up PDF plus a `findings.json`.
 
-Read `ARCHITECTURE.md` before changing anything. `docs/reference/` has the review findings
-from the two test sets and explains what the output is supposed to look like.
+Read `docs/ARCHITECTURE-V2.md` before changing anything, and `docs/ENGINE-TEARDOWN.md` for
+why it is shaped that way. `ARCHITECTURE.md` is the original three-tier reasoning.
+`docs/reference/` has the review findings from the two test sets and explains what the
+output is supposed to look like.
 
-## The one non-negotiable property
+## AI reads; rules decide
 
-**The review path makes zero LLM calls.** It is pure Python over PyMuPDF — about two
-seconds of CPU for a 35-sheet set. This is the product's core claim, not an implementation
-detail. Do not add a model call anywhere in the request path. If you find yourself reaching
-for one, you have misread the problem.
+The review path may call a model — decided by the owner on 2026-09-27, replacing the old
+"zero LLM calls" rule. What it may do is narrow, and every line below is enforced by a test:
+
+1. **The reader's output can only become a claim** — "this value is printed here on this
+   sheet". Never a finding, a severity, a code threshold, a citation or an abstention
+   reason. The first decision on compliance is made by pure-Python rules over the fact
+   store and the hand-verified code corpus; the reviewer in rule 7 may then change it.
+2. **Grounded or discarded.** Every AI-proposed value carries a verbatim quote, and
+   `fbcreview/ai/grounding.py` must find that quote on that page's text (live or OCR) and
+   re-derive the value from it with the catalog parser. A proposal that fails is kept for
+   audit and never reaches a rule.
+3. **Deterministic floor.** With AI reading off, unconfigured, refused or failing, the
+   review completes on the deterministic reader alone. An AI failure makes a smaller
+   review, never a failed one.
+4. **Replayable.** Readings are cached by file hash, page, model and prompt version, and
+   stored with the job. Tests and re-runs replay them. No test makes a network call.
+5. **Provenance is visible.** A value the model located says so on the finding.
+6. **`fbcreview/rules` and `fbcreview/codes` never import `fbcreview/ai` or `anthropic`.**
+7. **AI reviews and corrects the result.** Decided by the owner on 2026-09-28, and amended
+   the same day to let the reviewer change findings directly. After the rules run, a
+   reviewer model checks the result against what the user asked for and the sheets, and
+   may **revise** a finding (severity, status, title, result, remedy, citation), **add** one
+   the rules missed, or **withdraw** one — as well as send sheets back to be read again and
+   leave notes. Pass 1 checks, pass 2 actively edits, pass 3 verifies: at most **three
+   passes**, however it is configured. What holds for every edit, and is enforced in
+   `fbcreview/ai/review.py` and by tests:
+   - **Labelled.** Every applied edit is marked on the finding — its result says it was
+     revised or raised by the AI review and why, and `findings.json` carries `ai_revision`.
+     An AI-edited value never passes for a rule's.
+   - **Evidenced.** Adding or withdrawing a finding, or changing a severity or status, needs
+     a quote printed on the sheet; an edit whose quote is not found is not applied.
+   - **Withdrawn is not passed.** A withdrawn finding becomes an abstention saying so.
+   - **Replayable, with a floor.** The trace is stored with the job (`ai_review.json`) and
+     replayed like readings; a failed pass keeps the last good state.
+   - **The code corpus is untouched.** The reviewer changes findings, never
+     `fbcreview/codes/`, and a citation it adds is its own, not a corpus row.
+
+If you find yourself letting the *reader* decide whether something complies, or letting any
+model write a threshold into the code corpus, you have misread the problem. The reviewer is
+the one place a model may change a finding, and only in the labelled, evidenced way above.
 
 ## Ownership boundaries
 
@@ -46,9 +84,13 @@ Refining that is wanted work, not a boundary violation.
 - **Reproduce before you change.** A fix begins with the failing input written down — the
   sheet text, the phrasing, the geometry — and a test carrying it. "It seems better" is not
   a reason to ship anything.
-- **`docs/FEATURE-PROMPT-inference-ladder.md`** is the standing plan for the extraction and
-  geometry work. Six phases, each independently shippable. Work it in order unless you have
-  a better reason than convenience.
+- **`docs/ARCHITECTURE-V2.md`** is the standing architecture: layout → readers → fact
+  store → rules. `docs/FEATURE-PROMPT-inference-ladder.md` is still the plan for the
+  measured rungs (tabulated, measured, footprint tracing); its §0 and its first "do not"
+  bullet are superseded by the section above.
+- **Measure with the scorecard.** `python scripts/scorecard.py <set.pdf>` reports how much
+  of the hand-built Sculpted review the engine reproduces. A refinement that does not move
+  it, or moves it down, needs a reason.
 
 ### What has to survive every refinement
 
@@ -111,7 +153,11 @@ is one page and `webapp/static/index.html` is about 200 lines of CSS. Port that 
 
 - Never commit service account keys, `.env` files, or any client PDF.
 - Never enable public access on the storage bucket. V4 signed URLs only.
-- Never log PDF contents or full file paths.
+- Never log PDF contents or full file paths — and that includes prompts, sheet images and
+  model responses, which carry sheet content.
+- The AI reader sends sheet images and text to the Anthropic API only when the deployment
+  sets `FBC_AI_READING=on` and supplies a key. `ANTHROPIC_API_KEY` is a secret like any
+  other: Secret Manager in production, `secrets/local.env` locally, never the repo.
 - Authenticate with Workload Identity Federation in CI, never a downloaded key JSON.
 - The email allowlist is checked server-side. A client-side check is decoration.
 
