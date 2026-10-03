@@ -54,9 +54,12 @@
                   <span class="what">
                     <b class="name">{{ entry.project_name || entry.filename }}</b>
                     <span class="sub">
-                      {{ entry.filename }} · {{ entry.pages }} sheet{{
-                        entry.pages === 1 ? '' : 's'
-                      }}
+                      {{ entry.filename }}
+                      <!-- A drawing that stopped before it was plotted has no
+                           page count, and " · sheets" with no number is noise. -->
+                      @if (entry.pages) {
+                        · {{ entry.pages }} sheet{{ entry.pages === 1 ? '' : 's' }}
+                      }
                       @if (entry.declared_fields) {
                         · {{ entry.declared_fields }} declared
                       }
@@ -118,16 +121,26 @@
         >
           <!-- A real file input, so the keyboard and screen-reader path is the
                native one. The drop zone is decoration over it. -->
+          <!-- By extension, not MIME type: a DWG has no settled one, and a
+               picker filtering on one would hide the files it means to offer.
+               See upload-kind.ts. -->
           <input
             type="file"
-            accept="application/pdf,.pdf"
+            [accept]="accepts()"
             aria-describedby="drophint"
             (change)="onFileChosen($event)"
           />
           <span class="big">Drag a permit set here, or click to choose</span>
           <span class="small" id="drophint">
-            PDF plotted from CAD as vector — not a scan. Up to
-            {{ cfg?.max_upload_mb ?? 120 }}&nbsp;MB, {{ cfg?.max_pages ?? 300 }} sheets.
+            A PDF plotted from CAD as vector — not a scan — or the drawing itself:
+            @if (dwgAccepted()) {
+              DWG, DXF, or a ZIP of DWG/DXF sheets.
+            } @else {
+              DXF, or a ZIP of DXF sheets. This deployment has no DWG converter.
+            }
+            Up to {{ cfg?.max_upload_mb ?? 120 }}&nbsp;MB, {{ cfg?.max_pages ?? 300 }} sheets. A DXF
+            runs several times the size of its DWG: if one is over the limit, upload the DWG or zip
+            the DXF.
           </span>
           @if (file()) {
             <span class="filechip" aria-live="polite">{{ fileLabel() }}</span>
@@ -142,6 +155,13 @@
           <p class="hint reading" aria-live="polite">
             <span class="scan" aria-hidden="true"></span>
             Reading the set for what it already states…
+          </p>
+        } @else if (cadFile()) {
+          <!-- Prefill is skipped for a drawing; say why the questions open empty
+               rather than leave it looking like the read found nothing. -->
+          <p class="hint">
+            A drawing is not read ahead of the review, so the questions below open empty:
+            converting it takes minutes and is part of the review itself.
           </p>
         }
       </section>
@@ -266,21 +286,25 @@
           </fieldset>
         }
 
-        <fieldset>
-          <legend>Scanned sets</legend>
-          <div class="check">
-            <input id="convert_raster" type="checkbox" formControlName="convert_raster" />
-            <label for="convert_raster">
-              <span class="h">Rebuild scanned sheets before reviewing</span>
-              <span class="d">
-                OCRs image-only sheets to recover their text and traces the linework into vector
-                paths. Takes minutes rather than seconds, and recovers text rather than meaning —
-                traced lines carry no CAD layer names, so the geometric rules still stand down.
-                Leave off for a set plotted from CAD.
-              </span>
-            </label>
-          </div>
-        </fieldset>
+        <!-- Not offered for a drawing: a plot made from it has no scanned sheets
+             to rebuild, and the server ignores the option for one. -->
+        @if (!cadFile()) {
+          <fieldset>
+            <legend>Scanned sets</legend>
+            <div class="check">
+              <input id="convert_raster" type="checkbox" formControlName="convert_raster" />
+              <label for="convert_raster">
+                <span class="h">Rebuild scanned sheets before reviewing</span>
+                <span class="d">
+                  OCRs image-only sheets to recover their text and traces the linework into vector
+                  paths. Takes minutes rather than seconds, and recovers text rather than meaning —
+                  traced lines carry no CAD layer names, so the geometric rules still stand down.
+                  Leave off for a set plotted from CAD.
+                </span>
+              </label>
+            </div>
+          </fieldset>
+        }
 
         <div class="row">
           <button type="submit" [disabled]="!file() || submitting()">
@@ -288,7 +312,9 @@
           </button>
           <span class="hint" style="margin: 0">
             @if (!file()) {
-              Choose a PDF to begin.
+              Choose a set to begin.
+            } @else if (cadFile()) {
+              The drawing is converted to sheets first — a few minutes for a large DWG.
             } @else {
               Typically 20–40 seconds for a 24-sheet set.
             }
@@ -363,8 +389,13 @@
         }
       </ol>
 
+      <!-- A drawing's sheet count is not known until it has been plotted, so
+           the count is left out rather than shown as " · sheets". -->
       <p class="figures">
-        {{ currentJob.filename }} · {{ currentJob.pages }} sheets ·
+        {{ currentJob.filename }} ·
+        @if (currentJob.pages) {
+          {{ currentJob.pages }} sheet{{ currentJob.pages === 1 ? '' : 's' }} ·
+        }
         {{ currentJob.elapsed_seconds }} s elapsed · station {{ stageIndex() + 1 }} of
         {{ stages().length }} ·
         {{ aiReading() ? 'sheets read by AI, every value checked against the sheet' : 'zero model calls' }}
@@ -455,6 +486,40 @@
         </div>
       }
 
+      <!-- The same pattern as the rebuild above: a review of a plot made here
+           says so, in counts, and names what could not be read. A drawing with
+           eight layouts that plotted to two sheets is a thin review, and this is
+           where somebody finds out why. -->
+      @if (currentJob.cad; as cad) {
+        <div class="note" [class.warn]="!!cad.warnings?.length">
+          <b>Reviewed from the drawing, not a plot.</b>
+          <!-- Interpolations run together on purpose: an @if between them would
+               leave a space before each comma. The converter is named only where
+               one can have run; a DXF is read as it is. -->
+          {{ cad.sheets ?? 0 }} sheet{{ cad.sheets === 1 ? '' : 's' }} plotted in
+          {{ cad.seconds ?? 0 | number: '1.0-0' }} s from {{ currentJob.filename
+          }}{{ (cad.drawings ?? 0) > 1 ? ' (' + cad.drawings + ' drawings)' : ''
+          }}{{ cadConversion(cad) }}. {{ cad.sheets_identified ?? 0 }} of them
+          numbered from a title-block field that says it is the sheet number — a layout's tab
+          name is never taken for one. {{ cad.layers ?? 0 }} CAD layers kept,
+          {{ cad.viewports ?? 0 }} viewports at their exact scale,
+          {{ cad.attributes ?? 0 }} block attributes and {{ cad.dimensions ?? 0 }} dimensions
+          read. {{ cad.claims ?? 0 }} value{{ cad.claims === 1 ? '' : 's' }} taken from the
+          drawing's own fields, each saying so on its finding.
+          @if (!currentJob.downloads?.markup_dxf) {
+            The marked-up DXF could not be written for this review; the marked-up PDF is the
+            review of record.
+          }
+          @if (cad.warnings?.length) {
+            <ul class="annotations">
+              @for (warning of cad.warnings; track $index) {
+                <li><span class="xtick" aria-hidden="true"></span> {{ warning }}</li>
+              }
+            </ul>
+          }
+        </div>
+      }
+
       <!-- The tally reads as a dimension run, not as a row of stat cards. -->
       <div class="dimrun">
         @for (severity of tallyOrder; track severity) {
@@ -477,6 +542,19 @@
           <a class="btn" [routerLink]="['/review', finished.id]">Open the set</a>
         }
         <button type="button" (click)="download('markup_pdf')">Download marked-up set</button>
+        <!-- Only for a drawing upload, and only when it was written: the
+             drawing itself, a finding that needs action clouded on FBC-REVIEW
+             and a check that held boxed on FBC-REVIEW-VERIFIED. -->
+        @if (currentJob.downloads?.markup_dxf) {
+          <button
+            type="button"
+            class="ghost"
+            title="The drawing itself, with the findings marked on FBC-REVIEW layers of its own, as a zipped DXF"
+            (click)="download('markup_dxf')"
+          >
+            Marked-up DXF
+          </button>
+        }
         <button type="button" class="ghost" (click)="download('findings_json')">
           Findings JSON
         </button>
@@ -684,7 +762,9 @@
           <b>{{ finding.headline }}</b>
           {{ finding.detail }}
           <span class="do">{{ finding.action }}</span>
-          @if (finding.rerun && file()) {
+          <!-- Rebuilding is for scanned sheets; a plot made from a drawing has
+               none, and the server ignores the option for one. -->
+          @if (finding.rerun && file() && !fromDrawing()) {
             <div class="row">
               <button type="button" class="ghost" (click)="retryWithConversion()">
                 Rebuild those sheets and review again
@@ -751,11 +831,13 @@
           they look fine — but a code-analysis table pasted in as a picture is pixels, and nothing
           read it. If rules stood down for want of a value that is printed on one of those sheets,
           that is why.
-          <div class="row">
-            <button type="button" class="ghost" (click)="retryWithConversion()">
-              Read those sheets and review again
-            </button>
-          </div>
+          @if (!fromDrawing()) {
+            <div class="row">
+              <button type="button" class="ghost" (click)="retryWithConversion()">
+                Read those sheets and review again
+              </button>
+            </div>
+          }
         </div>
       }
     </section>

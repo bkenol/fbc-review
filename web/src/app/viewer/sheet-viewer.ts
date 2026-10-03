@@ -473,7 +473,11 @@ export class SheetViewer {
       this.loading.set(false);
       // Deliberately not the exception text: it can carry the signed URL, and
       // a signed URL in a visible error is a credential on screen.
-      this.error.set('This set could not be opened for viewing. The downloads below still work.');
+      // Source-neutral: the workspace has no download row below the viewer, and
+      // for a drawing the file opened here is a plot, not the upload.
+      this.error.set(
+        'This set could not be opened for viewing. The downloads on the review page still work.',
+      );
     }
   }
 
