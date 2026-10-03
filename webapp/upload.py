@@ -10,7 +10,9 @@ standard-library module that is cheap to import). A PDF is opened here far
 enough to refuse what the engine cannot read (`probe`). A drawing is not — no
 converter and no DXF reader runs inside a request — so `admit_cad` checks only
 what can be checked from a header or a zip's directory, and the worker finds
-out the rest.
+out the rest. `admit_cad` is synchronous file work; the handlers run it on the
+thread pool (`run_in_threadpool`), not on the event loop every other request
+on the instance is answered from.
 """
 from __future__ import annotations
 
@@ -287,20 +289,30 @@ def check_archive(path: Path) -> List[str]:
     now rather than from a thinner review. The limits are that module's, so the
     two can never disagree about what fits.
 
-    Refused: an unreadable directory; more members than `MAX_MEMBERS`; a total
-    uncompressed size over `MAX_UNPACKED_BYTES`; a member that inflates beyond
-    `MAX_RATIO`; an absolute path, a drive letter or a `..`; a symlink; a nested
-    archive; a password-protected drawing; and a zip with no drawing in it.
+    Refused: an unreadable directory; more members than `MAX_MEMBERS`, or a
+    directory larger than that many could need — both read from the zip's end
+    record before the directory is parsed, since parsing it is the cost being
+    bounded; a total uncompressed size over `MAX_UNPACKED_BYTES`; a member that
+    inflates beyond `MAX_RATIO`; an absolute path, a drive letter or a `..`; a
+    symlink; a nested archive; a password-protected drawing; and a zip with no
+    drawing in it.
     """
+    unreadable = ApiError(
+        400, CORRUPT_CAD,
+        "That zip file could not be opened. It may be damaged or incompletely "
+        "uploaded — zip the drawings again and upload that.",
+    )
+    try:
+        cad_source.check_zip_directory(str(path))
+    except cad_source.SourceError as exc:
+        if exc.code == "zip_too_large":
+            raise ApiError(413, UNSAFE_ARCHIVE, exc.message)
+        raise unreadable
     try:
         with zipfile.ZipFile(path) as zf:
             infos = zf.infolist()
     except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, ValueError):
-        raise ApiError(
-            400, CORRUPT_CAD,
-            "That zip file could not be opened. It may be damaged or incompletely "
-            "uploaded — zip the drawings again and upload that.",
-        )
+        raise unreadable
 
     if len(infos) > cad_source.MAX_MEMBERS:
         raise ApiError(

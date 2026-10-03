@@ -789,6 +789,29 @@ and record the image size here beside the 893 MB above. Expect it to grow by
 the 20 MB of LibreDWG, the font package, and the ezdxf, fontTools and Pillow
 wheels; the compiler stays in the discarded stage.
 
+**What the drawing subprocesses are given (2026-10-03).** `python -m
+fbcreview.cad` and the `dwg2dxf` it runs both read an untrusted upload, so
+neither inherits the service's environment. The adapter gets `PATH`, `HOME`,
+`TMPDIR`, the locale variables, `LD_LIBRARY_PATH`, `XDG_CACHE_HOME` and
+`XDG_CONFIG_HOME` (where ezdxf keeps the font cache this image builds), a
+`PYTHONPATH` naming the app, and the three settings it reads itself:
+`FBC_DWG2DXF`, `FBC_DWG_TIMEOUT_S`, `FBC_CAD_MAX_DXF_MB`. The converter gets
+`PATH`, `LD_LIBRARY_PATH` and the locale. `ANTHROPIC_API_KEY`, credentials paths
+and every other `FBC_` setting stay with the service. The list is by name, in
+`_ADAPTER_ENV` (`webapp/cadjob.py`) and `_CONVERTER_ENV`
+(`fbcreview/cad/convert.py`): a new setting the adapter has to read must be
+added there, or the adapter will not see it. `tests/test_cad_hardening.py`
+fails if a secret reaches either process.
+
+The service is PID 1 in this container (`CMD exec uvicorn …`, no init). When a
+drawing runs past `FBC_CAD_TIMEOUT_S` its process group is killed, which orphans
+the converter the adapter started, and an orphan is re-parented to PID 1:
+`webapp/cadjob.py` reaps the group after every kill, so a timed-out DWG leaves
+no zombie behind. An init (`tini`) in the image would do the same job; it is not
+needed for this. The adapter's stderr — ezdxf's warnings quote the drawing's
+own text — is counted as it streams and never held, and only the last 64 KiB of
+its stdout is kept.
+
 ### Deploy [not yet run]
 
 ```bash

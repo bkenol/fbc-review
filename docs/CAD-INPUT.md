@@ -49,7 +49,10 @@ bytes. A DWG renamed `.pdf` is reviewed as a DWG.
 A zip is refused outright, before anything is unpacked, if a member's path
 would land outside the folder it unpacks into, if a member is encrypted, or if
 its sizes do not add up — those are the shapes a zip takes when it is an attack
-rather than a drawing set.
+rather than a drawing set. The file count is read from the zip's closing record
+before its list of files is: a zip that says it holds more than 400 files, or
+whose list of files is longer than 400 could need, is refused without that list
+being read at all.
 
 **Which sheets get reviewed.** Every paper-space layout — the tabs along the
 bottom of AutoCAD — that has something drawn on it, in tab order. The default
