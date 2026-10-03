@@ -147,8 +147,10 @@ _ADAPTER_ENV = (
     # Dockerfile builds the cache under XDG_CACHE_HOME so the first drawing on a
     # fresh instance does not pay for the font scan; without it, every one would.
     "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
-    # What the adapter itself reads: `fbcreview/cad/convert.py` and `__init__.py`.
-    "FBC_DWG2DXF", "FBC_DWG_TIMEOUT_S", "FBC_CAD_MAX_DXF_MB",
+    # What the adapter itself reads: `fbcreview/cad/convert.py`, `__init__.py`
+    # and `read.py`. `tests/test_cad_service_fixes.py` fails if it reads one
+    # that is not here, which would silently never reach it in production.
+    "FBC_DWG2DXF", "FBC_DWG_TIMEOUT_S", "FBC_CAD_MAX_DXF_MB", "FBC_CAD_MAX_ENTITIES",
 )
 
 

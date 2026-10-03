@@ -794,13 +794,14 @@ fbcreview.cad` and the `dwg2dxf` it runs both read an untrusted upload, so
 neither inherits the service's environment. The adapter gets `PATH`, `HOME`,
 `TMPDIR`, the locale variables, `LD_LIBRARY_PATH`, `XDG_CACHE_HOME` and
 `XDG_CONFIG_HOME` (where ezdxf keeps the font cache this image builds), a
-`PYTHONPATH` naming the app, and the three settings it reads itself:
-`FBC_DWG2DXF`, `FBC_DWG_TIMEOUT_S`, `FBC_CAD_MAX_DXF_MB`. The converter gets
+`PYTHONPATH` naming the app, and the four settings it reads itself:
+`FBC_DWG2DXF`, `FBC_DWG_TIMEOUT_S`, `FBC_CAD_MAX_DXF_MB`, `FBC_CAD_MAX_ENTITIES`. The converter gets
 `PATH`, `LD_LIBRARY_PATH` and the locale. `ANTHROPIC_API_KEY`, credentials paths
 and every other `FBC_` setting stay with the service. The list is by name, in
 `_ADAPTER_ENV` (`webapp/cadjob.py`) and `_CONVERTER_ENV`
 (`fbcreview/cad/convert.py`): a new setting the adapter has to read must be
-added there, or the adapter will not see it. `tests/test_cad_hardening.py`
+added there, or the adapter will not see it (`tests/test_cad_service_fixes.py` fails
+if it reads one that is missing). `tests/test_cad_hardening.py`
 fails if a secret reaches either process.
 
 The service is PID 1 in this container (`CMD exec uvicorn …`, no init). When a

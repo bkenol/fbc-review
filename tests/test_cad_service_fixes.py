@@ -72,3 +72,21 @@ def test_an_orphaned_pdf_review_is_called_interrupted_after_fifteen_minutes(monk
         assert store.get("dwg-70")["state"] == "error"
     finally:
         settings.cache_clear()
+
+
+def test_every_setting_the_adapter_reads_reaches_it():
+    """The adapter subprocess gets a named list of variables, never the
+    service's environment. A setting the adapter reads that is not on the list
+    is silently its default in production — FBC_CAD_MAX_ENTITIES was, for one
+    merge — so the list is checked against what the code reads."""
+    import re
+    from pathlib import Path
+
+    from webapp.cadjob import _ADAPTER_ENV
+    root = Path(__file__).resolve().parent.parent / "fbcreview"
+    read = set()
+    for path in [*(root / "cad").glob("*.py"), root / "read" / "cad.py"]:
+        read |= set(re.findall(r"""environ(?:\.get)?\(?\[?["'](FBC_[A-Z0-9_]+)["']""",
+                               path.read_text(encoding="utf-8")))
+    assert read, "found no settings at all: the pattern is wrong"
+    assert read <= set(_ADAPTER_ENV), read - set(_ADAPTER_ENV)
