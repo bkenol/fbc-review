@@ -245,8 +245,12 @@ def _plot_sheet(op, member: str, spec, cache, target, names, index=None):
 
 
 def ingest(src: str, workdir: str, name: str = "",
-           progress: Optional[Callable[[str], None]] = None) -> CadSet:
+           progress: Optional[Callable[[str], None]] = None,
+           max_sheets: int = 0) -> CadSet:
     """Read a drawing upload into a rendered PDF and a sidecar, in `workdir`.
+
+    `max_sheets`, when set, refuses a set that would plot more sheets than that
+    before a sheet is drawn (the service passes its `FBC_MAX_PAGES`).
 
     Raises `SourceError` (a refusal to show the user), `convert.ConversionUnavailable`
     / `convert.ConversionFailed`, or `read.ReadError`.
@@ -368,6 +372,17 @@ def ingest(src: str, workdir: str, name: str = "",
         plotted.add(m)
         warnings.append(f"{m} is plotted as a sheet of its own: it has no sheet layouts, and "
                         "the drawings that reference it are only referenced by each other.")
+
+    # The page cap, before anything is drawn. Measured: 310 light layouts
+    # plotted for 86 s before the worker counted them and refused the set; a
+    # heavy drawing would have spent the whole timeout first.
+    if max_sheets:
+        total = sum(read.sheet_count(opened[m].doc) for m in plotted)
+        if total > max_sheets:
+            raise SourceError(
+                "too_many_pages",
+                f"That drawing plots to {total} sheets. The limit is {max_sheets}: upload "
+                "the layouts for this permit only.")
 
     # An xref that was uploaded but could not be read is that, not missing.
     unreadable: Dict[str, str] = {}

@@ -65,6 +65,28 @@ _pool: Optional[ThreadPoolExecutor] = None
 _cad_pool: Optional[ThreadPoolExecutor] = None
 
 
+def _record_format(store, job_id: str, source_format: str) -> None:
+    """Write a drawing job's format onto the record it was just created as.
+
+    A second write, so it can fail where the first did not; and a queued job
+    no worker will take counts against its owner's concurrent reviews from
+    then on. If it fails, the job is closed as failed before the error goes
+    back — never left queued.
+    """
+    try:
+        store.update(job_id, source_format=source_format)
+    except Exception as exc:
+        log.error("drawing job format not recorded",
+                  extra={"job_id": job_id, "error": type(exc).__name__})
+        try:
+            store.mark_error(job_id, errors.INTERNAL,
+                             "This review could not be started. Upload the drawing again.")
+        except Exception:
+            log.error("drawing job left queued", extra={"job_id": job_id})
+        raise errors.ApiError(500, errors.INTERNAL,
+                              "The review could not be started. Try the upload again.")
+
+
 def _executor_for(source_format: str) -> ThreadPoolExecutor:
     pool = _pool if source_format == "pdf" else _cad_pool
     assert pool is not None
@@ -614,7 +636,7 @@ async def create_review(
     if is_cad:
         # Through update rather than a create() parameter: the record is
         # otherwise the shape every store and test double already writes.
-        store.update(job_id, source_format=kind)
+        _record_format(store, job_id, kind)
 
     log.info(
         "review accepted",
@@ -1091,7 +1113,7 @@ def rerun_review(
         rerun_of=job_id,
     )
     if is_cad:
-        store.update(new_id, source_format=source_format)
+        _record_format(store, new_id, source_format)
 
     log.info(
         "review re-run accepted",

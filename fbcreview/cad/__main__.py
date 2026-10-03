@@ -31,6 +31,7 @@ def main(argv=None) -> int:
     a.add_argument("source")
     a.add_argument("workdir")
     a.add_argument("--name", default="")
+    a.add_argument("--max-sheets", type=int, default=0)
     m = sub.add_parser("markup")
     m.add_argument("workdir")
     m.add_argument("findings")
@@ -46,10 +47,12 @@ def main(argv=None) -> int:
 
     if args.cmd == "ingest":
         def progress(msg: str) -> None:
-            # A line per step on stderr; the parent turns these into job progress.
+            # A line per step on stderr, for whoever runs this by hand; the
+            # service counts stderr lines and keeps none of them (cadjob).
             print(f"PROGRESS {msg}", file=sys.stderr, flush=True)
         try:
-            cs = ingest(args.source, args.workdir, name=args.name, progress=progress)
+            cs = ingest(args.source, args.workdir, name=args.name, progress=progress,
+                        max_sheets=args.max_sheets)
         except SourceError as exc:
             return _fail(exc.code, exc.message)
         except convert.ConversionUnavailable as exc:

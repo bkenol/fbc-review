@@ -78,6 +78,7 @@ _CODES = {
     "zip_too_large": errors.UNSAFE_ARCHIVE,
     "zip_bomb": errors.UNSAFE_ARCHIVE,
     "drawing_too_large": errors.PAYLOAD_TOO_LARGE,
+    "too_many_pages": errors.TOO_MANY_PAGES,
     "no_drawings": errors.UNSUPPORTED_MEDIA,
     "unsupported_media": errors.UNSUPPORTED_MEDIA,
 }
@@ -357,7 +358,10 @@ def ingest(upload: Path, out_dir: Path, name: str, job_id: str) -> Ingested:
     try:
         code, stdout, err_lines, seconds = _run(
             # `--name=` in one argument: a file called `--help.dwg` is a name, not a flag.
-            ["ingest", str(upload.resolve()), str(out_dir.resolve()), f"--name={name}"],
+            ["ingest", str(upload.resolve()), str(out_dir.resolve()), f"--name={name}",
+             # FBC_MAX_PAGES is not in the adapter's environment; it is handed
+             # over, so a set over it is refused before a sheet is plotted.
+             f"--max-sheets={settings().max_pages}"],
             cwd=out_dir, timeout=timeout)
     except _TimedOut:
         log.warning("cad ingest stopped", extra={"job_id": job_id, "timeout_seconds": timeout})

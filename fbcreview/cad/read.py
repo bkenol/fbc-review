@@ -394,6 +394,17 @@ def expanded_count(doc: Drawing, limit: Optional[int] = None) -> int:
     return total
 
 
+def sheet_count(doc: Drawing) -> int:
+    """How many sheets `sheets()` would plot — a page per paper-space layout
+    with something on it, or one for model space when there is none — counted
+    without working out a window or drawing anything."""
+    n = sum(1 for layout in doc.layouts
+            if not layout.is_modelspace and _content(layout) > 0)
+    if n:
+        return n
+    return 1 if len(doc.modelspace()) else 0
+
+
 def has_sheet_layouts(doc: Drawing) -> bool:
     """Whether any paper-space layout has something on it — `sheets()` would
     plot a layout — without working out a single window."""
