@@ -104,13 +104,19 @@ def role_of(label: str, header: str, i: int, n: int, raw: str) -> str:
     return ""
 
 
-def claims_from_pair(pair: Pair, sheet: str) -> List[Claim]:
+def claims_from_pair(pair: Pair, sheet: str, method: str = PAIR) -> List[Claim]:
+    """Every catalog fact a label/value pair states.
+
+    `method` is who paired them: the layout reader (PAIR), or the CAD reader
+    for a block attribute whose tag is the label — the same vocabulary, the same
+    disqualifiers and parsers either way.
+    """
     out: List[Claim] = []
     for spec in FIELDS:
         score = match(spec, pair.label, pair.label)
         if not score or not _context_ok(spec, pair.label, pair.context, pair.heading):
             continue
-        base = dict(page=pair.page, sheet=sheet, method=PAIR, shape=pair.kind,
+        base = dict(page=pair.page, sheet=sheet, method=method, shape=pair.kind,
                     label=pair.label, context=tuple(pair.context), heading=pair.heading,
                     score=score)
         if spec.roles:

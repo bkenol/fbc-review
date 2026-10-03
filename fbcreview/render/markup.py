@@ -126,8 +126,12 @@ def clip(s: str, n: int) -> str:
 
 class Renderer:
     def __init__(self, src: str, findings: Sequence[Finding], sheets, options,
-                 abstentions=None, reconciled=None):
+                 abstentions=None, reconciled=None, cad=None):
         self.doc = pymupdf.open(src)
+        #: `facts.meta["cad"]` when the sheets were plotted by this review from a
+        #: DWG or DXF (`fbcreview/cad`), else None. The report must not describe
+        #: our plot as the applicant's own sheet.
+        self.cad = cad
         self.findings = list(findings)
         self.sheets = {s.index: s for s in sheets}
         self.opt = options
@@ -926,7 +930,8 @@ than guess. They are listed so coverage can be judged honestly.</div>
 
 
 def render(src: str, out: str, findings, sheets, options, abstentions=None,
-           reconciled=None) -> dict:
+           reconciled=None, cad=None) -> dict:
     """`reconciled` is the ReconciledFacts the rules ran against. Without it the
-    output is exactly what it was before the declaration existed."""
-    return Renderer(src, findings, sheets, options, abstentions, reconciled).build(out)
+    output is exactly what it was before the declaration existed. `cad` is
+    `facts.meta["cad"]` for a set plotted from a drawing; without it, likewise."""
+    return Renderer(src, findings, sheets, options, abstentions, reconciled, cad).build(out)

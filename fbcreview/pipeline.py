@@ -5,7 +5,7 @@ No model is called from here. When the AI reader ran, its readings arrive as dat
 """
 from __future__ import annotations
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import pymupdf
 
 from .facts import ProjectFacts, Door, VentilationRow
@@ -131,7 +131,7 @@ def _leaf_inches(raw: str):
     return to_inches(raw)
 
 
-def build_facts(path: str, readings=None) -> ProjectFacts:
+def build_facts(path: str, readings=None, cad=None) -> ProjectFacts:
     """Read a permit set into `ProjectFacts`.
 
     `readings` are AI sheet readings (`fbcreview.ai.readings.Readings`) produced
@@ -139,17 +139,36 @@ def build_facts(path: str, readings=None) -> ProjectFacts:
     this function makes no network call. Each proposal is grounded against the
     page it names before it may enter the fact store, and omitting `readings`
     gives the deterministic review.
+
+    `cad` is the sidecar `fbcreview.cad` wrote beside the PDF it plotted from a
+    DWG or DXF (`cad.json`, loaded), and `path` is that plotted PDF. The PDF is
+    read exactly as any other; the sidecar adds what the plot cannot carry —
+    title-block sheet numbers, block-attribute claims, each viewport's exact
+    scale, the real layer table (`fbcreview/read/cad.py`). Omitting it reads the
+    plotted PDF alone, which still completes.
     """
     doc = pymupdf.open(path)
     text = {p: doc[p].get_text() for p in range(doc.page_count)}
     facts = ProjectFacts(source_path=path, text_by_page=text)
     facts.sheets = sheet_index(doc, text)
-    _read_facts(doc, facts, readings)
-    facts.meta["cad_layers"] = ocg_names(doc)
+    if cad is not None:
+        _cad_sheets(facts, cad)
+    layouts = _read_facts(doc, facts, readings, cad)
+    if cad is not None:
+        # The drawing's own layer table, as the drafter named the layers. The
+        # plotted PDF carries them as optional content too, but only the layers
+        # something was drawn on, and its names are the plot's.
+        facts.meta["cad_layers"] = list(cad.get("layers", [])) or ocg_names(doc)
+    else:
+        facts.meta["cad_layers"] = ocg_names(doc)
     facts.meta["native_vector"] = len(facts.meta["cad_layers"]) > 0
 
     for p in range(doc.page_count):
-        facts.geometry[p] = page_geometry(doc, p, text[p])
+        cad_views = None
+        if cad is not None:
+            from .read import cad as cad_read
+            cad_views = cad_read.page_scales(cad, p, facts.sheet_code(p), layouts.get(p))
+        facts.geometry[p] = page_geometry(doc, p, text[p], cad_views=cad_views)
 
     # ── code data blocks (unruled) ────────────────────────────────────────
     seen_data = set()
@@ -406,7 +425,7 @@ def _read_form_blocks(doc, facts: ProjectFacts, text: Dict[int, str]) -> None:
 # grew into the next table — now arrives, with its provenance recorded beside it
 # under `meta["fact_sources"]`.
 
-def _read_facts(doc, facts: ProjectFacts, readings=None) -> None:
+def _read_facts(doc, facts: ProjectFacts, readings=None, cad=None) -> Dict[int, Any]:
     codes = {s.index: s.code for s in facts.sheets}
     layouts = {p: page_layout(doc[p]) for p in range(doc.page_count)}
     store = FactStore()
@@ -419,9 +438,48 @@ def _read_facts(doc, facts: ProjectFacts, readings=None) -> None:
         from .ai.grounding import ground_readings
         ground_readings(readings, layouts, codes, store)
         facts.meta["ai_reading"] = readings.summary()
+    if cad is not None:
+        _read_cad(facts, cad, codes, store)
     facts.store = store
     facts.meta["rotation"] = {p: doc[p].rotation for p in range(doc.page_count)
                               if doc[p].rotation}
+    return layouts
+
+
+# ── a set plotted from a drawing ─────────────────────────────────────────────
+#
+# `fbcreview/cad` plotted the PDF this module reads and wrote a sidecar beside
+# it. Two things from the sidecar change what the PDF alone would give, and
+# both are provenance rather than new judgement: a sheet number the title block
+# itself labels as one, and the drawing entities behind every claim (so one
+# entity read twice is not "two independent readers"). The rest is additive —
+# claims from block attributes, through the same catalog.
+
+def _cad_sheets(facts: ProjectFacts, cad) -> None:
+    from .extract.document import _discipline
+    from .read import cad as cad_read
+    sources = facts.meta.setdefault("sheet_sources", {})
+    for s in facts.sheets:
+        found = cad_read.sheet_numbers(cad).get(s.index)
+        if not found:
+            continue
+        number, where, title = found
+        if s.code != number:
+            sources[s.index] = {"source": "cad", "read": number, "where": where,
+                                "scanned": s.code}
+        s.code = number
+        s.discipline = _discipline(number)
+        if title and not s.title:
+            s.title = title
+
+
+def _read_cad(facts: ProjectFacts, cad, codes: Dict[int, str], store: FactStore) -> None:
+    from .read import cad as cad_read
+    claims = cad_read.attribute_claims(cad, codes)
+    stamped = cad_read.stamp_sources(store.each(), cad)
+    store.extend(claims)
+    store.changed()
+    facts.meta["cad"] = cad_read.summary(cad, claims=len(claims), stamped=stamped)
 
 
 #: meta key the pre-store rules read → (catalog field, how to write it).
@@ -454,11 +512,11 @@ def _f(vals, i):
         return None
 
 
-def review(path: str, options=None, declaration=None, readings=None) -> RuleResult:
+def review(path: str, options=None, declaration=None, readings=None, cad=None) -> RuleResult:
     """PDF in, findings out.
 
     `declaration` is a ProjectDeclaration — the answers the applicant gave before
     uploading. `readings` are recorded AI sheet readings; omitting them gives the
-    deterministic review.
+    deterministic review. `cad` is the sidecar of a PDF plotted from a drawing.
     """
-    return run_all(build_facts(path, readings=readings), options, declaration)
+    return run_all(build_facts(path, readings=readings, cad=cad), options, declaration)

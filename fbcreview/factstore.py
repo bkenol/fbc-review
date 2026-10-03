@@ -37,8 +37,10 @@ from .confidence import HIGH, MEDIUM, Evidence
 
 STATED, TABULATED, COMPUTED, MEASURED = "stated", "tabulated", "computed", "measured"
 
-#: What read a claim. `ai` claims are only ever added after grounding.
-PAIR, LINE, TABLE, LEGACY, AI = "pair", "line", "table", "legacy", "ai"
+#: What read a claim. `ai` claims are only ever added after grounding. `cad`
+#: claims come from the drawing itself — a block attribute whose name says what
+#: its value is (`fbcreview/cad`), on a set uploaded as DWG or DXF.
+PAIR, LINE, TABLE, LEGACY, AI, CAD = "pair", "line", "table", "legacy", "ai", "cad"
 
 #: A rival group needs at least this label strength to count as a disagreement.
 RIVAL_SCORE = 0.9
@@ -55,7 +57,7 @@ class Claim:
     page: int                   # 0-based page index
     sheet: str                  # the sheet number, as printed
     box: Optional[Box]          # unrotated page coordinates
-    method: str                 # PAIR | LINE | TABLE | LEGACY | AI
+    method: str                 # PAIR | LINE | TABLE | LEGACY | AI | CAD
     shape: str = ""             # inline | row | stacked | table | line
     basis: str = STATED
     confidence: str = MEDIUM
@@ -65,6 +67,15 @@ class Claim:
     role: str = ""              # "required" | "provided" | "" — the audit rows
     score: float = 1.0
     note: str = ""
+    #: On a set read from a drawing: the drawing entities the claim was read
+    #: from, as `dxf:<handle>` tokens joined by "+". Two claims that share an
+    #: entity are one reading however many readers found it — the PDF the
+    #: readers see was drawn from the same TEXT or ATTRIB. Empty everywhere else.
+    source: str = ""
+    #: The layout (sheet tab) and layer the reading sits on, when it came from a
+    #: drawing. Provenance only.
+    layout: str = ""
+    layer: str = ""
 
     def as_meta(self) -> Dict[str, Any]:
         return {
@@ -75,6 +86,8 @@ class Claim:
             "confidence": self.confidence, "label": self.label,
             "context": list(self.context), "heading": self.heading,
             "role": self.role, "score": round(self.score, 2), "note": self.note,
+            **({"source": self.source, "layout": self.layout, "layer": self.layer}
+               if self.source else {}),
         }
 
     def where(self) -> str:
@@ -114,10 +127,13 @@ class Resolution:
         """The resolved value as the `Evidence` the rest of the engine speaks."""
         b = self.best
         how = {PAIR: "read from", LINE: "read from", TABLE: "read from the table on",
-               LEGACY: "read from", AI: "read by AI and verified on"}.get(b.method, "read from")
+               LEGACY: "read from", AI: "read by AI and verified on",
+               CAD: f"read from the drawing's {b.label or 'attribute'} field, printed on"
+               }.get(b.method, "read from")
         others = [s for s in self.sheets if s != b.sheet]
         also = f"; also stated on {', '.join(others)}" if others else ""
-        agreed = " — two independent readers agree" if len(self.methods) > 1 else ""
+        agreed = (" — two independent readers agree"
+                  if len(self.methods) > 1 and independent(self.claims) else "")
         note = f"'{b.raw}' {how} {b.where()}{also}{agreed}"
         return Evidence(self.value, b.where(), self.confidence, note, b.page)
 
@@ -173,6 +189,35 @@ def _specificity(value: Any) -> int:
     return len(str(value)) if value is not None else 0
 
 
+def _tokens(c: Claim) -> set:
+    """What a claim was read from. See `independent`."""
+    if c.source:
+        return set(c.source.split("+"))
+    return {f"{c.page}|{c.method}"}
+
+
+def independent(claims: List[Claim]) -> bool:
+    """Do these agreeing claims come from more than one reading?
+
+    The rule that has always held: two readers, or two sheets, are independent.
+    Stated as clusters — claims join a cluster when they share a token, and a
+    claim's token is its (page, method) — it is the same rule, and it extends to
+    a set read from a drawing, where a claim's tokens are the drawing entities
+    behind it. There the layout reader and the CAD reader finding one ATTRIB, or
+    one model-space note seen through viewports on two sheets, are one reading:
+    agreeing with yourself is not corroboration.
+    """
+    clusters: List[set] = []
+    for c in claims:
+        t = _tokens(c)
+        merged = [k for k in clusters if k & t]
+        for k in merged:
+            clusters.remove(k)
+            t |= k
+        clusters.append(t)
+    return len(clusters) > 1
+
+
 def _general(sheet: str) -> bool:
     return (sheet or "")[:1].upper() == "G"
 
@@ -196,6 +241,15 @@ class FactStore:
     def extend(self, claims: Iterable[Claim]) -> None:
         for c in claims:
             self.add(c)
+
+    def each(self) -> Iterable[Claim]:
+        """Every claim held, in no particular order."""
+        for group in self._claims.values():
+            yield from group
+
+    def changed(self) -> None:
+        """Forget resolutions — call after amending claims in place."""
+        self._cache.clear()
 
     def reject(self, record: Dict[str, Any]) -> None:
         """An AI proposal the grounding verifier would not accept. Audit only."""
@@ -241,9 +295,8 @@ class FactStore:
         win = groups[0]
         win.sort(key=lambda c: (-c.score, -_specificity(c.value), c.page))
         value = max(win, key=lambda c: (_specificity(c.value), c.score)).value
-        independent = len({c.method for c in win}) > 1 or len({c.page for c in win}) > 1
         rivals = [g for g in groups[1:] if max(c.score for c in g) >= RIVAL_SCORE]
-        return Resolution(field_key, role, value, win, HIGH if independent else MEDIUM,
+        return Resolution(field_key, role, value, win, HIGH if independent(win) else MEDIUM,
                           rivals)
 
     def conflicts(self) -> List[Resolution]:
