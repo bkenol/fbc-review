@@ -44,6 +44,7 @@ bytes. A DWG renamed `.pdf` is reviewed as a DWG.
 | Sheets | 300 plotted sheets per upload | `FBC_MAX_PAGES` — a drawing's sheets are its layouts |
 | Zip contents | 400 files, 120 drawings, 1 GB unpacked, and no member compressed more than 200:1 | `fbcreview/cad/source.py` |
 | DXF held for one review | 300 MB in all (`FBC_CAD_MAX_DXF_MB`), measured at about 6.6× that in memory — counting each DWG at its converted size as it converts, and each xref copy embedding makes into a sheet file. Past it the job fails `payload_too_large` (the adapter's own code is `drawing_too_large`) with the size in its message, before ezdxf reads anything | `fbcreview/cad/__init__.py` |
+| Entities one drawing expands to | 2 000 000 through its blocks and block arrays (`FBC_CAD_MAX_ENTITIES`); the reference drawing expands to 304 147. Counted before anything is drawn; past it a single drawing is refused (`payload_too_large`) and a zip member is left out with a warning | `fbcreview/cad/read.py` |
 | Time | 600 s to read and plot, 600 s to write the marked-up DXF | `FBC_CAD_TIMEOUT_S` |
 
 A zip is refused outright, before anything is unpacked, if a member's path

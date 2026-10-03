@@ -536,3 +536,142 @@ def test_a_smaller_pdf_sheet_keeps_its_margin_on_the_page(tmp_path):
         lowest = max(d["rect"].y1 for d in small.get_drawings())
         assert lowest <= small.rect.height + 0.5
         assert "LEGEND" in small.get_text().upper()
+
+
+# ── a tag describes what it tags ─────────────────────────────────────────────
+
+def _life_safety(tmp_path, *, layouts=True):
+    """The reviewer's life-safety plan: room tags in model space carry each
+    room's AREA and OCCUPANT_LOAD; the sheet's code block prints the building's
+    totals — occupant load 600, which needs three exits, and two provided."""
+    doc = ezdxf.new("R2018", setup=True)
+    doc.header["$INSUNITS"] = 1
+    msp = doc.modelspace()
+    msp.add_lwpolyline([(0, 0), (960, 0), (960, 480), (0, 480)], close=True)
+    room = doc.blocks.new("ROOM-TAG")
+    room.add_lwpolyline([(-24, -14), (24, -14), (24, 14), (-24, 14)], close=True)
+    for tag, y in (("ROOM_NAME", 7), ("AREA", 0), ("OCCUPANT_LOAD", -7)):
+        room.add_attdef(tag, (-22, y), dxfattribs={"height": 3})
+    for i, (name, area, load) in enumerate((("HALL 101", "675 SF", "45"),
+                                            ("MEETING 102", "300 SF", "20"),
+                                            ("OFFICE 103", "150 SF", "1"))):
+        msp.add_blockref("ROOM-TAG", (200 + 250 * i, 300)).add_auto_attribs(
+            {"ROOM_NAME": name, "AREA": area, "OCCUPANT_LOAD": load})
+    space = msp
+    if layouts:
+        space = doc.layouts.new("LS")
+        space.page_setup(size=(36, 24), margins=(0, 0, 0, 0), units="inch")
+        space.add_viewport(center=(12.5, 13.0), size=(22.0, 12.0),
+                           view_center_point=(480, 240), view_height=12.0 * 48)
+        x, y, h = 24.5, 22.5, 0.125
+    else:
+        x, y, h = 1000, 460, 6.0
+    for label, value in (("OCCUPANCY GROUP:", "A-3"), ("TOTAL OCCUPANT LOAD:", "600"),
+                         ("NUMBER OF EXITS PROVIDED:", "2")):
+        space.add_text(label, height=h).set_placement((x, y))
+        space.add_text(value, height=h).set_placement((x, y - 1.25 * h))
+        y -= 4 * h
+    path = tmp_path / "ls.dxf"
+    doc.saveas(path)
+    return path
+
+
+@pytest.mark.parametrize("layouts", [True, False], ids=["sheet", "model-space"])
+def test_a_room_tags_load_is_not_the_buildings(tmp_path, layouts):
+    """With the sidecar, room 101's tag OCCUPANT_LOAD = 45 scored 1.0 against
+    the printed "TOTAL OCCUPANT LOAD" (0.99), won, and EGRESS.EXIT_COUNT went
+    from OPEN CRITICAL ("600 requires 3 exits; 2 provided") to a VERIFIED pass.
+    Uploading the drawing behind a set must never turn a failure into a pass."""
+    from fbcreview.cad import ingest
+    from fbcreview.pipeline import build_facts
+    from fbcreview.rules import run_all
+
+    cs = ingest(str(_life_safety(tmp_path, layouts=layouts)), str(tmp_path / "w"),
+                name="ls.dxf")
+    for cad in (None, cs.data):
+        facts = build_facts(cs.pdf_path, cad=cad)
+        load = facts.store.resolve("occupant_load")
+        assert load is not None and load.value == 600, (cad is not None, load)
+        exits = [f for f in run_all(facts).findings if f.rule_id == "EGRESS.EXIT_COUNT"]
+        assert exits and exits[0].severity == "CRITICAL", (cad is not None, exits)
+
+
+# ── blocks that expand past what one review can plot ────────────────────────
+
+def _nested(path, depth=6, fan=10):
+    """Block L0 is one line; each L_k holds `fan` inserts of L_(k-1). About 20
+    KB on disk; `fan ** depth` lines drawn."""
+    doc = ezdxf.new("R2018")
+    doc.blocks.new("L0").add_line((0, 0), (1, 0))
+    for k in range(1, depth + 1):
+        b = doc.blocks.new(f"L{k}")
+        for i in range(fan):
+            b.add_blockref(f"L{k - 1}", (i * 2, 0))
+    doc.modelspace().add_blockref(f"L{depth}", (0, 0))
+    doc.saveas(path)
+    return path
+
+
+def test_nested_blocks_that_expand_past_the_cap_are_refused_at_once(tmp_path):
+    """Measured: depth 5 took 131 s, depth 6 passed the 600 s timeout at 634 MB
+    and climbing, holding the instance's only CAD slot. Counted, not drawn: the
+    reference drawing expands to 304 147 entities in 0.09 s."""
+    import time
+
+    from fbcreview import cad
+    t0 = time.monotonic()
+    with pytest.raises(cad.SourceError) as exc:
+        cad.ingest(str(_nested(tmp_path / "nest.dxf")), str(tmp_path / "w"), name="nest.dxf")
+    assert exc.value.code == "drawing_too_large"
+    assert "expands" in exc.value.message
+    assert time.monotonic() - t0 < 10
+
+
+def test_a_block_array_is_counted_by_its_rows_and_columns(tmp_path):
+    from fbcreview.cad import read
+    doc = ezdxf.new("R2018")
+    doc.blocks.new("ONE").add_line((0, 0), (1, 0))
+    doc.modelspace().add_blockref("ONE", (0, 0), dxfattribs={
+        "row_count": 1000, "column_count": 1000, "row_spacing": 2, "column_spacing": 2})
+    assert read.expanded_count(doc) >= 1_000_000
+
+
+def test_in_a_zip_the_drawing_too_large_to_plot_costs_only_itself(tmp_path):
+    from fbcreview.cad import ingest
+    sheet = _drawing_with(tmp_path / "A-101.dxf", note="SHEET NOTE", sheet="A-101")
+    cs = ingest(_zip(tmp_path, [("A-101.dxf", sheet), ("NEST.dxf", _nested(tmp_path / "n.dxf"))]),
+                str(tmp_path / "w"))
+    assert len(cs.pages) == 1 and "SHEET NOTE" in _words(cs, 0)
+    assert any("NEST.dxf" in w and "expands" in w for w in cs.warnings), cs.warnings
+
+
+# ── one note seen twice is not two sheets agreeing ──────────────────────────
+
+def test_one_note_shown_on_two_sheets_is_not_a_cross_sheet_pass(tmp_path):
+    """One model-space TEXT "RISK CATEGORY: II", seen through a viewport on
+    each of two sheets, is one statement shown twice — the fact store says so —
+    but XSHEET.STATED_CONFLICT counted two sheets and issued a VERIFIED pass for
+    a comparison that could never fail. With nothing compared, it abstains."""
+    from fbcreview.cad import ingest
+    from fbcreview.pipeline import build_facts
+    from fbcreview.rules import run_all
+    doc = ezdxf.new("R2018", setup=True)
+    doc.header["$INSUNITS"] = 1
+    msp = doc.modelspace()
+    msp.add_lwpolyline([(0, 0), (480, 0), (480, 240), (0, 240)], close=True)
+    msp.add_text("RISK CATEGORY: II", height=12).set_placement((60, 120))
+    tb = doc.blocks.new("TB")
+    tb.add_attdef("SHEET_NO", (0, 0), dxfattribs={"height": 0.5})
+    for i, number in enumerate(("A-101", "A-102")):
+        lay = doc.layouts.new(number)
+        lay.page_setup(size=(36, 24), margins=(0, 0, 0, 0), units="inch")
+        lay.dxf_layout.dxf.taborder = i + 1
+        lay.add_viewport(center=(15, 12), size=(24, 14), view_center_point=(240, 120),
+                         view_height=14 * 48)
+        lay.add_blockref("TB", (31.0, 1.0)).add_auto_attribs({"SHEET_NO": number})
+    doc.saveas(tmp_path / "x.dxf")
+    cs = ingest(str(tmp_path / "x.dxf"), str(tmp_path / "w"), name="x.dxf")
+    res = run_all(build_facts(cs.pdf_path, cad=cs.data))
+    passed = [f for f in res.findings if f.rule_id == "XSHEET.STATED_CONFLICT"]
+    assert passed == [], [(f.status, f.result) for f in passed]
+    assert any(a.rule_id == "XSHEET.STATED_CONFLICT" for a in res.abstentions)

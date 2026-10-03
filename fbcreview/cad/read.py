@@ -334,6 +334,66 @@ def _window(layout: Paperspace) -> Tuple[float, float, float, float]:
 ARCH_D_MM = (914.4, 609.6)
 
 
+#: How many entities one drawing may expand to through its blocks before it is
+#: refused rather than plotted (`FBC_CAD_MAX_ENTITIES`). Measured: the
+#: reference drawing expands to 304 147 (296 000 at top level) and plots in
+#: about three minutes; a 20 KB drawing of blocks nested six deep, ten to a
+#: level, is a million lines, and ran past the 600 s timeout at 634 MB and
+#: climbing. 2 000 000 is more than six times the reference.
+DEFAULT_MAX_ENTITIES = 2_000_000
+
+
+def max_entities() -> int:
+    try:
+        return int(float(os.environ.get("FBC_CAD_MAX_ENTITIES", "") or DEFAULT_MAX_ENTITIES))
+    except ValueError:
+        return DEFAULT_MAX_ENTITIES
+
+
+def expanded_count(doc: Drawing, limit: Optional[int] = None) -> int:
+    """How many entities the drawing draws once every block is expanded:
+    each INSERT is its block's contents (times its rows and columns, for an
+    array) plus its attributes. Counted from each block once, never drawn —
+    0.09 s on the reference drawing. Stops counting past `limit`; a block that
+    contains itself counts as past it."""
+    cap = (limit if limit is not None else max_entities()) + 1
+    memo: Dict[str, int] = {}
+    busy: set = set()
+
+    def block(name: str) -> int:
+        if name in memo:
+            return memo[name]
+        if name in busy:
+            return cap
+        blk = doc.blocks.get(name)
+        if blk is None:
+            return 0
+        busy.add(name)
+        n = 0
+        for e in blk:
+            n = min(cap, n + entity(e))
+            if n >= cap:
+                break
+        busy.discard(name)
+        memo[name] = n
+        return n
+
+    def entity(e) -> int:
+        if e.dxftype() != "INSERT":
+            return 1
+        copies = max(1, int(e.dxf.get("row_count", 1) or 1)) * \
+            max(1, int(e.dxf.get("column_count", 1) or 1))
+        return min(cap, copies * (1 + block(e.dxf.name) + len(e.attribs)))
+
+    total = 0
+    for layout in doc.layouts:
+        for e in layout:
+            total = min(cap, total + entity(e))
+            if total >= cap:
+                return total
+    return total
+
+
 def has_sheet_layouts(doc: Drawing) -> bool:
     """Whether any paper-space layout has something on it — `sheets()` would
     plot a layout — without working out a single window."""

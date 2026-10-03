@@ -435,6 +435,27 @@ def ingest(src: str, workdir: str, name: str = "",
                 break
         if any(v == "embedded" for v in op.xrefs.values()):
             changed.add(member)
+        # Before anything expands it: `read.sheets` and the plot both draw every
+        # block out in full, and a 20 KB drawing of nested blocks held the only
+        # CAD slot until the timeout (measured). Counted, it costs nothing.
+        expanded = read.expanded_count(op.doc)
+        if expanded > read.max_entities():
+            why = (f"expands through its blocks to more than "
+                   f"{read.max_entities():,} entities, more than one review can plot "
+                   "(blocks nested in blocks, or block arrays)")
+            if kind != ZIP:
+                raise SourceError(
+                    "drawing_too_large",
+                    f"That drawing {why}. Purge it, explode the block arrays, or save the "
+                    "layouts for this permit to a drawing of their own, and upload that.")
+            warnings.append(f"{member} {why}; it is not in this review.")
+            drawings[member]["role"] = "too large"
+            finished[member] = op.to_dict()
+            op.doc = None
+            changed.add(member)
+            resolve = None
+            gc.collect()
+            continue
         specs = read.sheets(op.doc)
         has_layouts_now = any(not s.model for s in specs)
         drawings[member]["role"] = "sheets"

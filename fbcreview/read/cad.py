@@ -28,7 +28,7 @@ from ..cad import EMPTY_VIEW_SHARE
 from ..confidence import HIGH, Evidence
 from ..extract.scale import _LABEL, _agrees, label_value
 from ..facts import ViewScale
-from ..factstore import CAD, Claim
+from ..factstore import CAD, RIVAL_SCORE, Claim
 from ..layout.model import Pair, PageLayout
 from .deterministic import claims_from_pair
 
@@ -66,6 +66,15 @@ def attribute_claims(sidecar: dict, codes: Dict[int, str]) -> List[Claim]:
     for rec in sidecar.get("claims", []):
         if rec.get("type") != "attribute" or not rec.get("box"):
             continue
+        # A tag describes what it tags. Room 101's OCCUPANT_LOAD = 45, seen
+        # through a viewport, beat the printed TOTAL OCCUPANT LOAD 600 and
+        # turned "600 requires 3 exits; 2 provided" into a verified pass
+        # (measured). An attribute seen through a viewport, or on a block that
+        # repeats in model space, is not a statement about the building; what
+        # it prints is still on the sheet for the layout reader, with its own
+        # printed label or none.
+        if rec.get("viewport") or rec.get("repeated"):
+            continue
         label = _label(rec)
         if not label:
             continue
@@ -76,6 +85,9 @@ def attribute_claims(sidecar: dict, codes: Dict[int, str]) -> List[Claim]:
         layout = page_info.get(pno, {}).get("layout", "")
         for c in claims_from_pair(pair, codes.get(pno, f"p{pno + 1}"), method=CAD):
             c.raw = rec["text"]            # what is printed; the tag is not
+            # A tag's name is never printed, so it never outranks a printed
+            # label: at RIVAL_SCORE it can still raise a conflict, never win one.
+            c.score = min(c.score, RIVAL_SCORE)
             c.source = f"dxf:{rec.get('source') or rec.get('handle', '')}"
             c.layout = layout
             c.layer = rec.get("layer", "")

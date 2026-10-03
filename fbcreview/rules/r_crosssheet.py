@@ -216,7 +216,11 @@ def stated_conflict(f: ProjectFacts, out: RuleResult):
     shared = []
     for key, role in store.keys():
         r = store.resolve(key, role)
-        if r is not None and len(r.sheets) > 1 and not r.conflict:
+        # Sheets that each state it: one drawing entity seen on two sheets
+        # cannot disagree with itself, so it was never compared, and a pass on
+        # it would be "not checked" dressed as "checked" (measured: V-XS PASS
+        # for one model-space note shown through two viewports).
+        if r is not None and len(r.stating_sheets) > 1 and not r.conflict:
             shared.append((key, role, r))
     for i, r in enumerate(conflicts):
         best = r.best
@@ -239,7 +243,8 @@ def stated_conflict(f: ProjectFacts, out: RuleResult):
             f"Decide which {name} is right and make every sheet that states it agree.",
             box=best.box))
     if shared and not conflicts:
-        listed = sorted({f"{_name(k, role)} ({', '.join(r.sheets)})" for k, role, r in shared})
+        listed = sorted({f"{_name(k, role)} ({', '.join(r.stating_sheets)})"
+                         for k, role, r in shared})
         first = shared[0][2].best
         out.findings.append(Finding(
             "V-XS", "XSHEET.STATED_CONFLICT", "PASS", "VERIFIED", "General",
