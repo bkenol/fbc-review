@@ -39,7 +39,18 @@ def wind_standard(f: ProjectFacts, out: RuleResult):
                     f"terrain to justify it in every direction, which is a site question, "
                     f"not a declaration one." if exposure else "")
 
-    superseded = current is not None and current.effective > cited.effective
+    if current is not None and current.effective > cited.effective and current.asce7 is None:
+        # A newer edition is in force but the corpus records no ASCE 7 for it.
+        # Saying the cited standard was "replaced" would be a claim about a
+        # standard nobody has transcribed — abstain until a person has.
+        out.abstentions.append(Abstention(
+            "STRUCT.WIND_STANDARD", "the edition in force has no ASCE 7 adoption recorded",
+            detail=current.key))
+        return
+    # Superseded *for wind* only when the edition in force adopts a different
+    # ASCE 7. A new code edition that keeps the same standard keeps the same maps.
+    superseded = (current is not None and current.effective > cited.effective
+                  and current.asce7 != cited.asce7)
     if not superseded:
         out.findings.append(Finding(
             "V-WIND", "STRUCT.WIND_STANDARD", "PASS", "VERIFIED", "Structural",

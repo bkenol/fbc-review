@@ -208,6 +208,7 @@ _PATTERNS: Tuple[Tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"not carried in this build'?s corpus"), CORPUS),
     (re.compile(r"has no single gross factor"), CORPUS),
     (re.compile(r"no asce 7 edition is recorded"), CORPUS),
+    (re.compile(r"no asce 7 adoption recorded"), CORPUS),
     (re.compile(r"carries no effective date"), CORPUS),
     # Geometry: layers, scale, line work.
     (re.compile(r"no cad layer matching"), GEOMETRY),
