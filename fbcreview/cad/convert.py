@@ -23,6 +23,10 @@ layouts, 296 000 model-space entities):
 
 Nothing about the drawing's content or its path is logged — stderr is reduced to
 counts by kind, because LibreDWG quotes handles and object names in it.
+
+`dwg2dxf` is a C program reading an untrusted file, so it is given a minimal
+environment (`_converter_env`) rather than this process's: whatever else the
+process holds — an API key, a credentials path — is none of its business.
 """
 from __future__ import annotations
 
@@ -78,10 +82,21 @@ def binary() -> Optional[str]:
     return shutil.which("dwg2dxf")
 
 
+#: All of the environment `dwg2dxf` is given: where to find programs and the
+#: library it links against, and the locale it reads a file name in.
+#: `SYSTEMROOT` only exists on Windows, where nothing starts without it.
+_CONVERTER_ENV = ("PATH", "LD_LIBRARY_PATH", "LANG", "LC_ALL", "SYSTEMROOT")
+
+
+def _converter_env() -> Dict[str, str]:
+    return {k: os.environ[k] for k in _CONVERTER_ENV if k in os.environ}
+
+
 @lru_cache(maxsize=4)
 def _version_of(path: str) -> str:
     try:
-        out = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=20)
+        out = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=20,
+                             env=_converter_env())
     except (OSError, subprocess.SubprocessError):
         return ""
     first = (out.stdout or out.stderr or "").strip().splitlines()
@@ -146,7 +161,7 @@ def dwg_to_dxf(dwg_path: str, dxf_path: str, timeout_s: Optional[int] = None,
     try:
         proc = subprocess.run([b, "-y", "-o", dxf_path, dwg_path], capture_output=True,
                               text=True, errors="replace", timeout=timeout,
-                              cwd=os.path.dirname(dxf_path) or None,
+                              cwd=os.path.dirname(dxf_path) or None, env=_converter_env(),
                               preexec_fn=_file_size_limit(max_bytes) if max_bytes else None)
     except subprocess.TimeoutExpired:
         raise ConversionFailed(f"The drawing took longer than {timeout} s to convert and "

@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from fbcreview import declaration_schema
 from fbcreview.declaration import ProjectDeclaration
@@ -435,7 +436,8 @@ async def prefill_declaration(
         if kind in upload.CAD_KINDS:
             # Refused the way a review would refuse it first, so an unsafe zip
             # or an unreadable DWG is reported now, with the review's own code.
-            upload.admit_cad(local, kind)
+            # On the thread pool: it reads the file, and this is the event loop.
+            await run_in_threadpool(upload.admit_cad, local, kind)
             # Never converted here. Reading a real drawing takes minutes and a
             # gigabyte, and this handler runs on the event loop that answers
             # every other request on the instance.
@@ -564,7 +566,9 @@ async def create_review(
             # A header and a zip directory: everything that can be refused
             # without reading the drawing, refused before a job or a blob exists.
             # The page cap and the rest wait for the worker, which reads it.
-            upload.admit_cad(local, kind)
+            # On the thread pool, so a hostile zip's directory never holds the
+            # event loop that answers every other request on the instance.
+            await run_in_threadpool(upload.admit_cad, local, kind)
             pages, source = 0, None
         else:
             pages, source = upload.probe(local, allow_raster=parsed.convert_raster)

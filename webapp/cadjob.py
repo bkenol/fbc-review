@@ -16,11 +16,23 @@ three measured reasons:
 At most `FBC_CAD_CONCURRENCY` of them run at once per instance, each under
 `FBC_CAD_TIMEOUT_S`; a later job waits for a slot rather than doubling the
 memory. The process group is killed at the deadline, so the converter the
-adapter started goes with it.
+adapter started goes with it — and then reaped. Killing the group orphans the
+converter, an orphan is re-parented to PID 1, and in the container PID 1 is
+this service (`CMD exec uvicorn`): nothing else would ever collect it, and
+every timed-out DWG would leave a zombie in the process table for the life of
+the instance.
 
-Nothing the subprocess prints is logged. Its stderr carries layout names, file
-names and ezdxf's repair notes, all of them the drawing's content; the log gets
-counts and an outcome code.
+The subprocess reads an untrusted upload, so it is given only the environment
+it needs (`_ADAPTER_ENV`), never the service's: no API key, no credentials
+path, no SMTP password. The converter it runs gets less still
+(`fbcreview/cad/convert.py`).
+
+Nothing the subprocess prints is logged, or kept. Its stderr carries layout
+names, file names and ezdxf's notes on values it could not parse — the values
+themselves, the drawing's own text, in any quantity the drawing provokes — so
+it is counted as it streams past and dropped: the log gets a line count and an
+outcome code. Of stdout, which ends in the one JSON line the adapter prints,
+the last 64 KiB are kept.
 """
 from __future__ import annotations
 
@@ -123,6 +135,86 @@ class _TimedOut(Exception):
     pass
 
 
+# ── the subprocess's environment ─────────────────────────────────────────────
+#: All of the service's environment the adapter is given, by name. A new
+#: variable — a new secret most of all — is withheld until somebody decides the
+#: adapter needs it; a prefix would hand it over unasked.
+_ADAPTER_ENV = (
+    # Running a program at all, and reading file names in the right locale.
+    # `SYSTEMROOT` only exists on Windows, where Python does not start without it.
+    "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "LD_LIBRARY_PATH", "SYSTEMROOT",
+    # Where ezdxf keeps its font cache and reads its configuration. The
+    # Dockerfile builds the cache under XDG_CACHE_HOME so the first drawing on a
+    # fresh instance does not pay for the font scan; without it, every one would.
+    "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
+    # What the adapter itself reads: `fbcreview/cad/convert.py` and `__init__.py`.
+    "FBC_DWG2DXF", "FBC_DWG_TIMEOUT_S", "FBC_CAD_MAX_DXF_MB",
+)
+
+
+def _adapter_env() -> Dict[str, str]:
+    env = {k: os.environ[k] for k in _ADAPTER_ENV if k in os.environ}
+    # The repository root first, so `-m fbcreview.cad` resolves the package the
+    # service runs, whatever the working directory.
+    env["PYTHONPATH"] = os.pathsep.join(
+        p for p in (str(_ROOT), os.environ.get("PYTHONPATH", "")) if p)
+    return env
+
+
+# ── its output ───────────────────────────────────────────────────────────────
+#: The most of the adapter's stdout kept: its end, where its one JSON line is.
+#: That line is counts — and, from markup, the page numbers without a DXF, two
+#: kilobytes at the 300-sheet cap — so 64 KiB keeps it whole with room to spare.
+_STDOUT_KEPT = 64 * 1024
+_CHUNK = 64 * 1024
+
+
+class _Drain(threading.Thread):
+    """Read one of the adapter's pipes to its end, keeping its last `keep` bytes
+    and a count of its lines, and nothing else.
+
+    A thread rather than a file in the job's directory: on Cloud Run that disk is
+    memory, so a file of stderr would cost what the buffer did. Read through to
+    the end so the adapter never blocks on a full pipe, and closed by this thread
+    when done, since closing a pipe another thread is reading is not safe.
+    """
+
+    def __init__(self, stream, keep: int):
+        super().__init__(daemon=True)
+        self._stream = stream
+        self._keep = keep
+        self.tail = bytearray()
+        #: Lines by newline, an unterminated last one included.
+        self.lines = 0
+
+    def run(self) -> None:
+        open_line = False
+        try:
+            while True:
+                chunk = self._stream.read1(_CHUNK)
+                if not chunk:
+                    break
+                self.lines += chunk.count(b"\n")
+                open_line = not chunk.endswith(b"\n")
+                if self._keep:
+                    self.tail += chunk
+                    if len(self.tail) > self._keep:
+                        del self.tail[:-self._keep]
+        except (OSError, ValueError):
+            pass
+        finally:
+            self.lines += open_line
+            try:
+                self._stream.close()
+            except OSError:
+                pass
+
+
+# ── ending it, and everything it started ─────────────────────────────────────
+#: Seconds to wait, after the kill, for the group to be gone and its pipes shut.
+_REAP_SECONDS = 5.0
+
+
 def _kill(proc: subprocess.Popen) -> None:
     """Kill the subprocess and everything it started (the DWG converter)."""
     try:
@@ -134,32 +226,99 @@ def _kill(proc: subprocess.Popen) -> None:
         pass
 
 
+def _await_exit(proc: subprocess.Popen, timeout: float) -> Optional[bool]:
+    """Wait up to `timeout` s for the adapter to exit.
+
+    False at the deadline. True once it has exited but is not yet reaped: its pid
+    is still held, so its process group's id cannot have passed to another
+    process, and the group can be signalled without risk of hitting a stranger.
+    None once it has exited and is already reaped — by the wait itself where the
+    platform has no `waitid` — when the group's id may already be another's.
+    """
+    if not hasattr(os, "waitid"):                              # pragma: no cover — not Linux
+        try:
+            proc.wait(timeout=timeout)
+            return None
+        except subprocess.TimeoutExpired:
+            return False
+    deadline = time.monotonic() + timeout
+    delay = 0.0005
+    while True:
+        try:
+            if os.waitid(os.P_PID, proc.pid,
+                         os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                return True
+        except ChildProcessError:
+            return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(delay, remaining))
+        delay = min(delay * 2, 0.05)
+
+
+def _reap(proc: subprocess.Popen) -> None:
+    """Collect the adapter, then anything of its process group left to this process.
+
+    A converter killed with the adapter has lost its parent, and is re-parented
+    to the nearest subreaper or PID 1. In the container that is this service, so
+    unless it is collected here it stays a zombie for the life of the instance.
+    Elsewhere (a developer's machine, the test suite) it goes to an init that
+    reaps, and `waitpid` finds nothing of the group: there is nothing to do.
+    """
+    try:
+        proc.wait(timeout=_REAP_SECONDS)
+    except subprocess.TimeoutExpired:                          # pragma: no cover
+        log.warning("cad subprocess outlived its kill")
+    if not hasattr(os, "killpg"):                              # pragma: no cover — Windows
+        return
+    deadline = time.monotonic() + _REAP_SECONDS
+    while True:
+        try:
+            pid, _ = os.waitpid(-proc.pid, os.WNOHANG)
+        except ChildProcessError:
+            return                                   # none of the group is ours
+        if pid == 0:                                 # ours, still dying
+            if time.monotonic() >= deadline:
+                log.warning("cad subprocess group outlived its kill")
+                return
+            time.sleep(0.01)
+
+
 def _run(args: List[str], cwd: Path, timeout: int) -> Tuple[int, str, int, float]:
     """Run `python -m fbcreview.cad ARGS` under the gate.
 
-    Returns (exit code, stdout, stderr line count, seconds). Raises _TimedOut.
-    stderr is counted and dropped, never returned: see the module docstring.
+    Returns (exit code, the end of stdout, stderr line count, seconds). Raises
+    _TimedOut. stderr is counted and dropped as it arrives, never held or
+    returned; of stdout only the last `_STDOUT_KEPT` bytes are kept. See the
+    module docstring.
     """
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(
-        p for p in (str(_ROOT), env.get("PYTHONPATH", "")) if p)
     cmd = [sys.executable, "-m", "fbcreview.cad", *args]
     with _slots():
         t0 = time.monotonic()
         proc = subprocess.Popen(
-            cmd, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
+            cmd, cwd=str(cwd), env=_adapter_env(), stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             # Its own process group, so a kill at the deadline reaches the
             # converter the adapter started as well as the adapter.
             start_new_session=hasattr(os, "killpg"),
         )
-        try:
-            out, err = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
+        out, err = _Drain(proc.stdout, _STDOUT_KEPT), _Drain(proc.stderr, 0)
+        out.start()
+        err.start()
+        exited = _await_exit(proc, timeout)
+        if exited is not None:
+            # At the deadline, the adapter and the converter it started. After
+            # a clean exit, anything it left running — nothing, normally; a
+            # converter, if the adapter itself was killed from outside.
             _kill(proc)
-            proc.communicate()
+        _reap(proc)
+        for drain in (out, err):
+            drain.join(_REAP_SECONDS)
+        if exited is False:
             raise _TimedOut()
-        return proc.returncode, out or "", len((err or "").splitlines()), time.monotonic() - t0
+        stdout = bytes(out.tail).decode("utf-8", errors="replace")
+        return proc.returncode, stdout, err.lines, time.monotonic() - t0
 
 
 def _last_json(stdout: str) -> Optional[Dict[str, Any]]:

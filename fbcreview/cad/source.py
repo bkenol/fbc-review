@@ -18,12 +18,15 @@ made from the leading bytes:
 A zip is the one input that can attack the service rather than merely fail to
 parse: a member named `../../etc/passwd`, ten thousand members, or a few
 kilobytes that inflate to gigabytes. `unpack()` refuses all three before a byte
-is written, and keeps only members that sniff as a drawing.
+is written, and keeps only members that sniff as a drawing. The member count is
+read from the zip's end record (`check_zip_directory`) before `zipfile` is
+asked to open it, because opening it parses every member's entry first.
 """
 from __future__ import annotations
 
 import os
 import re
+import struct
 import zipfile
 import zlib
 from dataclasses import dataclass, field
@@ -97,6 +100,18 @@ MAX_UNPACKED_BYTES = 1024 ** 3
 #: Deflate does well on DXF text (about 10:1 measured); anything far beyond that
 #: is a bomb rather than a drawing.
 MAX_RATIO = 200
+#: The most central directory one member of a drawing set can need: the 46-byte
+#: fixed entry, a name of up to 1 KiB (Windows stops a path at 260 characters)
+#: and 2 KiB of extra field and comment (the timestamps, Unix ids, ZIP64 sizes
+#: and NTFS times real archivers write come to about 100 bytes). `zipfile` walks
+#: a directory by its size in bytes, not by the count beside it, so this is what
+#: bounds the work of opening a zip: `MAX_MEMBERS` of these is 1.2 MB. Measured
+#: on a reviewer's 122 MB zip whose directory lists 2.3 million members:
+#: zipfile took 10 s and 1.1 GB to parse it before the count was looked at;
+#: read from the end record, it is refused in under a millisecond.
+MAX_DIRECTORY_ENTRY_BYTES = 46 + 1024 + 2048
+
+_UNOPENABLE_ZIP = "That zip file could not be opened. It may be damaged or incompletely uploaded."
 
 
 class SourceError(Exception):
@@ -106,6 +121,112 @@ class SourceError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+# ── a zip's end records ──────────────────────────────────────────────────────
+_EOCD = b"PK\x05\x06"                 # end of central directory, 22 bytes + comment
+_EOCD64_LOCATOR = b"PK\x06\x07"       # 20 bytes, just before the end record
+_EOCD64 = b"PK\x06\x06"               # 56 bytes, where the locator points
+_EOCD_SIZE, _LOCATOR_SIZE, _EOCD64_SIZE = 22, 20, 56
+#: The classic record's fields when the real values are in the ZIP64 record.
+_PLACEHOLDERS = (0xFFFF, 0xFFFFFFFF)
+
+
+@dataclass(frozen=True)
+class ZipDirectory:
+    """What a zip's end records declare about its central directory."""
+
+    entries: int
+    #: Bytes the central directory occupies: what `zipfile` reads and parses.
+    size: int
+
+
+def zip_directory(path: str) -> Optional[ZipDirectory]:
+    """The member count and directory size a zip declares, from its end records only.
+
+    Reads the last 64 KiB and at most two 56-byte records — never the directory
+    itself. Found where `zipfile` finds them: the end record as the last 22
+    bytes, else the last one in the final 64 KiB + 22 (behind an archive
+    comment); and, when a ZIP64 locator sits in front of it, the ZIP64 record at
+    the offset the locator gives and directly before the locator. Python
+    releases differ over which of those two they read, and an old one falls back
+    to the classic record when there is none directly before the locator, so
+    every value one of them could act on is a candidate and the largest is
+    returned. None when there is no end record: not a zip `zipfile` can open.
+    """
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        file_size = fh.tell()
+        if file_size < _EOCD_SIZE:
+            return None
+        start = max(file_size - (1 << 16) - _EOCD_SIZE, 0)
+        fh.seek(start)
+        tail = fh.read()
+        if tail[-_EOCD_SIZE:-_EOCD_SIZE + 4] == _EOCD and tail[-2:] == b"\x00\x00":
+            at = len(tail) - _EOCD_SIZE
+        else:
+            at = tail.rfind(_EOCD)
+        if at < 0 or len(tail) - at < _EOCD_SIZE:
+            return None
+        _, _, _, here, total, size, _, _ = struct.unpack_from("<4sHHHHIIH", tail, at)
+
+        counts: List[int] = []
+        sizes: List[int] = []
+        before_locator = False
+        locator_at = start + at - _LOCATOR_SIZE
+        if locator_at >= 0:
+            fh.seek(locator_at)
+            locator = fh.read(_LOCATOR_SIZE)
+            if len(locator) == _LOCATOR_SIZE and locator[:4] == _EOCD64_LOCATOR:
+                _, _, record_at, _ = struct.unpack("<4sIQI", locator)
+                adjacent = locator_at - _EOCD64_SIZE
+                for where in {record_at, adjacent}:
+                    if not 0 <= where <= adjacent:
+                        continue
+                    fh.seek(where)
+                    record = fh.read(_EOCD64_SIZE)
+                    if len(record) == _EOCD64_SIZE and record[:4] == _EOCD64:
+                        fields = struct.unpack("<4sQHHIIQQQQ", record)
+                        counts.append(max(fields[6], fields[7]))
+                        sizes.append(fields[8])
+                        before_locator = before_locator or where == adjacent
+        if before_locator:
+            # Every reader takes a ZIP64 record, so 0xFFFF and 0xFFFFFFFF in the
+            # classic record are placeholders for it. Anything else there is a
+            # real value an archiver wrote as well, and is bounded too.
+            counts += [c for c in (here, total) if c != _PLACEHOLDERS[0]]
+            sizes += [size] if size != _PLACEHOLDERS[1] else []
+        else:
+            counts += [here, total]
+            sizes.append(size)
+    return ZipDirectory(entries=max(counts), size=max(sizes))
+
+
+def check_zip_directory(path: str) -> ZipDirectory:
+    """Refuse a zip whose end record declares more than one can safely open.
+
+    Run before `zipfile.ZipFile(path)`, which parses the whole central directory
+    on construction — a cost set by the upload, not by `MAX_MEMBERS`. Raises
+    SourceError: `zip_too_large` for more members than `MAX_MEMBERS`, or a
+    directory larger than that many members could need; `corrupt_zip` when there
+    is no end record to read.
+    """
+    try:
+        found = zip_directory(path)
+    except OSError:
+        found = None
+    if found is None:
+        raise SourceError("corrupt_zip", _UNOPENABLE_ZIP)
+    if found.entries > MAX_MEMBERS:
+        raise SourceError("zip_too_large",
+                          f"That zip holds {found.entries} files. The limit is {MAX_MEMBERS}; "
+                          "upload the permit set's drawings only.")
+    if found.size > MAX_MEMBERS * MAX_DIRECTORY_ENTRY_BYTES:
+        raise SourceError("zip_too_large",
+                          f"That zip's directory runs to {found.size / 1024 ** 2:,.1f} MB, more "
+                          f"than {MAX_MEMBERS} files could need, and {MAX_MEMBERS} is the limit. "
+                          "It was not opened; upload the permit set's drawings only.")
+    return found
 
 
 def sniff_bytes(head: bytes) -> Optional[str]:
@@ -203,11 +324,12 @@ def unpack(zip_path: str, dest: str) -> Unpacked:
     root = Path(dest)
     root.mkdir(parents=True, exist_ok=True)
     out = Unpacked(root=root)
+    # From the end record, before zipfile parses every entry of the directory.
+    check_zip_directory(zip_path)
     try:
         zf = zipfile.ZipFile(zip_path)
     except (zipfile.BadZipFile, OSError):
-        raise SourceError("corrupt_zip", "That zip file could not be opened. It may be "
-                                         "damaged or incompletely uploaded.")
+        raise SourceError("corrupt_zip", _UNOPENABLE_ZIP)
     with zf:
         infos = zf.infolist()
         if len(infos) > MAX_MEMBERS:
