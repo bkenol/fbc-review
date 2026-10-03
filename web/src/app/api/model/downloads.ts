@@ -16,7 +16,7 @@ export interface Downloads {
     expires_at: string;
     findings_json: string;
     /**
-     * The drawing with the findings drawn into it on layers FBC-REVIEW and FBC-REVIEW-TEXT, as zipped DXF. Empty unless the upload was a drawing, and empty if writing it failed — the marked-up PDF is the review of record.
+     * The drawing with the findings drawn into it on layers FBC-REVIEW (what needs action), FBC-REVIEW-VERIFIED (what was checked and found sufficient) and FBC-REVIEW-TEXT, as zipped DXF. Empty unless the upload was a drawing, and empty if writing it failed — the marked-up PDF is the review of record.
      */
     markup_dxf?: string;
     markup_pdf: string;

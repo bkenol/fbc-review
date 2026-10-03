@@ -225,3 +225,98 @@ def test_every_refusal_the_adapter_can_raise_is_typed_by_the_service():
              and node.args and isinstance(node.args[0], ast.Constant)}
     assert "drawing_too_large" in codes
     assert codes <= set(_CODES), codes - set(_CODES)
+
+
+# ── a converter is named only when it ran ───────────────────────────────────
+
+def test_a_dxf_upload_names_no_converter_even_where_one_is_installed(tmp_path, monkeypatch):
+    """`CadReport.converter` is "empty when none ran (a DXF)". It was filled
+    from whatever `dwg2dxf` was installed, so on the production image every DXF
+    review said it had been converted by LibreDWG."""
+    from fixtures import cad_drawings as drawings
+
+    from fbcreview import cad
+    from fbcreview.cad import convert
+
+    prepared = drawings.permit_set(str(tmp_path / "prepared.dxf"))
+    monkeypatch.setenv("FBC_DWG2DXF", drawings.fake_converter(str(tmp_path), prepared["path"]))
+    convert._version_of.cache_clear()
+    assert convert.version() == "dwg2dxf 0.0-test"           # installed
+
+    dxf = cad.ingest(prepared["path"], str(tmp_path / "dxf"), name="A-101.dxf")
+    assert dxf.data["converter"] == ""
+
+    src = tmp_path / "A-101.dwg"
+    src.write_bytes(drawings.dwg_bytes())
+    dwg = cad.ingest(str(src), str(tmp_path / "dwg"), name="A-101.dwg")
+    assert dwg.data["converter"] == "dwg2dxf 0.0-test"
+    convert._version_of.cache_clear()
+
+
+# ── a sheet whose views frame nothing ───────────────────────────────────────
+
+def _two_plans(path):
+    """`PLAN` frames the floor plate at 1:96. `ROOF` is the same sheet with its
+    view panned to empty model space — the reference drawing's 6C, whose 1:128
+    "ROOF LEVEL PLANKOUT" viewport frames 5 entities, none on a plotting layer,
+    while 2A's 1:96 plan frames 704. Both carry a small detail viewport that
+    does show something, and a title-block note in paper space."""
+    doc = ezdxf.new("R2018")
+    doc.header["$INSUNITS"] = 1
+    msp = doc.modelspace()
+    for i in range(40):                                  # an 80 x 40 ft plate of walls
+        msp.add_line((i * 24, 0), (i * 24, 480))
+    msp.add_lwpolyline([(0, 0), (960, 0), (960, 480), (0, 480)], close=True)
+    doc.layers.add("HIDDEN-OFF").off()
+    msp.add_line((5000, 5000), (5100, 5100), dxfattribs={"layer": "HIDDEN-OFF"})
+    for i, (tab, centre) in enumerate((("PLAN", (480, 240)), ("ROOF", (5050, 5050)))):
+        lay = doc.layouts.new(tab)
+        lay.page_setup(size=(36, 24), margins=(0, 0, 0, 0), units="inch")
+        lay.dxf_layout.dxf.taborder = i + 1
+        lay.add_viewport(center=(15, 13), size=(26, 18), view_center_point=centre,
+                         view_height=18 * 96)
+        lay.add_viewport(center=(32, 20), size=(3, 3), view_center_point=(24, 24),
+                         view_height=3 * 16)
+        lay.add_text("GENERAL NOTES", height=0.2).set_placement((30, 2))
+    doc.saveas(path)
+    return path
+
+
+def test_a_sheet_whose_views_frame_nothing_says_so(tmp_path):
+    from fbcreview.cad import ingest
+
+    cs = ingest(str(_two_plans(tmp_path / "plans.dxf")), str(tmp_path / "w"), name="plans.dxf")
+    plan, roof = cs.data["pages"]
+    drawn = {p["layout"]: [v["drawn"] for v in p["viewports"]] for p in (plan, roof)}
+    big_plan, big_roof = (max(p["viewports"], key=lambda v: (v["rect"][2] - v["rect"][0])
+                              * (v["rect"][3] - v["rect"][1])) for p in (plan, roof))
+    assert big_plan["drawn"] >= 40, drawn
+    assert big_roof["drawn"] == 0, drawn                 # the line on an OFF layer does not plot
+    assert all(n > 0 for n in drawn["PLAN"]), drawn
+    assert plan.get("empty_view_share", 0) == 0
+    assert roof["empty_view_share"] > 0.9
+
+    said = [w for w in cs.data["warnings"] if "frame nothing" in w]
+    assert len(said) == 1 and "ROOF" in said[0] and "PLAN" not in said[0], cs.data["warnings"]
+
+
+def test_the_margin_of_a_sheet_that_shows_nothing_says_what_was_not_seen(tmp_path):
+    import pymupdf
+
+    from fbcreview.cad import ingest
+    from fbcreview.options import ReviewOptions
+    from fbcreview.pipeline import build_facts
+    from fbcreview.render.markup import render
+    from fbcreview.rules import run_all
+
+    cs = ingest(str(_two_plans(tmp_path / "plans.dxf")), str(tmp_path / "w"), name="plans.dxf")
+    facts = build_facts(cs.pdf_path, cad=cs.data)
+    assert [s["empty_view_share"] > 0.5 for s in facts.meta["cad"]["sheets"]] == [False, True]
+    res = run_all(facts)
+    out = str(tmp_path / "markup.pdf")
+    render(cs.pdf_path, out, res.findings, facts.sheets, ReviewOptions(), res.abstentions,
+           res.reconciled, cad=facts.meta["cad"])
+    with pymupdf.open(out) as doc:
+        plan, roof = (" ".join(doc[i].get_text().split()) for i in (0, 1))
+    assert "frame nothing drawn" not in plan
+    assert "frame nothing drawn" in roof

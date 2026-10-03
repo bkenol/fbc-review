@@ -123,9 +123,11 @@
               <span class="what">
                 <b class="name">{{ entry.project_name || entry.filename }}</b>
                 <span class="sub">
-                  {{ entry.filename }} · {{ entry.pages }} sheet{{
-                    entry.pages === 1 ? '' : 's'
-                  }}
+                  {{ entry.filename }}
+                  <!-- A drawing that stopped before it was plotted has no page count. -->
+                  @if (entry.pages) {
+                    · {{ entry.pages }} sheet{{ entry.pages === 1 ? '' : 's' }}
+                  }
                 </span>
               </span>
               <span class="counts" aria-hidden="true">

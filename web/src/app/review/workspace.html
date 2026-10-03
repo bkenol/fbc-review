@@ -6,7 +6,21 @@
     <a routerLink="/">← All reviews</a>
     <h2>{{ job()?.filename || 'Review' }}</h2>
     @if (job(); as review) {
-      <span class="dim">{{ review.pages }} sheets</span>
+      <!-- A drawing upload is shown as the sheets this review plotted from it,
+           which is worth saying: they are not a PDF anybody submitted. -->
+      @if (drawing(); as format) {
+        <span
+          class="chip"
+          title="These sheets were plotted from the uploaded drawing by this review, not uploaded as a PDF"
+        >
+          Plotted from {{ format }}
+          @if (review.pages) {
+            · {{ review.pages }} sheet{{ review.pages === 1 ? '' : 's' }}
+          }
+        </span>
+      } @else if (review.pages) {
+        <span class="dim">{{ review.pages }} sheet{{ review.pages === 1 ? '' : 's' }}</span>
+      }
       @if (review.options.mode === 'training') {
         <!-- Ran against this reviewer's own candidate profile rather than the
              approved one. Worth saying on the review itself: two reviews of one
@@ -36,6 +50,18 @@
       }
     }
     <span class="spacer"></span>
+    <!-- The one download offered here: the review page has the others, and
+         this is the one a drafter opens in CAD beside the sheet in front of them. -->
+    @if (job()?.downloads?.markup_dxf) {
+      <button
+        type="button"
+        class="inline"
+        title="The drawing itself, with the findings marked on FBC-REVIEW layers of its own, as a zipped DXF"
+        (click)="downloadDxf()"
+      >
+        Marked-up DXF
+      </button>
+    }
     @if (trainingOn() && training.markups().length) {
       <button type="button" class="inline" (click)="preview()">
         Hand over {{ training.markups().length }} annotation{{
@@ -255,7 +281,7 @@
               <!-- Said plainly, because the whole value of this panel is that
                    you can tell whose mark you are reading. -->
               <p class="hint">
-                This was already inside the uploaded PDF. It is not something this
+                This was already inside the uploaded file. It is not something this
                 review found, and nothing you say about it is feedback on the review.
               </p>
               <button type="button" class="inline" (click)="clearSelection()">Close</button>

@@ -13,6 +13,7 @@ import { RouterLink } from '@angular/router';
 import {
   Abstention,
   AbstentionKindInfo,
+  CadReport,
   Finding,
   HistoryEntry,
   ReviewOptions,
@@ -21,11 +22,21 @@ import {
 } from '../api';
 import { AuthService } from '../core/auth';
 import { DeclarationForm } from './declaration/declaration-form';
-import { ReviewService } from './review-service';
+import { DownloadKind, ReviewService } from './review-service';
+import { acceptFor, isCad, projectName, uploadKind } from './upload-kind';
 import { findingKey } from '../viewer/findings';
 
 /** Tally order. VERIFIED and MEASURED last: they are coverage, not problems. */
 const TALLY = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'MEASURED', 'VERIFIED'] as const;
+
+/**
+ * The worker's name for plotting a drawing upload (`webapp/worker.py`, `CAD_STAGE`).
+ *
+ * Byte for byte the server's string: the detail line below is keyed on it, and a
+ * one-character drift loses the explanation for the longest station of the job
+ * without any error. `tests/test_client_stage_names.py` holds the two together.
+ */
+const CAD_STAGE = 'Converting the drawing';
 
 /** The worker's name for the AI reading stage (`webapp/worker.py`, `AI_STAGE`). */
 const AI_STAGE = 'Reading sheets with AI';
@@ -55,6 +66,10 @@ const REVIEW_OUTCOME: Record<string, string> = {
  * with scanned sheets has a sixth stage the others do not.
  */
 const STAGE_DETAIL: Record<string, string> = {
+  [CAD_STAGE]:
+    'A DWG is converted to DXF, then every layout is plotted as a vector sheet with its CAD ' +
+    'layers, text and block attributes kept, so the rest of the review reads it as it would ' +
+    'a plotted set. Minutes rather than seconds on a large drawing.',
   'Reading the PDF': 'Opening every sheet, indexing sheet numbers and reading the CAD layers.',
   'Rebuilding scanned sheets':
     'OCR over the raster pages, and tracing their linework back into vectors.',
@@ -139,6 +154,29 @@ export class Review implements OnDestroy {
 
   protected readonly file = signal<File | null>(null);
 
+  /**
+   * Whether the chosen set is a drawing (DWG, DXF or a zip of them) rather than
+   * a PDF. Decides the options shown, the timing hint and whether the set is
+   * read for the questionnaire — see `upload-kind.ts` for why each differs.
+   */
+  protected readonly cadFile = computed(() => {
+    const file = this.file();
+    return !!file && isCad(file.name);
+  });
+
+  /** The file input's `accept`, narrowed to what this deployment admits. */
+  protected readonly accepts = computed(() => acceptFor(this.config()?.accepted_formats));
+
+  /**
+   * Whether this deployment converts DWG. Only a deployment that says it does
+   * not is taken at its word; an older server that publishes no list is
+   * assumed to, and refuses at upload if it cannot.
+   */
+  protected readonly dwgAccepted = computed(() => {
+    const formats: readonly string[] | undefined = this.config()?.accepted_formats;
+    return !formats?.length || formats.includes('dwg');
+  });
+
   /** What the chosen set states about itself, for the questionnaire to offer. */
   protected readonly suggestions = computed(() => this.reviews.prefill()?.fields ?? []);
   protected readonly readingSet = this.reviews.reading;
@@ -169,6 +207,35 @@ export class Review implements OnDestroy {
 
   /** Whether this review's sheets are read by the AI reader as well. */
   protected readonly aiReading = computed(() => this.stages().includes(AI_STAGE));
+
+  /**
+   * Whether the review in hand was made from a drawing.
+   *
+   * Read off the job rather than off the chosen file, because a review re-opened
+   * from history has no file. `cad` arrives once the drawing has been plotted;
+   * `source_format` is on the record from admission, so this holds while the
+   * conversion is still running too.
+   */
+  protected readonly fromDrawing = computed(() => {
+    const current = this.job();
+    if (!current) return false;
+    return !!current.cad || (!!current.source_format && current.source_format !== 'pdf');
+  });
+
+  /**
+   * Who converted the drawing, as a clause for the result note, or nothing.
+   *
+   * Only a DWG is converted; a DXF is read as uploaded. A zip may hold either,
+   * and the report counts drawings rather than saying which, so for one the
+   * clause says what would have converted a DWG in it rather than claiming one
+   * was there.
+   */
+  protected cadConversion(cad: CadReport): string {
+    if (!cad.converter) return '';
+    if (cad.format === 'dwg') return `, converted by ${cad.converter}`;
+    if (cad.format === 'zip') return `, any DWG in it converted by ${cad.converter}`;
+    return '';
+  }
 
   /** Why the result check stopped, in words, for the summary line. */
   protected reviewOutcome(outcome: string): string {
@@ -356,7 +423,18 @@ export class Review implements OnDestroy {
   protected onDrop(event: DragEvent): void {
     event.preventDefault();
     this.dragging.set(false);
-    this.accept(event.dataTransfer?.files?.[0] ?? null);
+    const files = event.dataTransfer?.files;
+    // One set is one file. Taking the first of twelve loose DXF sheets and
+    // reviewing it alone, with no word about the other eleven, would be a
+    // review of a set nobody submitted.
+    if (files && files.length > 1) {
+      this.clientError.set(
+        `That is ${files.length} files. A review takes one set: zip the drawing's sheets ` +
+          'into one ZIP, or plot them to one PDF, and drop that.',
+      );
+      return;
+    }
+    this.accept(files?.[0] ?? null);
   }
 
   /**
@@ -367,21 +445,51 @@ export class Review implements OnDestroy {
     if (!file) return;
     this.clientError.set(null);
 
-    if (!/\.pdf$/i.test(file.name)) {
-      this.clientError.set('That is not a PDF. Upload the permit set as a PDF plotted from CAD.');
+    const kind = uploadKind(file.name);
+    if (!kind) {
+      this.clientError.set(
+        'That is not a file this can review. Upload a PDF plotted from CAD, or the drawing ' +
+          'itself: DWG, DXF, or a ZIP of DWG/DXF sheets.',
+      );
+      return;
+    }
+    // A deployment without a DWG converter still reads DXF; saying so now beats
+    // an upload that is refused once it has gone up.
+    const admitted: readonly string[] | undefined = this.config()?.accepted_formats;
+    if (admitted?.length && !admitted.includes(kind)) {
+      this.clientError.set(
+        kind === 'dwg'
+          ? 'This deployment has no DWG converter installed. Save the drawing as DXF, or zip ' +
+              'the DXF sheets, or upload a PDF plotted from it.'
+          : `This deployment does not accept ${kind.toUpperCase()} uploads.`,
+      );
       return;
     }
     const limit = this.config()?.max_upload_mb ?? 120;
     if (file.size > limit * 1024 * 1024) {
+      const size = (file.size / 1048576).toFixed(1);
+      // DXF is text: the real 23 MB DWG this was built against is 170 MB as
+      // DXF. The same drawing fits as the DWG, or as the DXF zipped.
       this.clientError.set(
-        `That file is ${(file.size / 1048576).toFixed(1)} MB, over the ${limit} MB limit.`,
+        kind === 'dxf'
+          ? `That DXF is ${size} MB, over the ${limit} MB limit. DXF is text and runs several ` +
+              'times the size of the DWG it came from — upload the DWG, or zip the DXF.'
+          : `That file is ${size} MB, over the ${limit} MB limit.`,
       );
       return;
     }
 
     this.file.set(file);
     if (!this.form.controls.project_name.value) {
-      this.form.controls.project_name.setValue(file.name.replace(/\.pdf$/i, ''));
+      this.form.controls.project_name.setValue(projectName(file.name));
+    }
+    if (isCad(file.name)) {
+      // Nothing to read until the drawing is converted, and converting it
+      // belongs to the review, not to a request the web process answers. A
+      // previous PDF's suggestions must not be left offered against a drawing
+      // they were not read from.
+      this.reviews.forgetPrefill();
+      return;
     }
     // The set comes first now precisely so this can happen: read what it
     // already states, and open the questionnaire with those answers in it
@@ -408,7 +516,10 @@ export class Review implements OnDestroy {
       min_severity: value.min_severity,
       include_verified: value.include_verified,
       include_measured: value.include_measured,
-      convert_raster: value.convert_raster,
+      // Never for a drawing: a plot made from it has no scanned sheets, and the
+      // server ignores the option for one anyway. Sent false rather than left
+      // to the server so the job's recorded options say what actually ran.
+      convert_raster: value.convert_raster && !this.cadFile(),
       project_name: value.project_name,
       // Sent explicitly either way. Unlike `occupancy_group`, this is a choice
       // about how the review runs rather than a fact about the building, so
@@ -449,7 +560,7 @@ export class Review implements OnDestroy {
    * code rather than a plain href because an hour-old page would otherwise
    * offer a link that 403s.
    */
-  protected async download(which: 'markup_pdf' | 'findings_json'): Promise<void> {
+  protected async download(which: DownloadKind): Promise<void> {
     const url = await this.reviews.freshDownload(which);
     if (url) window.location.href = url;
   }

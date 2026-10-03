@@ -33,6 +33,7 @@ import zipfile
 from typing import Dict, Iterable, Optional, Tuple
 
 import ezdxf
+import ezdxf.xref  # noqa: F401 — a submodule `import ezdxf` does not load; used below
 from ezdxf.document import Drawing
 
 #: ARCH D, landscape, in inches.

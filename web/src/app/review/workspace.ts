@@ -134,9 +134,25 @@ export class Workspace {
   protected readonly trainingOn = computed(
     () => this.config()?.training?.enabled ?? false,
   );
+  /**
+   * The PDF the viewer opens: the set as uploaded, or for a drawing the sheets
+   * this review plotted from it. The server signs the plot, never the DWG, so
+   * nothing here changes for a drawing — pdf.js only ever sees a PDF.
+   */
   protected readonly source = computed(() => this.job()?.downloads?.source_pdf ?? '');
   protected readonly reviewed = computed(() => this.job()?.downloads?.markup_pdf ?? '');
   protected readonly sheetIndex = computed(() => this.job()?.summary?.sheet_index ?? []);
+
+  /**
+   * What the drawing was uploaded as, for the header chip, or null for a PDF.
+   * `source_format` is on the record from admission; `cad` once it is plotted.
+   */
+  protected readonly drawing = computed((): string | null => {
+    const review = this.job();
+    const format = review?.cad?.format ?? review?.source_format;
+    if (!format || format === 'pdf') return null;
+    return format === 'zip' ? 'a ZIP of drawings' : format.toUpperCase();
+  });
   protected readonly aspects = computed(() => this.config()?.feedback_aspects ?? []);
   protected readonly markupKinds = computed(() => this.config()?.markup_kinds ?? []);
   protected readonly markupColours = computed(() => this.config()?.markup_colours ?? []);
@@ -461,6 +477,16 @@ export class Workspace {
   protected removeMarkup(markup: Markup): void {
     this.training.deleteMarkup(this.jobId(), markup.id);
     if (this.selectedMarkup()?.id === markup.id) this.selectedMarkup.set(null);
+  }
+
+  /**
+   * The marked-up drawing, through a freshly signed URL — the same path the
+   * review page's downloads take, so an hour-old workspace does not offer a
+   * link that 403s.
+   */
+  protected async downloadDxf(): Promise<void> {
+    const url = await this.reviews.freshDownload('markup_dxf');
+    if (url) window.location.href = url;
   }
 
   // ── handing the pass over ───────────────────────────────────────────────

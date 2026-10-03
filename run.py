@@ -13,7 +13,7 @@ zip of them, recognised from the file's bytes. A drawing is plotted to PDF first
 and the review reads that PDF with the drawing's sidecar beside it. The plot and
 sidecar go to a temporary directory that is removed afterwards, or to `--cad-dir`
 to keep them. `--markup-dxf` also writes the findings back into the drawing, on
-layers FBC-REVIEW and FBC-REVIEW-TEXT, as zipped DXF.
+layers FBC-REVIEW, FBC-REVIEW-VERIFIED and FBC-REVIEW-TEXT, as zipped DXF.
 
 `--declaration` takes a JSON object of ProjectDeclaration fields — what the
 applicant says the building is. It is a second source alongside the drawings,

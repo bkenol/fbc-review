@@ -42,6 +42,15 @@ export interface ApiFailure {
   message: string;
 }
 
+/**
+ * The artefacts a finished review offers for download.
+ *
+ * `markup_dxf` is there only for a drawing upload, and only when writing it
+ * succeeded — the server sends an empty string otherwise, and the marked-up PDF
+ * stays the review of record either way.
+ */
+export type DownloadKind = 'markup_pdf' | 'findings_json' | 'markup_dxf';
+
 /** First ten polls are fast, then widen — most reviews finish inside ten. */
 const FAST_POLL_MS = 1000;
 const SLOW_POLL_MS = 3000;
@@ -450,15 +459,17 @@ export class ReviewService {
 
   /**
    * A download URL that is still valid, refreshing the job first if the signed
-   * URL has expired. Returns null if the job is not finished.
+   * URL has expired. Returns null if the job is not finished, or if it has no
+   * such artefact — `|| null` rather than `?? null` because an absent DXF
+   * arrives as an empty string, and an empty string is not a link.
    */
-  async freshDownload(which: 'markup_pdf' | 'findings_json'): Promise<string | null> {
+  async freshDownload(which: DownloadKind): Promise<string | null> {
     const job = this._job();
     if (!job?.downloads) return null;
 
     const expires = Date.parse(job.downloads.expires_at);
     if (Number.isFinite(expires) && expires - Date.now() > 30_000) {
-      return job.downloads[which];
+      return job.downloads[which] || null;
     }
 
     try {
@@ -466,9 +477,9 @@ export class ReviewService {
         this.reviews.getJob(job.id).subscribe({ next: resolve, error: reject }),
       );
       this._job.set(fresh);
-      return fresh.downloads?.[which] ?? null;
+      return fresh.downloads?.[which] || null;
     } catch {
-      return job.downloads[which];
+      return job.downloads[which] || null;
     }
   }
 
