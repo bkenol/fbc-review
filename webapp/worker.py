@@ -4,6 +4,15 @@ Downloads the upload to the instance's local disk, runs the existing pipeline
 against local paths exactly as the CLI does, uploads the two artefacts, and
 deletes every local copy on the way out.
 
+A drawing upload (DWG, DXF, or a zip of them) is first plotted to a PDF by the
+CAD adapter in a subprocess (`webapp/cadjob.py`), and from there on it is the
+same review: that PDF is the file the engine reads and the viewer renders, and
+the drawing's sidecar rides beside it into every `build_facts`. Two more
+artefacts come out: the plotted PDF, which the viewer must render because every
+finding's position is on it, and the findings drawn back into the drawing as
+DXF, which is a convenience — when it cannot be written the review still
+finishes, without it.
+
 `fbcreview/` stays unaware that Cloud Storage exists. That is deliberate: the
 engine is regression-tested against local files and making it storage-aware
 would put a network call inside the deterministic path.
@@ -30,8 +39,9 @@ from fbcreview.payload import findings_payload
 from fbcreview.pipeline import build_facts
 from fbcreview.render.markup import render
 from fbcreview.rules import ACTIONABLE, registered, run_all
-from webapp import calibration, convert, mailer, storage
+from webapp import cadjob, calibration, convert, errors, mailer, pdfkind, storage
 from webapp.calibration import CalibrationProfile
+from webapp.config import settings
 from webapp.jobs import JobStore
 
 log = logging.getLogger("fbc.worker")
@@ -45,6 +55,10 @@ STAGES = [
 ]
 
 CONVERT_STAGE = "Rebuilding scanned sheets"
+#: Stage 0 of a drawing upload, ahead of "Reading the PDF": fetching the drawing,
+#: converting a DWG, reading it and plotting every layout. Minutes, not seconds,
+#: on a real set. The client keys its explanation on this exact string.
+CAD_STAGE = "Converting the drawing"
 AI_STAGE = "Reading sheets with AI"
 REVIEW_STAGE = "Checking the result with AI"
 
@@ -68,7 +82,7 @@ def reviewer_config() -> Optional[ReviewerConfig]:
 
 
 def stages_for(convert_raster: bool, ai_reading: Optional[bool] = None,
-               ai_review: Optional[bool] = None) -> List[str]:
+               ai_review: Optional[bool] = None, *, cad: bool = False) -> List[str]:
     """The stage list a given job will actually move through.
 
     A job that is not rebuilding scanned sheets, or not reading them with AI,
@@ -77,7 +91,14 @@ def stages_for(convert_raster: bool, ai_reading: Optional[bool] = None,
     the engine grounds its readings against, OCR text included. The review
     stage follows the rules, whose result it checks; any further passes it asks
     for run inside it.
+
+    A drawing upload (`cad=True`) starts with `CAD_STAGE`, before "Reading the
+    PDF": the PDF the rest of the stages read is the one that stage plots. It
+    never rebuilds scanned sheets — there are none in a plot made here — so
+    `convert_raster` is ignored for it.
     """
+    if cad:
+        return [CAD_STAGE, *stages_for(False, ai_reading, ai_review)]
     if ai_reading is None:
         ai_reading = ai_config() is not None
     if ai_review is None:
@@ -133,13 +154,20 @@ def run_review(
     raster_regions: Optional[Dict[int, List[Any]]] = None,
     profile: Optional[CalibrationProfile] = None,
     rerun_of: Optional[str] = None,
+    source_format: str = "pdf",
 ) -> None:
     """Executed on a worker thread. Never raises — every failure is recorded
-    on the job document instead, because nothing is waiting on the return."""
+    on the job document instead, because nothing is waiting on the return.
+
+    `source_format` is what admission sniffed the upload as. A drawing
+    (`dwg`, `dxf`, `zip`) is plotted to PDF first, and the job's stage list must
+    then have been made with `stages_for(..., cad=True)`.
+    """
     started = time.monotonic()
     workdir = Path(tempfile.mkdtemp(prefix=f"fbc-{job_id}-"))
     pages = 0
     step = 0
+    is_cad = source_format in cadjob.CAD_FORMATS
 
     def advance() -> int:
         nonlocal step
@@ -151,9 +179,20 @@ def run_review(
         store.mark_running(job_id)
 
         # ── fetch ──────────────────────────────────────────────────────────
-        src = workdir / "source.pdf"
-        store_files.download_to(upload_blob, str(src))
-        upload = src
+        upload = workdir / f"upload.{source_format if is_cad else 'pdf'}"
+        store_files.download_to(upload_blob, str(upload))
+        src = upload
+
+        # ── a drawing: plot it to the PDF everything after this reads ──────
+        # Stage 0 is CAD_STAGE for these jobs; the advance at the end moves to
+        # "Reading the PDF" once there is a PDF to read.
+        cad_sidecar: Optional[Dict[str, Any]] = None
+        cad_report: Optional[Dict[str, Any]] = None
+        if is_cad:
+            convert_raster = False
+            src, cad_sidecar, cad_report, pages = _plot_drawing(
+                upload, workdir, filename, source_format, job_id, store, store_files)
+            advance()
 
         # ── rebuild unreadable sheets, when asked ──────────────────────────
         if convert_raster and (raster_pages or raster_regions):
@@ -190,20 +229,20 @@ def run_review(
         checker = ReviewerConfig.from_env(ai)
         if ai is not None:
             advance()
-            rebuild = None if src == upload else {
-                "raster_pages": sorted(int(p) for p in raster_pages or []),
-                "raster_regions": {str(p): [[round(float(v), 2) for v in r] for r in rs]
-                                   for p, rs in sorted((raster_regions or {}).items())},
-            }
-            readings = _ai_readings(str(src), str(upload), rebuild, ai, job_id, rerun_of,
-                                    store_files, workdir)
+            readings = _ai_readings(str(src), _reading_identity(upload, src, cad_sidecar,
+                                                                raster_pages, raster_regions),
+                                    ai, job_id, rerun_of, store_files, workdir)
             if readings is not None:
                 store.update(job_id, ai_reading=readings.summary())
 
         # ── extract ────────────────────────────────────────────────────────
         advance()
-        facts = build_facts(str(src), readings=readings)
+        facts = build_facts(str(src), readings=readings, cad=cad_sidecar)
         pages = len(facts.sheets)
+        if cad_report is not None:
+            # How many facts the engine took from the drawing is known only now.
+            cad_report["claims"] = int((facts.meta.get("cad") or {}).get("claims") or 0)
+            store.update(job_id, cad=cad_report)
 
         # ── rules ──────────────────────────────────────────────────────────
         advance()
@@ -223,7 +262,7 @@ def run_review(
             if readings is not None:
                 facts, result, readings, trace = _ai_review(
                     str(src), (facts, result), readings, ai, checker, options, declaration,
-                    job_id, rerun_of, store_files, workdir)
+                    job_id, rerun_of, store_files, workdir, cad=cad_sidecar)
                 if trace is not None:
                     review_summary = trace.summary()
                     review_labels = trace.revision_map()
@@ -253,7 +292,7 @@ def run_review(
         out_pdf = workdir / "markup.pdf"
         info = render(
             str(src), str(out_pdf), result.findings, facts.sheets, options,
-            result.abstentions, result.reconciled
+            result.abstentions, result.reconciled, cad=facts.meta.get("cad")
         )
 
         counts: Dict[str, int] = {}
@@ -297,6 +336,9 @@ def run_review(
             # Counts only — never the reviewer's notes. None when it did not run.
             "ai_review": review_summary,
         }
+        if is_cad:
+            # Only on a drawing, so a PDF review's findings.json is unchanged.
+            summary["source_format"] = source_format
 
         out_json = workdir / "findings.json"
         out_json.write_text(
@@ -314,6 +356,14 @@ def run_review(
             encoding="utf-8",
         )
 
+        # ── the findings drawn back into the drawing ───────────────────────
+        # Inside the render stage, and never the review's failure: the
+        # marked-up PDF is the review of record, and a DXF that could not be
+        # written makes a smaller delivery rather than a failed one.
+        markup_zip = None
+        if is_cad:
+            markup_zip = _markup_drawing(workdir, out_json, filename, job_id)
+
         # ── deliver ────────────────────────────────────────────────────────
         advance()
         store_files.upload_file(
@@ -322,6 +372,15 @@ def run_review(
         store_files.upload_file(
             str(out_json), storage.output_path(job_id, storage.FINDINGS), "application/json"
         )
+        if markup_zip is not None:
+            try:
+                store_files.upload_file(
+                    str(markup_zip), storage.output_path(job_id, storage.MARKUP_DXF),
+                    "application/zip")
+                store.update(job_id, markup_dxf=True)
+            except Exception as exc:                           # noqa: BLE001 — never fatal
+                log.warning("cad markup not delivered",
+                            extra={"job_id": job_id, "error": type(exc).__name__})
 
         if options.email_to and mailer.configured():
             _send_mail(options, filename, summary, result, str(out_pdf))
@@ -338,8 +397,30 @@ def run_review(
                 "profile_version": calibration_report["profile_version"],
                 "calibration_adjusted": calibration_report["adjusted"],
                 "elapsed_seconds": round(time.monotonic() - started, 2),
+                **({"source_format": source_format} if is_cad else {}),
             },
         )
+
+    except cadjob.CadJobError as exc:
+        # A drawing the person has to fix — re-save it, export it as DXF, zip
+        # it again. Its code is typed and its message is prose written for
+        # them; the log gets the code, never the message, which can name the
+        # drawing's own contents.
+        log.warning(
+            "drawing refused",
+            extra={
+                "job_id": job_id,
+                "uid": uid,
+                "email": email,
+                "error_code": exc.code,
+                "source_format": source_format,
+                "elapsed_seconds": round(time.monotonic() - started, 2),
+            },
+        )
+        try:
+            store.mark_error(job_id, exc.code, exc.message)
+        except Exception:
+            log.exception("could not record job failure", extra={"job_id": job_id})
 
     except Exception as exc:
         log.error(
@@ -358,8 +439,13 @@ def run_review(
             store.mark_error(
                 job_id,
                 "review_failed",
-                "The review could not be completed for this set. "
-                "If it is a scanned or image-only PDF, the engine cannot read it.",
+                (
+                    "The review could not be completed for this drawing. Run AUDIT and "
+                    "save it in AutoCAD, or plot the set to PDF, and upload it again."
+                ) if is_cad else (
+                    "The review could not be completed for this set. "
+                    "If it is a scanned or image-only PDF, the engine cannot read it."
+                ),
             )
         except Exception:
             log.exception("could not record job failure", extra={"job_id": job_id})
@@ -414,14 +500,39 @@ def _declaration_report(reconciled) -> Optional[Dict[str, Any]]:
     }
 
 
-def _ai_readings(src: str, upload: str, rebuild: Optional[Dict[str, Any]],
-                 config: ReaderConfig, job_id: str, rerun_of: Optional[str],
-                 store_files: "storage.Storage", workdir: Path) -> Optional[Readings]:
+def _reading_identity(upload: Path, src: Path, cad_sidecar: Optional[Dict[str, Any]],
+                      raster_pages, raster_regions):
+    """A callable giving what this job's AI readings are keyed by.
+
+    The upload's hash when the engine reads the upload itself. A rebuilt or a
+    plotted file's bytes never repeat — PyMuPDF writes a fresh document ID on
+    every save — so those are keyed by what made them instead: the upload plus
+    the rebuild's parameters (`source_identity`), or for a drawing the upload
+    plus what plotted it (`plotted_identity`). A callable, so a hashing failure
+    lands inside `_ai_readings`' floor.
+    """
+    def identity() -> str:
+        upload_sha = file_sha256(str(upload))
+        if cad_sidecar is not None:
+            from fbcreview.ai.readings import plotted_identity
+            return plotted_identity(upload_sha, cad_sidecar, str(src))
+        rebuild = None if src == upload else {
+            "raster_pages": sorted(int(p) for p in raster_pages or []),
+            "raster_regions": {str(p): [[round(float(v), 2) for v in r] for r in rs]
+                               for p, rs in sorted((raster_regions or {}).items())},
+        }
+        return source_identity(upload_sha, rebuild)
+    return identity
+
+
+def _ai_readings(src: str, identity, config: ReaderConfig, job_id: str,
+                 rerun_of: Optional[str], store_files: "storage.Storage",
+                 workdir: Path) -> Optional[Readings]:
     """The set's AI readings: replayed from the first run of this upload, or read now.
 
     `src` is what the model reads and the engine grounds against — the upload,
-    or the file rebuilt from it. The readings are keyed by the upload and the
-    rebuild's parameters (`source_identity`), because a rebuilt file's bytes
+    or the file rebuilt or plotted from it. `identity()` is what the readings
+    are keyed by (`_reading_identity`), because a rebuilt or plotted file's bytes
     differ on every run. Stored beside the job's other artefacts either way.
     Returns None — and the review carries on deterministically — on any failure.
     """
@@ -430,7 +541,7 @@ def _ai_readings(src: str, upload: str, rebuild: Optional[Dict[str, Any]],
     from fbcreview.ai.readings import load_readings
 
     try:
-        sha = source_identity(file_sha256(upload), rebuild)
+        sha = identity()
         readings: Optional[Readings] = None
         if rerun_of:
             local = workdir / "parent-readings.json"
@@ -462,13 +573,18 @@ def _ai_readings(src: str, upload: str, rebuild: Optional[Dict[str, Any]],
 
 def _ai_review(src: str, first, readings: Readings, reader: ReaderConfig,
                config: ReviewerConfig, options, declaration, job_id: str,
-               rerun_of: Optional[str], store_files: "storage.Storage", workdir: Path):
+               rerun_of: Optional[str], store_files: "storage.Storage", workdir: Path,
+               cad: Optional[Dict[str, Any]] = None):
     """Review and correct the result — check, edit, verify, at most 3 passes.
 
     Returns (facts, result, readings, trace). On any failure outside the loop's
     own handling, the first pass is returned with no trace: the floor holds.
     A re-run whose parent stored a trace made from these same readings replays
     it — no call, the same passes, the same findings.
+
+    `cad` is a drawing upload's sidecar. Every pass rebuilds the facts, and a
+    pass rebuilt without it would silently drop what was read from the drawing
+    and review a smaller set than the first pass did.
     """
     from fbcreview.ai import review as RV
     from fbcreview.ai.reader import make_client, read_document
@@ -499,7 +615,7 @@ def _ai_review(src: str, first, readings: Readings, reader: ReaderConfig,
             return client
 
         def run_pass(r):
-            f = build_facts(src, readings=r)
+            f = build_facts(src, readings=r, cad=cad)
             return f, run_all(f, options, declaration)
 
         def check(facts, state, number, history):
@@ -523,6 +639,60 @@ def _ai_review(src: str, first, readings: Readings, reader: ReaderConfig,
         log.warning("ai review skipped", extra={"job_id": job_id,
                                                  "error": type(exc).__name__})
         return facts0, result0, readings, None
+
+
+def _plot_drawing(upload: Path, workdir: Path, filename: str, source_format: str,
+                  job_id: str, store: JobStore, store_files: "storage.Storage"):
+    """Plot a drawing upload to the PDF the engine reads, and publish that PDF.
+
+    Returns (rendered PDF, sidecar, CadReport dict, page count). Raises
+    `cadjob.CadJobError` for a drawing that cannot be reviewed — including one
+    that plots to more sheets than `FBC_MAX_PAGES`, which for a drawing can only
+    be known after it is read.
+
+    The plotted PDF is uploaded before the review runs, to `outputs/`, because
+    every finding's `rect` is in its page space and the viewer has to render it
+    rather than the drawing. A re-run re-plots from the first review's upload:
+    nothing under `uploads/` is written here.
+    """
+    cad_dir = workdir / "cad"
+    done = cadjob.ingest(upload, cad_dir, filename, job_id)
+
+    profile = pdfkind.profile(str(done.pdf))
+    pages = len(profile.sheets)
+    limit = settings().max_pages
+    if pages > limit:
+        raise cadjob.CadJobError(
+            errors.TOO_MANY_PAGES,
+            f"That drawing plots to {pages} sheets. The limit is {limit}: upload the "
+            "layouts for this permit only.")
+    if pages < 1:
+        raise cadjob.CadJobError(errors.CORRUPT_CAD, "Nothing could be plotted from that drawing.")
+
+    viewer = storage.output_path(job_id, storage.SOURCE_PDF)
+    store_files.upload_file(str(done.pdf), viewer, "application/pdf")
+    report = cadjob.report(done.sidecar, source_format, done.seconds)
+    store.update(job_id, pages=pages, source=profile.to_dict(), cad=report,
+                 viewer_blob=viewer)
+    return done.pdf, done.sidecar, report, pages
+
+
+def _markup_drawing(workdir: Path, findings_json: Path, filename: str,
+                    job_id: str) -> Optional[Path]:
+    """The findings drawn into the drawing, zipped; None when that failed.
+
+    `cadjob.markup` never raises; this guards the rest so nothing here can.
+    """
+    out_zip = workdir / storage.MARKUP_DXF
+    try:
+        done = cadjob.markup(workdir / "cad", findings_json, out_zip, filename, job_id)
+    except Exception as exc:                                   # noqa: BLE001 — never fatal
+        log.warning("cad markup skipped", extra={"job_id": job_id,
+                                                  "error": type(exc).__name__})
+        return None
+    if done is None or not out_zip.is_file():
+        return None
+    return out_zip
 
 
 def _merge_reports(first, second):

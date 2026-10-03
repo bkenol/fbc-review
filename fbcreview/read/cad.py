@@ -84,29 +84,43 @@ def attribute_claims(sidecar: dict, codes: Dict[int, str]) -> List[Claim]:
     return out
 
 
-def _intersects(a: Box, b: Box, slack: float = 0.5) -> bool:
-    return (a[0] - slack <= b[2] and b[0] - slack <= a[2]
-            and a[1] - slack <= b[3] and b[1] - slack <= a[3])
+def _covered(claim: Box, cell: Box, slack: float = 0.5) -> bool:
+    """Is most of a text cell inside a claim's box?
+
+    A claim's box is made of PDF word boxes, which reach about 0.3 × the cap
+    height below the baseline and a little above the cap line; a cell is cap
+    line to baseline. In a block stacked at 1.25 × cap that reach overlaps the
+    next row's label (measured: the occupancy claim of a tight stack named the
+    risk-category label as its source when any touch counted). Half the cell's
+    area inside the claim is what makes the cell part of the claim.
+    """
+    x0, y0 = max(claim[0] - slack, cell[0]), max(claim[1] - slack, cell[1])
+    x1, y1 = min(claim[2] + slack, cell[2]), min(claim[3] + slack, cell[3])
+    if x1 <= x0 or y1 <= y0:
+        return False
+    area = max(cell[2] - cell[0], 0.1) * max(cell[3] - cell[1], 0.1)
+    return (x1 - x0) * (y1 - y0) >= 0.5 * area
 
 
 def stamp_sources(claims: Iterable[Claim], sidecar: dict) -> int:
     """Name the drawing entities behind each claim read off a drawn sheet.
 
     A claim the layout or AI reader took from the text layer is stamped with
-    every entity whose text cell its box touches. Returns how many were stamped.
+    every entity whose text cell lies mostly inside its box. Returns how many
+    were stamped.
     """
-    index = {pno: p.get("text", []) for pno, p in pages(sidecar).items()}
+    info = pages(sidecar)
     n = 0
     for c in claims:
-        if c.source or c.box is None or c.page not in index:
+        if c.source or c.box is None or c.page not in info:
             continue
         handles = set()
-        for cell in index[c.page]:
-            if _intersects(tuple(c.box), tuple(cell["box"])):
+        for cell in info[c.page].get("text", []):
+            if _covered(tuple(c.box), tuple(cell["box"])):
                 handles.update(h for h in cell.get("handles", []) if h)
         if handles:
             c.source = "+".join(f"dxf:{h}" for h in sorted(handles))
-            c.layout = pages(sidecar)[c.page].get("layout", "")
+            c.layout = info[c.page].get("layout", "")
             n += 1
     return n
 
@@ -207,10 +221,12 @@ def summary(sidecar: dict, claims: int = 0, stamped: int = 0) -> Dict[str, Any]:
         "drawings": [{k: d.get(k) for k in ("name", "release", "dxfversion", "role", "units",
                                             "audit_fixes", "viewports_repaired", "xrefs")}
                      for d in sidecar.get("drawings", [])],
-        "sheets": [{"page": p["page"], "layout": p.get("layout"), "number": p.get("number"),
+        "sheets": [{"page": p["page"], "drawing": p.get("drawing"), "layout": p.get("layout"),
+                    "number": p.get("number"),
                     "number_source": p.get("number_source"), "model": p.get("model"),
                     "viewports": len(p.get("viewports", [])), "text_cells": p.get("cells", 0)}
                    for p in sidecar.get("pages", [])],
+        "layers": len(sidecar.get("layers", [])),
         "records": by_type,
         "claims": claims,
         "sources_stamped": stamped,

@@ -49,6 +49,18 @@ export interface Summary {
      */
     sheet_index?: Array<SheetRef>;
     sheets: number;
+    /**
+     * What was uploaded, when it was a drawing (`dwg`, `dxf`, `zip`); null for a PDF. The sheets reviewed are the ones plotted from it.
+     */
+    source_format?: SummarySourceFormatEnum | null;
     verified: number;
 }
+export enum SummarySourceFormatEnum {
+    Pdf = 'pdf',
+    Dwg = 'dwg',
+    Dxf = 'dxf',
+    Zip = 'zip'
+};
+
+
 

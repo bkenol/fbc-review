@@ -380,7 +380,7 @@
           },
           "file": {
             "contentMediaType": "application/octet-stream",
-            "description": "The permit set, as a PDF.",
+            "description": "The permit set: a PDF plotted from CAD, or the drawing itself as a DWG, a DXF, or a zip of them. Recognised from its bytes, not its name.",
             "title": "File",
             "type": "string"
           },
@@ -410,6 +410,100 @@
           "file"
         ],
         "title": "Body_prefillDeclaration",
+        "type": "object"
+      },
+      "CadReport": {
+        "description": "What reading a drawing upload produced, in counts.\n\nReported for the same reason `ConversionReport` is: a drawing with eight\nlayouts that plotted to two sheets is a thin review, and the person needs to\nsee why. Counts only \u2014 no layer names, no attribute text \u2014 because this sits\non the job record, and the drawing's content lives in the bucket.",
+        "properties": {
+          "attributes": {
+            "default": 0,
+            "description": "Block attributes read with their tags.",
+            "title": "Attributes",
+            "type": "integer"
+          },
+          "claims": {
+            "default": 0,
+            "description": "Facts the engine took from the drawing itself (block attributes that name a catalog field), each saying it came from the drawing.",
+            "title": "Claims",
+            "type": "integer"
+          },
+          "converter": {
+            "default": "",
+            "description": "The DWG converter and its version; empty when none ran (a DXF).",
+            "title": "Converter",
+            "type": "string"
+          },
+          "dimensions": {
+            "default": 0,
+            "description": "Dimensions read, with printed text and measured length.",
+            "title": "Dimensions",
+            "type": "integer"
+          },
+          "drawings": {
+            "default": 0,
+            "description": "Drawing files read (a zip may hold several).",
+            "title": "Drawings",
+            "type": "integer"
+          },
+          "format": {
+            "description": "What was uploaded: `dwg`, `dxf` or `zip`.",
+            "enum": [
+              "dwg",
+              "dxf",
+              "zip"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "layers": {
+            "default": 0,
+            "description": "Layers in the drawings' own layer tables.",
+            "title": "Layers",
+            "type": "integer"
+          },
+          "render_version": {
+            "default": "",
+            "description": "The plotter's version.",
+            "title": "Render Version",
+            "type": "string"
+          },
+          "seconds": {
+            "default": 0.0,
+            "description": "Time spent converting and plotting.",
+            "title": "Seconds",
+            "type": "number"
+          },
+          "sheets": {
+            "default": 0,
+            "description": "Pages plotted: one per paper-space layout with something on it, or model space when a drawing has no layouts.",
+            "title": "Sheets",
+            "type": "integer"
+          },
+          "sheets_identified": {
+            "default": 0,
+            "description": "Sheets whose number was read from a title-block field that says it is the sheet number. A layout's tab name is never taken for one.",
+            "title": "Sheets Identified",
+            "type": "integer"
+          },
+          "viewports": {
+            "default": 0,
+            "description": "Viewports onto model space, each with its exact scale.",
+            "title": "Viewports",
+            "type": "integer"
+          },
+          "warnings": {
+            "description": "What could not be read, in prose: a zip member skipped and why, text that could not be placed, an xref that was not supplied.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "format"
+        ],
+        "title": "CadReport",
         "type": "object"
       },
       "CalibrationAdjustment": {
@@ -710,6 +804,20 @@
             "title": "Abstention Kinds",
             "type": "array"
           },
+          "accepted_formats": {
+            "description": "Upload formats this deployment admits, decided from a file's bytes rather than its name: `pdf`, and `dxf` and `zip` (of drawings) always; `dwg` only where a DWG converter is installed.",
+            "items": {
+              "enum": [
+                "pdf",
+                "dwg",
+                "dxf",
+                "zip"
+              ],
+              "type": "string"
+            },
+            "title": "Accepted Formats",
+            "type": "array"
+          },
           "ai_reading": {
             "default": false,
             "description": "Whether this deployment reads sheets with the AI reader (`FBC_AI_READING=on` with a key). Rules are pure Python either way.",
@@ -720,6 +828,12 @@
             "default": false,
             "description": "Whether a reviewer model checks each result and may send sheets back to be read again, for at most three passes. Only ever on with AI reading; `FBC_AI_REVIEW=off` turns it off.",
             "title": "Ai Review",
+            "type": "boolean"
+          },
+          "cad_available": {
+            "default": false,
+            "description": "Whether a DWG converter is installed here. Without one a DXF, or a zip of DXFs, is still read; a DWG is refused at upload.",
+            "title": "Cad Available",
             "type": "boolean"
           },
           "calibration_knobs": {
@@ -1191,13 +1305,19 @@
             "title": "Findings Json",
             "type": "string"
           },
+          "markup_dxf": {
+            "default": "",
+            "description": "The drawing with the findings drawn into it on layers FBC-REVIEW and FBC-REVIEW-TEXT, as zipped DXF. Empty unless the upload was a drawing, and empty if writing it failed \u2014 the marked-up PDF is the review of record.",
+            "title": "Markup Dxf",
+            "type": "string"
+          },
           "markup_pdf": {
             "title": "Markup Pdf",
             "type": "string"
           },
           "source_pdf": {
             "default": "",
-            "description": "The set as uploaded. The in-app viewer renders this and draws the findings itself as an overlay, rather than rendering `markup_pdf` \u2014 otherwise every marker would be drawn twice, once burnt into the page and once interactively, and neither could be turned off.",
+            "description": "The PDF the engine read, which the in-app viewer renders: the set as uploaded, or for a drawing upload the sheets plotted from it \u2014 every finding's `rect` is in this file's page space. The viewer draws the findings itself as an overlay rather than rendering `markup_pdf`; otherwise every marker would be drawn twice, once burnt into the page and once interactively, and neither could be turned off.",
             "title": "Source Pdf",
             "type": "string"
           }
@@ -1833,8 +1953,14 @@
         "type": "object"
       },
       "FindingEvidence": {
-        "description": "One reading a finding rests on: the value, the words as printed, and where.\n\nWritten by `fbcreview/payload.py`. `method` says which reader found it \u2014\n`pair`, `line` and `table` are the layout reader; `ai` is the AI sheet\nreader, whose readings are used only after the quote has been found on the\nsheet, and `note` says so in words a card can show.",
+        "description": "One reading a finding rests on: the value, the words as printed, and where.\n\nWritten by `fbcreview/payload.py`. `method` says which reader found it \u2014\n`pair`, `line` and `table` are the layout reader; `ai` is the AI sheet\nreader, whose readings are used only after the quote has been found on the\nsheet; `cad` is a block attribute read from an uploaded drawing \u2014 and `note`\nsays so in words a card can show. `basis` says whether the value is printed\n(`stated`), a table's own sum (`tabulated`), worked out (`computed`) or\nmeasured off the geometry (`measured`), so an estimate never reads as a\nstatement.",
         "properties": {
+          "basis": {
+            "default": "stated",
+            "description": "`stated`, `tabulated`, `computed` or `measured`.",
+            "title": "Basis",
+            "type": "string"
+          },
           "confidence": {
             "title": "Confidence",
             "type": "string"
@@ -2138,6 +2264,17 @@
             "title": "Bytes",
             "type": "integer"
           },
+          "cad": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CadReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present once a drawing upload has been read; null for a PDF."
+          },
           "calibration": {
             "anyOf": [
               {
@@ -2277,7 +2414,19 @@
                 "type": "null"
               }
             ],
-            "description": "What kind of PDF was uploaded, measured at admission."
+            "description": "What kind of PDF the engine reads: measured at admission for a PDF upload, and once it has been plotted for a drawing."
+          },
+          "source_format": {
+            "default": "pdf",
+            "description": "What was uploaded, decided from its bytes. A drawing (`dwg`, `dxf`, `zip`) is plotted to PDF by the review itself, and `source`, `pages` and `downloads.source_pdf` then describe that plot.",
+            "enum": [
+              "pdf",
+              "dwg",
+              "dxf",
+              "zip"
+            ],
+            "title": "Source Format",
+            "type": "string"
           },
           "stage": {
             "description": "Index into `stages`.",
@@ -3542,6 +3691,24 @@
           "sheets": {
             "title": "Sheets",
             "type": "integer"
+          },
+          "source_format": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pdf",
+                  "dwg",
+                  "dxf",
+                  "zip"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What was uploaded, when it was a drawing (`dwg`, `dxf`, `zip`); null for a PDF. The sheets reviewed are the ones plotted from it.",
+            "title": "Source Format"
           },
           "verified": {
             "title": "Verified",
@@ -6330,7 +6497,7 @@
     },
     "/api/prefill": {
       "post": {
-        "description": "Parses a set and returns the declaration answers the drawings themselves state, so the applicant confirms or corrects them rather than transcribing their own drawing. Starts nothing, stores nothing, and makes no model calls \u2014 it is the same pure-Python parse the review runs, stopped after the facts are built. The suggestions are advisory: what the applicant submits to `POST /api/review` is what gets declared.",
+        "description": "Parses a set and returns the declaration answers the drawings themselves state, so the applicant confirms or corrects them rather than transcribing their own drawing. Starts nothing, stores nothing, and makes no model calls \u2014 it is the same pure-Python parse the review runs, stopped after the facts are built. The suggestions are advisory: what the applicant submits to `POST /api/review` is what gets declared. A PDF only: a drawing (DWG, DXF or zip) is refused with `prefill_not_available`, after the same admission checks a review would make, because it is converted when the review runs.",
         "operationId": "prefillDeclaration",
         "requestBody": {
           "content": {

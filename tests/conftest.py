@@ -558,3 +558,8 @@ def upload_form(pdf: bytes, options: Optional[str] = None, name: str = "set.pdf"
     if declaration is not None:
         data["declaration"] = declaration
     return {"files": {"file": (name, io.BytesIO(pdf), "application/pdf")}, "data": data}
+
+
+def pytest_configure(config):
+    # The real-drawing gates in test_cad_reference.py are opt-in and slow.
+    config.addinivalue_line("markers", "slow: long-running real-drawing gates (opt-in)")

@@ -26,7 +26,8 @@ fuse on extraction (`HOLLOWCORE` `PLANK` -> `HOLLOWCOREPLANK`, because complex
 MTEXT is drawn one word per call); written as whole paragraphs, columns drift.
 So runs from one entity on one baseline, a word space apart, are joined into a
 cell, and each cell is written at its own true origin, scaled so it spans the
-ink. A stacked fraction (`5'-0` over `3`/`4`) is rejoined as `5'-0 3/4`.
+ink. A stacked fraction (`5'-0`, then `3` set over `4`) is rejoined as
+`5'-0 3/4`, recognised by the geometry ezdxf gives it (`_fraction`).
 
 ## What a page remembers
 
@@ -53,9 +54,11 @@ from ezdxf.addons.drawing import layout as dl
 from ezdxf.addons.drawing import pymupdf as pmb
 from ezdxf.addons.drawing.config import Configuration
 from ezdxf.addons.drawing.frontend import UniversalFrontend
+from ezdxf.tools import text_layout
 from ezdxf.addons.drawing.pipeline import RenderPipeline2d
 from ezdxf.document import Drawing
 from ezdxf.math import BoundingBox2d, Matrix44, Vec2
+from ezdxf.tools.text_layout import Fraction as _EzFraction
 
 from .read import SheetSpec, _is_paper_viewport
 
@@ -222,11 +225,22 @@ class CapturePipeline(RenderPipeline2d):
         # first.
         pieces = [(mt.start(), mt.group()) for mt in _PIECE.finditer(text)]
         if len(pieces) > 1:
+            # Each piece spans its own ink, from the pen position the line's
+            # advance puts it at. The advance alone is the pen, not the ink: a
+            # piece placed by it started 1.2 pt left of its first glyph at 9 pt
+            # (measured on `FLOOR`), and the error grows with the text.
             spans = []
             for start, piece in pieces:
                 off = self.text_engine.get_text_line_width(text[:start], font, cap_height)
-                width = self.text_engine.get_text_line_width(piece, font, cap_height)
-                spans.append((piece, off, off + width))
+                ink: list = []
+                for p in self.text_engine.get_text_glyph_paths(piece, font, cap_height):
+                    ink.extend(p.extents())
+                if ink:
+                    box = BoundingBox2d(ink)
+                    spans.append((piece, off + box.extmin.x, off + box.extmax.x))
+                else:
+                    width = self.text_engine.get_text_line_width(piece, font, cap_height)
+                    spans.append((piece, off, off + width))
         else:
             spans = [(text, x0, x1)]
         for piece, px0, px1 in spans:
@@ -239,6 +253,24 @@ class CapturePipeline(RenderPipeline2d):
                 kind=kind, parent=outer.dxftype() if outer is not None else kind,
                 tag=tag, prompt=prompt, viewport=self._viewport, m=m,
                 x0=px0, x1=px1, cap=cap_height))
+
+
+class PlotFrontend(UniversalFrontend):
+    """ezdxf's frontend, keeping text its layout engine refuses.
+
+    ezdxf lays out an MTEXT with inline formatting or columns itself, and gives
+    up — "invalid width, no usable space left" — on one whose defined width is
+    zero, where AutoCAD simply does not wrap. On the reference drawing that was
+    a wall note, `2-1/2"`, at width 9.7e-20: drawn in the plot by AutoCAD,
+    missing from ours. Drawn as plain MTEXT instead, it keeps its words and
+    position and loses only the inline styling.
+    """
+
+    def draw_complex_mtext(self, mtext, properties) -> None:
+        try:
+            super().draw_complex_mtext(mtext, properties)
+        except text_layout.LayoutError:
+            self.draw_simple_mtext(mtext, properties)
 
 
 class _SharedPageRender(pmb.PyMuPdfRenderBackend):
@@ -347,7 +379,7 @@ def render_sheet(doc: Drawing, spec: SheetSpec, cache: Optional[ezbbox.Cache],
     backend = _Backend(target.doc, target.ocgs, names)
     pipeline = CapturePipeline(backend)
     ctx = RenderContext(doc, export_mode=True)
-    fe = UniversalFrontend(ctx, pipeline, Configuration(), cache)
+    fe = PlotFrontend(ctx, pipeline, Configuration(), cache)
     fe.draw_layout(layout, finalize=True)
 
     page = dl.Page(spec.paper_mm[0], spec.paper_mm[1], dl.Units.mm)
@@ -418,67 +450,149 @@ def _page_run(run: TextRun, to_page: Affine):
     return o, e, cap
 
 
+#: ezdxf sets a stacked fraction (`\S3/4;`) as two cells centred one over the
+#: other in a box `HEIGHT_SCALE` × their summed heights tall
+#: (`ezdxf.tools.text_layout.Fraction`), so the numerator's baseline sits
+#: `(HEIGHT_SCALE − 1)·h_top + HEIGHT_SCALE·h_bottom` above the denominator's —
+#: 1.4 × cap for halves at full height, measured as 12.6 pt over 9 pt text.
+#: That rise is what tells a fraction from two lines of a paragraph (1.667 ×
+#: cap at single spacing): read from the renderer, not assumed.
+_STACK = float(getattr(_EzFraction, "HEIGHT_SCALE", 1.2))
+
+#: A run that opens with one of these follows the text before it without a
+#: space when it starts within a third of a cap height: the inch mark after a
+#: fraction (`3/4"`), a closing bracket. A word space is wider than that in
+#: every font measured (0.6–0.7 × cap between words of complex MTEXT).
+_CLOSERS = "\"'”’)]},.;:%"
+
+
+def _frame(angle: float):
+    """(along, up) unit vectors of a baseline at `angle` on the page (y down)."""
+    return (math.cos(angle), math.sin(angle)), (math.sin(angle), -math.cos(angle))
+
+
+def _dot(p, q, v) -> float:
+    return (q[0] - p[0]) * v[0] + (q[1] - p[1]) * v[1]
+
+
+def _fraction(a, b) -> Optional[Tuple[tuple, tuple]]:
+    """(top, bottom) when two consecutive placed runs are the halves of one
+    stacked fraction, as ezdxf lays it out; None otherwise."""
+    (ra, oa, ea, ca), (rb, ob, eb, cb) = a, b
+    if ra.handle != rb.handle or ra.viewport != rb.viewport:
+        return None
+    ta, tb = ra.text.strip(), rb.text.strip()
+    if not (0 < len(ta) <= 8 and 0 < len(tb) <= 8) or " " in ta + tb:
+        return None
+    ang_a = math.atan2(ea[1] - oa[1], ea[0] - oa[0])
+    ang_b = math.atan2(eb[1] - ob[1], eb[0] - ob[0])
+    if abs((ang_a - ang_b + math.pi) % (2 * math.pi) - math.pi) > math.radians(2):
+        return None
+    u, up = _frame(ang_a)
+    h = max(ca, cb)
+    mid_a = ((oa[0] + ea[0]) / 2, (oa[1] + ea[1]) / 2)
+    mid_b = ((ob[0] + eb[0]) / 2, (ob[1] + eb[1]) / 2)
+    if abs(_dot(mid_a, mid_b, u)) > 0.25 * h:            # centred over one another
+        return None
+    rise = _dot(oa, ob, up)                               # b's baseline above a's
+    top, bottom = (b, a) if rise > 0 else (a, b)
+    expected = (_STACK - 1.0) * top[3] + _STACK * bottom[3]
+    if abs(abs(rise) - expected) > 0.15 * h:
+        return None
+    return top, bottom
+
+
+def _fraction_text(top: str, bottom: str) -> str:
+    """`3/4`; a tolerance stack (`+0.5` over `-0.2`) is not a fraction, and
+    is written as the two values it is."""
+    if top.isdigit() and bottom.isdigit():
+        return f"{top}/{bottom}"
+    return f"{top} {bottom}"
+
+
 def cells(runs: Sequence[TextRun], to_page: Affine) -> List[Cell]:
     """Join runs into the cells they were drawn as. See module docstring."""
-    out: List[Cell] = []
-    cur: Optional[Cell] = None
-    pending_stack: List[Tuple[TextRun, tuple, tuple, float]] = []
-
-    def flush_stack():
-        nonlocal cur
-        if len(pending_stack) == 2 and cur is not None:
-            # numerator is the upper of the two (smaller page y)
-            a, b = sorted(pending_stack, key=lambda r: r[1][1])
-            cur.text = f"{cur.text} {a[0].text.strip()}/{b[0].text.strip()}"
-            cur.end = (max(cur.end[0], a[2][0], b[2][0]), cur.end[1]) if abs(cur.angle) < 1e-3 \
-                else cur.end
-            cur.runs.extend([a[0], b[0]])
-        else:
-            for r, o, e, cap in pending_stack:
-                _start(r, o, e, cap)
-        pending_stack.clear()
-
-    def _start(r, o, e, cap):
-        nonlocal cur
-        if cur is not None:
-            out.append(cur)
-        cur = Cell(text=r.text.strip(), origin=o, end=e, cap=cap, runs=[r])
-
+    placed = []
     for r in runs:
         o, e, cap = _page_run(r, to_page)
         if cap < 0.05 or math.hypot(e[0] - o[0], e[1] - o[1]) < 0.05:
             continue
-        if cur is None:
-            _start(r, o, e, cap)
-            continue
+        placed.append((r, o, e, cap))
+
+    out: List[Cell] = []
+    cur: Optional[Cell] = None
+
+    def start(r, o, e, cap, text=None, extra=()):
+        nonlocal cur
+        if cur is not None:
+            out.append(cur)
+        cur = Cell(text=(text if text is not None else r.text.strip()), origin=o, end=e,
+                   cap=cap, runs=[r, *extra])
+
+    def relation(r, o, e, cap):
+        """(same entity and baseline direction, along, across) of a run to `cur`."""
         same_entity = r.handle == cur.runs[-1].handle and r.viewport == cur.runs[-1].viewport
         ang = math.atan2(e[1] - o[1], e[0] - o[0])
         dang = abs((ang - cur.angle + math.pi) % (2 * math.pi) - math.pi)
-        # distance of this run's origin along and across the current baseline
-        ca, sa = math.cos(cur.angle), math.sin(cur.angle)
-        dx, dy = o[0] - cur.end[0], o[1] - cur.end[1]
-        along = dx * ca + dy * sa
-        across = -dx * sa + dy * ca
-        small = cap < 0.85 * cur.cap
-        if (same_entity and dang < math.radians(2) and small
-                and -cur.cap <= along <= 1.2 * cur.cap and abs(across) <= 1.3 * cur.cap):
-            # half of a stacked fraction, set smaller and off the baseline
-            pending_stack.append((r, o, e, cap))
-            if len(pending_stack) == 2:
-                flush_stack()
+        u, up = _frame(cur.angle)
+        # this run's origin along and across the current cell's baseline, from its end
+        return same_entity and dang < math.radians(2), _dot(cur.end, o, u), _dot(cur.end, o, up)
+
+    i = 0
+    while i < len(placed):
+        r, o, e, cap = placed[i]
+        stack = _fraction(placed[i], placed[i + 1]) if i + 1 < len(placed) else None
+        if stack is not None:
+            (rt, ot, et, ct), (rb, ob, eb, cb) = stack
+            text = _fraction_text(rt.text.strip(), rb.text.strip())
+            joined = False
+            if cur is not None:
+                aligned, along, across = relation(rb, ob, eb, cb)
+                u, _ = _frame(cur.angle)
+                left = min(_dot(cur.end, ot, u), along)
+                if (aligned and abs(across) <= 0.3 * cur.cap
+                        and -0.3 * cur.cap <= left <= 1.2 * cur.cap):
+                    reach = max(_dot(cur.origin, cur.end, u), _dot(cur.origin, et, u),
+                                _dot(cur.origin, eb, u))
+                    cur.text = f"{cur.text} {text}"
+                    cur.end = (cur.origin[0] + u[0] * reach, cur.origin[1] + u[1] * reach)
+                    cur.runs.extend([rt, rb])
+                    joined = True
+            if not joined:
+                # a fraction that opens a line: a cell of its own, on the
+                # denominator's baseline, spanning both halves
+                u, _ = _frame(math.atan2(eb[1] - ob[1], eb[0] - ob[0]))
+                lo = min(0.0, _dot(ob, ot, u))
+                hi = max(_dot(ob, eb, u), _dot(ob, et, u))
+                start(rb, (ob[0] + u[0] * lo, ob[1] + u[1] * lo),
+                      (ob[0] + u[0] * hi, ob[1] + u[1] * hi), cb, text=text, extra=(rt,))
+            i += 2
             continue
-        if pending_stack:
-            flush_stack()
-        if (same_entity and dang < math.radians(2) and abs(across) <= 0.25 * cur.cap
+        i += 1
+        if cur is None:
+            start(r, o, e, cap)
+            continue
+        aligned, along, across = relation(r, o, e, cap)
+        if (aligned and abs(across) <= 0.25 * cur.cap
                 and -0.3 * cur.cap <= along <= 1.1 * cur.cap and 0.6 <= cap / cur.cap <= 1.6):
-            sep = "" if along < 0.12 * cur.cap else " "
-            cur.text = f"{cur.text}{sep}{r.text.strip()}"
+            word = r.text.strip()
+            closer = along < 0.35 * cur.cap and word[:1] in _CLOSERS
+            if r.kind == "MTEXT":
+                # ezdxf draws complex MTEXT one word per call, splitting at the
+                # spaces, so a new run of the same MTEXT *is* a new word — however
+                # close the substitute font set the inks. Measured on the
+                # reference drawing: word gaps of -0.014 to 0.08 x cap in its
+                # italic notes ('CLIENT APPROVAL:', 'PRODUCE ALL'), which the gap
+                # rule below fused. Only closing punctuation drawn as its own
+                # cell (the inch mark after a stacked fraction) closes up.
+                tight = closer
+            else:
+                tight = along < 0.12 * cur.cap or closer
+            cur.text = f"{cur.text}{'' if tight else ' '}{word}"
             cur.end = e
             cur.runs.append(r)
             continue
-        _start(r, o, e, cap)
-    if pending_stack:
-        flush_stack()
+        start(r, o, e, cap)
     if cur is not None:
         out.append(cur)
     return [c for c in out if c.text.strip()]

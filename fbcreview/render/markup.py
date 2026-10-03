@@ -5,7 +5,7 @@ one hand-authored register, this takes any list of `Finding` objects from the
 rule engine, so the pipeline is PDF in / PDF out with nothing hand-placed.
 """
 from __future__ import annotations
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 import datetime
 import re
 import pymupdf
@@ -131,7 +131,11 @@ class Renderer:
         #: `facts.meta["cad"]` when the sheets were plotted by this review from a
         #: DWG or DXF (`fbcreview/cad`), else None. The report must not describe
         #: our plot as the applicant's own sheet.
-        self.cad = cad
+        self.cad = cad or None
+        #: Optional-content layers in the plotted file, counted before anything
+        #: is added — on a set plotted from a drawing, the drawing's layers that
+        #: something was drawn on (the plot makes a layer when it first draws on it).
+        self._ocgs = len(self.doc.get_ocgs() or {}) if self.cad else 0
         self.findings = list(findings)
         self.sheets = {s.index: s for s in sheets}
         self.opt = options
@@ -156,11 +160,133 @@ class Renderer:
         for p in self.doc:
             w, h = p.rect.width, p.rect.height
             p.set_mediabox(pymupdf.Rect(-GUTTER, 0, w, h))
+        self.nsheets = self.doc.page_count
         self.W = self.doc[0].rect.width
         self.H = self.doc[0].rect.height
         self.rail = (30, 672)
         self._chips: Dict[int, List[pymupdf.Rect]] = {}
         self._boxes: Dict[int, List[pymupdf.Rect]] = {}
+
+    def _size(self, pno: int) -> Tuple[float, float]:
+        """Width and height of sheet `pno`, widened, for what is placed on it.
+
+        Page 0's size is not every page's: a set plotted from a drawing gives
+        each layout its own page setup and fits model space to ARCH D, and a
+        PDF set can mix sheet sizes too. Sized from page 0, the rail of a
+        shorter sheet runs off its foot and a chip on a wider one is refused.
+        A page carrying `/Rotate` keeps page 0's size, as it always has: its
+        widened geometry is pinned as it is (`tests/test_declaration_output.py`).
+        """
+        pg = self.doc[pno]
+        if pg.rotation:
+            return self.W, self.H
+        return pg.rect.width, pg.rect.height
+
+    # ── a set plotted from a drawing ──────────────────────────────────────
+    # The PDF wording below says the drawing was not changed and that cropping
+    # the margin recovers the original sheet. For a DWG or DXF upload there is
+    # no original sheet: the page is this review's own plot of a layout. A
+    # client may forward this document to a plans examiner, so it says what the
+    # page is, what it was plotted from, and that the drawing file governs.
+    def _cad_kind(self) -> str:
+        kind = str((self.cad or {}).get("kind") or "").lower()
+        return {"dwg": "DWG", "dxf": "DXF"}.get(kind, "DWG or DXF")
+
+    def _cad_drawings(self) -> List[dict]:
+        """The submitted drawings that sheets were plotted from (not xref-only ones)."""
+        return [d for d in (self.cad or {}).get("drawings", []) or []
+                if isinstance(d, dict) and d.get("role", "sheets") == "sheets"]
+
+    def _cad_sheet(self, pno: int) -> dict:
+        """`cad` records one entry per plotted page: `sheets` in the engine's
+        summary (`read/cad.summary`), `pages` in the raw sidecar."""
+        for p in (self.cad or {}).get("sheets") or (self.cad or {}).get("pages") or []:
+            if isinstance(p, dict) and p.get("page") == pno:
+                return p
+        return {}
+
+    def _cad_layers(self) -> Optional[int]:
+        """How many layers the drawing has, when `cad` says."""
+        layers = (self.cad or {}).get("layers")
+        if isinstance(layers, bool):
+            return None
+        if isinstance(layers, int):
+            return layers
+        if isinstance(layers, (list, tuple)):
+            return len(layers)
+        return None
+
+    def _layer_words(self) -> str:
+        """How many of the drawing's layers this file carries, counted, not assumed."""
+        n, total = self._ocgs, self._cad_layers()
+        are = "is a switchable layer" if n == 1 else "are switchable layers"
+        if total is None:
+            return f"{n} of the drawing's layers {are} in this file"
+        return (f"The drawing has {total} layer{'s' if total != 1 else ''}; the {n} with "
+                f"something drawn on these sheets {are} in this file")
+
+    def _plotted_with(self) -> str:
+        cad = self.cad or {}
+        made = f"ezdxf {cad['ezdxf']}" if cad.get("ezdxf") else "ezdxf"
+        conv = cad.get("converter") or ""
+        kind = str(cad.get("kind") or "").lower()
+        if conv and kind == "dwg":
+            return f"converted to DXF by LibreDWG ({conv}) and plotted with {made}"
+        if conv and kind == "zip":
+            return f"plotted with {made}, any DWG first converted by LibreDWG ({conv})"
+        return f"plotted with {made}"
+
+    def _about_plot(self, pno: int) -> str:
+        """The first two paragraphs of the margin's 'about' block for a plotted sheet."""
+        sheet = self._cad_sheet(pno)
+        layout = sheet.get("layout") or ""
+        drawing = sheet.get("drawing") or ""
+        if not drawing:
+            names = [d.get("name") for d in self._cad_drawings() if d.get("name")]
+            drawing = names[0] if len(names) == 1 else ""
+        what = ("model space" if sheet.get("model") else
+                f"layout <i>{esc(layout)}</i>" if layout else "a layout")
+        of = f" of <i>{esc(drawing)}</i>" if drawing else ""
+        layers = self._layer_words()
+        return (f"<b>This sheet was plotted by this review</b> from the submitted "
+                f"{self._cad_kind()}: {what}{of}, {esc(self._plotted_with())}. It is not the "
+                "applicant's own plot. The margin was <i>added</i> to the left of it. "
+                "<b>The drawing file is the authority</b>: where this plot and the drawing "
+                "differ, the drawing governs.<br><br>"
+                f"<b>Layers.</b> {layers}, all visible as printed.<br><br>")
+
+    def _coverage_scope(self) -> str:
+        """What 'sheets in the set' counts, in the register's coverage table."""
+        if self.cad is None:
+            return "Every page of the submitted PDF."
+        drawings = self._cad_drawings()
+        n = len(drawings)
+        return (f"Every sheet this review plotted from the submitted {self._cad_kind()}: one "
+                f"page per layout with something drawn on it, from {n} "
+                f"drawing{'s' if n != 1 else ''}. A drawing with no such layout is plotted "
+                "from model space.")
+
+    def _cad_parameters(self) -> str:
+        """Review-parameter rows naming the drawing and how its sheets were plotted."""
+        if self.cad is None:
+            return ""
+        cad = self.cad
+        names = ", ".join(
+            esc(d.get("name", "")) + (f" (saved as {esc(str(d['release']))})"
+                                      if d.get("release") else "")
+            for d in self._cad_drawings()) or "—"
+        sheets = (cad.get("sheets") or cad.get("pages") or [])
+        layouts = ", ".join(esc(str(p.get("layout", ""))) for p in sheets[:12]
+                            if isinstance(p, dict))
+        if len(sheets) > 12:
+            layouts += f" and {len(sheets) - 12} more"
+        layers = self._layer_words()
+        render = f" ({esc(str(cad['render_version']))})" if cad.get("render_version") else ""
+        return (f"<tr class='n'><td>Submitted drawing</td><td>{names}</td></tr>"
+                f"<tr><td>Sheets plotted by this review</td><td>{layouts or '—'}; "
+                f"{esc(self._plotted_with())}{render}. The drawing file is the authority."
+                f"</td></tr>"
+                f"<tr class='n'><td>CAD layers</td><td>{layers}</td></tr>")
 
     # ── on-drawing markers ────────────────────────────────────────────────
     def diverges(self, f: Finding) -> bool:
@@ -172,6 +298,11 @@ class Renderer:
         # exists under the declared reading therefore gets no marker — it is
         # reported in the register, where its basis is stated.
         if f.scenario == "as_declared":
+            return None
+        # A page outside the set gets no marker, and is listed as unplaced: a
+        # bad index would otherwise fail the whole render, and a negative one
+        # would silently mark the last sheet. `payload._rect` guards the same.
+        if not (0 <= f.page < self.nsheets):
             return None
         pg = self.doc[f.page]
         if f.box:
@@ -218,8 +349,9 @@ class Renderer:
                  pymupdf.Rect(rect.x1 - w + 1, rect.y1 + 2, rect.x1 + 1, rect.y1 + h + 2)]
         taken = self._chips.setdefault(f.page, [])
         others = [b for b in self._boxes.get(f.page, []) if b != rect]
+        W, H = self._size(f.page)
         for chip in cands:
-            if chip.x0 < 8 or chip.x1 > self.W - 4 or chip.y0 < 2 or chip.y1 > self.H - 2:
+            if chip.x0 < 8 or chip.x1 > W - 4 or chip.y0 < 2 or chip.y1 > H - 2:
                 continue
             if any(chip.intersects(t) for t in taken) or any(chip.intersects(o) for o in others):
                 continue
@@ -290,6 +422,10 @@ class Renderer:
         # it is dropped: the same counts are printed on the register's first
         # page. Nothing else in the legend is duplicated anywhere.
         about_h = 250 if self.declared else 190
+        if self.cad is not None:
+            # Saying where the sheet came from takes a line more than saying it
+            # was not changed.
+            about_h += 30
         inc_about = space - fixed >= about_h
         inc_tally = space - fixed - (about_h if inc_about else 0) >= 86
         # The coverage tiles are a second row and degrade on their own: a
@@ -444,11 +580,12 @@ class Renderer:
                 "letter-spacing:1.3pt;'>ABOUT THIS REVIEW MARGIN</div>")
             pg.insert_htmlbox(pymupdf.Rect(X0 + 2, y + 34, X1, y + 34 + about_h),
                 "<div style='font-family:Helvetica;font-size:10.5pt;color:#222;line-height:1.40;'>"
+                + (self._about_plot(pg.number) if self.cad is not None else
                 "<b>The drawing has not been changed.</b> This margin was <i>added</i> to the left of "
                 "the original sheet, so nothing on the drawing is moved, resized or covered. Print to "
                 "fit, or crop the margin off to recover the original sheet exactly.<br><br>"
                 "<b>Nothing to switch on.</b> Every original CAD layer survives in this file untouched, "
-                "and no layer toggling is needed — everything here is visible as printed.<br><br>"
+                "and no layer toggling is needed — everything here is visible as printed.<br><br>")
                 + ("<b>Some findings rest on what you told us.</b> Answers from the project "
                    "declaration were used as a second source alongside the drawings. Anything "
                    "resting on an answer rather than on the sheet is tagged as such, here and "
@@ -491,7 +628,7 @@ class Renderer:
         for pno in range(nsheets):
             pg = self.doc[pno]
             all_cards = by_page.get(pno, [])
-            R = pymupdf.Rect(self.rail[0], 40, self.rail[1], self.H - 40)
+            R = pymupdf.Rect(self.rail[0], 40, self.rail[1], self._size(pno)[1] - 40)
 
             # Fit as many cards as the rail can hold with the legend still on
             # it, most severe first — they are already in that order. What does
@@ -793,7 +930,7 @@ them apart.</p>
 <table><colgroup><col style='width:22%'><col style='width:12%'><col style='width:66%'></colgroup>
 <tr><th>Measure</th><th>Count</th><th>What it means</th></tr>
 <tr><td>Sheets in the set</td><td><b>{cov['total']}</b></td>
-<td>Every page of the submitted PDF.</td></tr>
+<td>{self._coverage_scope()}</td></tr>
 <tr class='n'><td>Text recovered</td><td><b>{cov['read']} of {cov['total']}</b></td>
 <td>The reader obtained readable text from this many sheets, counting text recovered by OCR from
 pasted images. A sheet not counted here is one nothing could be read from.</td></tr>
@@ -815,7 +952,7 @@ number; nothing is skipped for want of a number.</td></tr>
 <tr><td>Reporting floor</td><td>{esc(o.min_severity)} and above</td></tr>
 <tr class='n'><td>Verified items shown</td><td>{'Yes' if o.include_verified else 'No'}</td></tr>
 <tr><td>Measured geometry</td><td>{'Yes' if o.include_measured else 'No'}</td></tr>
-</table>
+{self._cad_parameters()}</table>
 <p class='sm'>Generated {datetime.date.today().isoformat()} · Advisory only. A licensed design
 professional remains responsible for code compliance; this is not a plan approval and does not
 replace review by the authority having jurisdiction.</p>""")

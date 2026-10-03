@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
 """FBC review from the command line.
 
-Usage: python run.py <permit-set.pdf> [--json out.json] [--declaration decl.json]
+Usage: python run.py <permit-set.pdf|.dwg|.dxf|.zip> [--json out.json]
+                     [--declaration decl.json]
                      [--ai] [--readings readings.json] [--save-readings readings.json]
                      [--review ai_review.json] [--save-review ai_review.json]
+                     [--cad-dir DIR] [--markup-dxf out.zip]
+
+The set may be a PDF plotted from CAD, or the drawing itself: a DWG, a DXF, or a
+zip of them, recognised from the file's bytes. A drawing is plotted to PDF first
+(`fbcreview/cad`; a DWG needs LibreDWG's `dwg2dxf`, on PATH or at `FBC_DWG2DXF`),
+and the review reads that PDF with the drawing's sidecar beside it. The plot and
+sidecar go to a temporary directory that is removed afterwards, or to `--cad-dir`
+to keep them. `--markup-dxf` also writes the findings back into the drawing, on
+layers FBC-REVIEW and FBC-REVIEW-TEXT, as zipped DXF.
 
 `--declaration` takes a JSON object of ProjectDeclaration fields — what the
 applicant says the building is. It is a second source alongside the drawings,
@@ -26,7 +36,7 @@ three passes (`FBC_AI_MAX_PASSES`, `FBC_AI_REVIEW=off` to skip it).
 `--save-review` keeps what it did; `--review` replays that, on top of
 `--readings`, with no API call.
 """
-import json, os, sys
+import json, os, shutil, sys, tempfile
 from fbcreview.declaration import ProjectDeclaration
 from fbcreview.declaration_schema import validate
 from fbcreview.pipeline import build_facts
@@ -35,15 +45,49 @@ from fbcreview.rules import run_all, registered
 def _arg(argv, flag):
     return argv[argv.index(flag) + 1] if flag in argv else None
 
-def _readings(argv, path):
-    """(readings or None, how they were obtained), or (None, error) to stop on."""
+def _plot(argv, path):
+    """(rendered PDF, sidecar, readings identity, work dir to remove) for a drawing,
+    or (path, None, None, None) for a PDF. Raises ValueError carrying the refusal.
+
+    The identity is what AI readings of a drawing are keyed by: the plotted PDF's
+    bytes never repeat, so readings are tied to the drawing and what plotted it
+    instead (`fbcreview.ai.readings.plotted_identity`) — the worker's key too.
+    """
+    from fbcreview.cad import source
+    kind = source.sniff(path)
+    if kind not in (source.DWG, source.DXF, source.ZIP):
+        return path, None, None, None
+    from fbcreview.cad import ingest
+    from fbcreview.cad.convert import ConversionFailed, ConversionUnavailable
+    from fbcreview.cad.read import ReadError
+    from fbcreview.ai.readings import file_sha256, plotted_identity
+    keep = _arg(argv, "--cad-dir")
+    work = keep or tempfile.mkdtemp(prefix="fbc-cad-")
+    try:
+        cs = ingest(path, work, name=os.path.basename(path),
+                    progress=lambda m: print(f"  cad: {m}", file=sys.stderr))
+    except BaseException as exc:
+        if not keep:
+            shutil.rmtree(work, ignore_errors=True)
+        if isinstance(exc, (source.SourceError, ConversionUnavailable, ConversionFailed,
+                            ReadError)):
+            raise ValueError(f"drawing refused: {getattr(exc, 'message', None) or exc}")
+        raise
+    ident = plotted_identity(file_sha256(path), cs.data, cs.pdf_path)
+    return cs.pdf_path, cs.data, ident, (None if keep else work)
+
+def _readings(argv, path, ident=None):
+    """(readings or None, how they were obtained), or (None, error) to stop on.
+
+    `ident` is a drawing's readings identity; None keys readings by the PDF itself.
+    """
     replay = _arg(argv, "--readings")
     if replay:
         from fbcreview.ai.readings import file_sha256, load_readings
         readings = load_readings(replay)
         # Readings name the file they were read from. Grounding would reject
         # nearly everything from another file, but "nearly" is the problem.
-        if readings.file_sha256 and readings.file_sha256 != file_sha256(path):
+        if readings.file_sha256 and readings.file_sha256 != (ident or file_sha256(path)):
             return None, f"readings rejected: {replay} was read from a different file"
         return readings, f"replayed from {replay}"
     if "--ai" not in argv:
@@ -57,10 +101,11 @@ def _readings(argv, path):
     if config is None:
         return None, "--ai needs ANTHROPIC_API_KEY (see secrets/local.env.example)"
     cache = os.environ.get("FBC_AI_CACHE_DIR")
-    readings = read_document(path, config, cache=ReadingsCache(cache) if cache else None)
+    readings = read_document(path, config, cache=ReadingsCache(cache) if cache else None,
+                             identity=ident)
     return readings, f"read by {config.model} at {config.effort} effort"
 
-def _review(argv, path, readings, first, declaration):
+def _review(argv, path, readings, first, declaration, cad=None):
     """(facts, result, readings, trace, how) after the result check, when there is one.
 
     `how` is an error message, and the trace None, when a replay does not match.
@@ -74,7 +119,9 @@ def _review(argv, path, readings, first, declaration):
                                        system_prompt)
 
     def run_pass(r):
-        f = build_facts(path, readings=r)
+        # With the drawing's sidecar on every pass: a pass without it would drop
+        # what was read from the drawing and review a smaller set.
+        f = build_facts(path, readings=r, cad=cad)
         return f, run_all(f, None, declaration)
 
     if replay_path:
@@ -110,9 +157,49 @@ def _review(argv, path, readings, first, declaration):
     return facts, res, final, trace, f"checked by {config.model} at {config.effort} effort"
 
 def main(argv):
-    if len(argv) < 2:
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
         print(__doc__); return 2
-    path = argv[1]
+    if not os.path.isfile(argv[1]):
+        print(f"No such file: {os.path.basename(argv[1])}"); return 2
+    try:
+        path, cad, ident, scratch = _plot(argv, argv[1])
+    except ValueError as exc:
+        print(exc); return 2
+    try:
+        return _main(argv, argv[1], path, cad, ident)
+    finally:
+        if scratch:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+def _cad_lines(cad, facts):
+    """What the drawing gave, for the console: sheets, layers, each viewport's scale."""
+    pages = cad.get("pages", [])
+    conv = cad.get("converter") or "no conversion"
+    print(f"drawing     {cad.get('kind')}, {len(cad.get('drawings', []))} drawing(s) read "
+          f"({conv}; {cad.get('render_version')}) in {cad.get('seconds')} s")
+    print(f"plotted     {len(pages)} sheets, "
+          f"{sum(1 for p in pages if p.get('number'))} numbered by their title block")
+    for p in pages:
+        pno = int(p["page"])
+        views = facts.geometry[pno].views if pno in facts.geometry else []
+        label = p.get("number") or f"p{pno + 1}"
+        if p.get("model"):
+            g = facts.geometry.get(pno)
+            v = g.scale_pt_per_ft.value if g is not None and g.scale_pt_per_ft else None
+            print(f"  {label:<8} model space"
+                  + (f", fitted at {v:g} pt/ft" if v else ", no scale"))
+            continue
+        vps = p.get("viewports", [])
+        print(f"  {label:<8} layout '{p.get('layout')}', {len(vps)} viewport(s)")
+        for i, vp in enumerate(vps):
+            ratio = f"1:{1 / vp['scale']:.4g}" if vp.get("scale") else "unknown ratio"
+            ev = views[i].scale if i < len(views) else None
+            ptft = f" = {ev.value:g} pt/ft" if ev is not None and ev else ""
+            print(f"           viewport {vp.get('handle')}  {ratio}{ptft}")
+    if cad.get("warnings"):
+        print(f"warnings    {len(cad['warnings'])} (see the sidecar)")
+
+def _main(argv, given, path, cad, ident):
 
     declaration = None
     decl_path = _arg(argv, "--declaration")
@@ -126,7 +213,7 @@ def main(argv):
             return 2
         declaration = ProjectDeclaration.from_dict(raw)
 
-    readings, how = _readings(argv, path)
+    readings, how = _readings(argv, path, ident)
     if readings is None and how:
         print(how); return 2
     save = _arg(argv, "--save-readings")
@@ -134,10 +221,10 @@ def main(argv):
         from fbcreview.ai.readings import save_readings
         save_readings(readings, save)
 
-    facts = build_facts(path, readings=readings)
+    facts = build_facts(path, readings=readings, cad=cad)
     res = run_all(facts, None, declaration)
     facts, res, readings, trace, review_how = _review(argv, path, readings, (facts, res),
-                                                      declaration)
+                                                      declaration, cad=cad)
     if trace is None and review_how:
         print(review_how); return 2
     save_review = _arg(argv, "--save-review")
@@ -145,9 +232,13 @@ def main(argv):
         from fbcreview.ai.review import save_trace
         save_trace(trace, save_review)
 
-    print(f"\nsource      {path}")
+    print(f"\nsource      {given}")
     print(f"sheets      {len(facts.sheets)}  ({', '.join(s.code for s in facts.sheets[:8])} …)")
-    print(f"cad layers  {len(facts.meta.get('cad_layers', []))} preserved as PDF optional content")
+    if cad is not None:
+        print(f"cad layers  {len(facts.meta.get('cad_layers', []))} in the drawing's layer table")
+        _cad_lines(cad, facts)
+    else:
+        print(f"cad layers  {len(facts.meta.get('cad_layers', []))} preserved as PDF optional content")
     print(f"code data   {len(facts.code_data)} cited rows extracted")
     print(f"schedules   {', '.join(s.name for s in facts.schedules) or '—'}")
     print(f"doors       {len(facts.doors)}")
@@ -204,6 +295,20 @@ def main(argv):
                                          "reconciled", "declaration")}},
                   open(out, "w"), indent=2, default=str)
         print(f"\nwrote {out}")
+
+    markup_out = _arg(argv, "--markup-dxf")
+    if markup_out:
+        if cad is None:
+            print("\n--markup-dxf needs a drawing (.dwg, .dxf or .zip); this set is a PDF")
+            return 2
+        from fbcreview.cad import markup
+        from fbcreview.payload import findings_payload
+        work = os.path.dirname(path)
+        payload = findings_payload(path, facts, res.findings,
+                                   revisions=trace.revision_map() if trace else None)
+        done = markup.write(work, cad, payload, markup_out, os.path.basename(given))
+        print(f"\nwrote {markup_out}  ({done['placed']} findings clouded, "
+              f"{done['listed']} listed beside their sheet, {done['drawings']} drawing(s))")
     return 0
 
 if __name__ == "__main__":

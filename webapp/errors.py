@@ -47,6 +47,27 @@ TOO_MANY_PAGES = "too_many_pages"
 RATE_LIMITED = "rate_limited"
 INTERNAL = "internal"
 
+# A drawing upload (`.dwg`, `.dxf`, or a zip of them). Separate codes rather than
+# `corrupt_pdf` and friends, because what the person does next is different:
+# re-save the drawing in a newer release, re-zip it without the hostile member,
+# export it as DXF on a deployment with no DWG converter.
+#: A DWG saved in a release the converter cannot read layouts from (R12 and older).
+UNSUPPORTED_CAD = "unsupported_cad_version"
+#: A zip refused before unpacking: an unsafe member path, a symlink, a nested
+#: archive, a password-protected drawing, too many members, or one that inflates
+#: far beyond what a drawing set could.
+UNSAFE_ARCHIVE = "unsafe_archive"
+#: The drawing was admitted but could not be read: the converter produced no
+#: DXF, the DXF's structure is damaged, nothing on it could be plotted, or
+#: reading it ran past the time limit.
+CORRUPT_CAD = "corrupt_cad"
+#: A DWG on a deployment with no DWG converter installed. A DXF still works.
+CAD_UNAVAILABLE = "cad_unavailable"
+#: `POST /api/prefill` on a drawing. Suggestions are read from a PDF; a drawing
+#: is converted when the review runs, which takes minutes rather than the
+#: seconds a form can wait.
+PREFILL_NOT_AVAILABLE = "prefill_not_available"
+
 # Fallback prose for bare HTTPExceptions raised by Starlette itself.
 _BY_STATUS = {
     401: UNAUTHENTICATED,

@@ -245,7 +245,7 @@ TAG="$(git rev-parse --short HEAD 2>/dev/null || date +%s)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:${TAG}"
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet >/dev/null 2>&1
 info "building and pushing $IMAGE"
-info "(first build pulls Tesseract and OpenCV — several minutes)"
+info "(first build pulls Tesseract and OpenCV and compiles LibreDWG — several minutes)"
 # linux/amd64 explicitly: Cloud Run runs amd64, and an accidentally-arm64 image
 # fails at start rather than at build.
 docker buildx build --platform linux/amd64 -t "$IMAGE" --push .
@@ -253,16 +253,23 @@ ok "pushed $IMAGE"
 
 # ── 9. Cloud Run ──────────────────────────────────────────────────────────
 bold "9. Cloud Run"
+# 4Gi, not 2Gi: a drawing review reads the DWG in a subprocess beside the
+# service, and on the reference drawing (23 MB DWG, 8 sheets) that subprocess
+# peaks at 1.13 GB, while the 170 MB DXF it converts to sits on Cloud Run's
+# in-memory disk, which counts against the same limit. FBC_CAD_CONCURRENCY=1
+# lets one drawing at a time per instance do that; a second waits for the slot
+# rather than doubling the peak (webapp/cadjob.py). 4Gi needs at least 1 vCPU,
+# so --cpu=2 stands.
 gcloud run deploy "$SERVICE" \
   --image="$IMAGE" \
   --region="$REGION" \
   --platform=managed \
-  --memory=2Gi --cpu=2 \
+  --memory=4Gi --cpu=2 \
   --concurrency=4 \
   --timeout=900 \
   --min-instances=0 --max-instances=5 \
   --service-account="$SA" \
-  --set-env-vars="FBC_BUCKET=${BUCKET},FBC_PROJECT_ID=${PROJECT_ID},FBC_ALLOWED_EMAILS=${ALLOWED_EMAILS},FBC_SIGNER_SA=${SA}" \
+  --set-env-vars="FBC_BUCKET=${BUCKET},FBC_PROJECT_ID=${PROJECT_ID},FBC_ALLOWED_EMAILS=${ALLOWED_EMAILS},FBC_SIGNER_SA=${SA},FBC_CAD_CONCURRENCY=1" \
   --allow-unauthenticated \
   --quiet
 # --allow-unauthenticated is a considered choice, not laziness: the application

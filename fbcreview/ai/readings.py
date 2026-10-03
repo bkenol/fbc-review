@@ -48,6 +48,42 @@ def source_identity(upload_sha: str, rebuild: Optional[Dict[str, Any]] = None) -
     return hashlib.sha256(f"{upload_sha}|rebuild|{params}".encode("utf-8")).hexdigest()
 
 
+def plotted_identity(upload_sha: str, sidecar: Dict[str, Any], pdf_path: str) -> str:
+    """`source_identity` for a set plotted from a DWG or DXF (`fbcreview/cad`).
+
+    The plotted PDF is rebuilt on every run and its bytes never repeat, so like
+    a rebuilt scan it is keyed by the upload plus what made it: the converter
+    that actually ran (none for a DXF), the ezdxf and plotter versions — and a
+    digest of the text layer the reader is shown. The digest is there because a
+    version bump can be forgotten: measured on the reference drawing, one
+    plotter edit changed the text layer of every page under an unchanged
+    version string, and readings keyed only by the version would have replayed
+    against text they were never read from. The words and their boxes are
+    stable to the hundredth of a point between plots of the same drawing; the
+    page images are not, so they are not hashed.
+
+    Reads the sidecar and the PDF only — no ezdxf, no converter run.
+    """
+    import pymupdf
+
+    converters = sorted({str((d.get("conversion") or {}).get("converter") or "")
+                         for d in sidecar.get("drawings", [])} - {""})
+    h = hashlib.sha256()
+    with pymupdf.open(pdf_path) as doc:
+        for page in doc:
+            h.update(f"page {page.number} {round(page.rect.width, 1)} "
+                     f"{round(page.rect.height, 1)}\n".encode("utf-8"))
+            for x0, y0, x1, y1, word, *_ in page.get_text("words"):
+                h.update(f"{x0:.1f},{y0:.1f},{x1:.1f},{y1:.1f},{word}\n".encode("utf-8"))
+    return source_identity(upload_sha, {
+        "plotted_from": sidecar.get("kind", ""),
+        "converters": converters,
+        "ezdxf": sidecar.get("ezdxf", ""),
+        "render": sidecar.get("render_version", ""),
+        "text": h.hexdigest(),
+    })
+
+
 @dataclass
 class Readings:
     file_sha256: str

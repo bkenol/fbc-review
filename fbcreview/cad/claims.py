@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 import re
+import weakref
 from collections import Counter
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -94,16 +95,24 @@ def _dim_measurement(dim, units_in: Optional[float]) -> Optional[dict]:
             lfac = float(dim.override().get("dimlfac", 1.0) or 1.0)
         except Exception:
             lfac = 1.0
-        shown = m * abs(lfac)
-        out = {"measured_units": round(m, 4), "dimlfac": lfac}
+        # DIMLFAC scales the number a dimension *prints*, not the geometry it
+        # spans: a detail drawn at twice size carries DIMLFAC 0.5 so its text
+        # reads true. The geometry is what was measured; the printed value is
+        # the drafter's — both are kept, neither stands in for the other.
+        # (Measured: ezdxf's own EZDXF dimstyle carries DIMLFAC 100, and a
+        # 960-inch wall came out as "measured 96000 in" when the factor was
+        # multiplied into the measurement.)
+        out = {"measured_units": round(m, 4), "dimlfac": lfac,
+               "shown_units": round(m * lfac, 4)}
         if units_in is not None:
-            out["measured_in"] = round(shown * units_in, 3)
+            out["measured_in"] = round(m * units_in, 3)
         return out
     except Exception:
         return None
 
 
-def dimensions(page: int, runs: List[TextRun], to_page, doc, units_in: Optional[float]) -> List[dict]:
+def dimensions(page: int, runs: List[TextRun], to_page, doc,
+               units_in: Optional[float]) -> List[dict]:
     """Each dimension on the sheet: the text it prints and the length it measures.
 
     Only model-space dimensions seen through a viewport (or on a model-space
@@ -111,7 +120,8 @@ def dimensions(page: int, runs: List[TextRun], to_page, doc, units_in: Optional[
     its scale, and that conversion is a second inference this record does not
     make.
     """
-    by_handle: Dict[str, List[TextRun]] = {}
+    # one record per dimension per viewport it is seen through
+    by_handle: Dict[Tuple[str, str], List[TextRun]] = {}
     for r in runs:
         if r.parent == "DIMENSION" and r.handle:
             by_handle.setdefault((r.handle, r.viewport), []).append(r)
@@ -150,7 +160,11 @@ def _shoelace(pts: List[Tuple[float, float]]) -> float:
     return abs(a) / 2.0
 
 
-_OUTLINES: Dict[int, List[tuple]] = {}
+#: Outlines found per drawing, held only as long as the drawing is. Keyed by
+#: the drawing itself, not `id()`: an id is reused once a drawing is freed, and
+#: a long-lived process reading drawing after drawing would then be handed the
+#: outlines of a different one.
+_OUTLINES: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
 def _outlines(doc, units_in: float) -> List[tuple]:
@@ -159,9 +173,9 @@ def _outlines(doc, units_in: float) -> List[tuple]:
     Computed once per drawing — model space can hold a quarter of a million
     polylines, and every sheet asks the same question of them.
     """
-    key = id(doc)
-    if key in _OUTLINES:
-        return _OUTLINES[key]
+    held = _OUTLINES.setdefault(doc, {})
+    if units_in in held:
+        return held[units_in]
     found: List[tuple] = []
     want = {layer.dxf.name.lower() for layer in doc.layers if _AREA_LAYER.search(layer.dxf.name)}
     if want:
@@ -182,7 +196,7 @@ def _outlines(doc, units_in: float) -> List[tuple]:
             xs, ys = zip(*xy)
             found.append((e.dxf.handle, e.dxf.layer, sf, len(xy),
                           (min(xs), min(ys), max(xs), max(ys))))
-    _OUTLINES[key] = found
+    held[units_in] = found
     return found
 
 

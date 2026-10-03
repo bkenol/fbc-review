@@ -10,6 +10,7 @@ made from the leading bytes:
 | ----------------------------- | --------------------------------------- |
 | `%PDF-`                       | PDF — not this package's concern        |
 | `AC1012` … `AC1032`           | DWG, R13 to the 2018 format              |
+| `AC1009`, `AC1006` … `MC0.0`  | DWG too old to read — refused by name    |
 | `0\\nSECTION` (after any 999)  | ASCII DXF                               |
 | `AutoCAD Binary DXF\\r\\n\\x1a`  | binary DXF                              |
 | `PK\\x03\\x04`                  | zip — unpacked and its members sniffed  |
@@ -24,6 +25,7 @@ from __future__ import annotations
 import os
 import re
 import zipfile
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -45,14 +47,48 @@ DWG_VERSIONS: Dict[str, str] = {
     "AC1032": "AutoCAD 2018",
 }
 
+#: Releases older than R13, by the version string their files open with — named
+#: so a refusal can tell the person which AutoCAD wrote the file, not a code.
+OLD_DWG_VERSIONS: Dict[str, str] = {
+    "AC1009": "AutoCAD R11/R12",
+    "AC1006": "AutoCAD R10",
+    "AC1004": "AutoCAD R9",
+    "AC1003": "AutoCAD 2.6",
+    "AC1002": "AutoCAD 2.5",
+    "AC1001": "AutoCAD 2.2",
+    "AC2.10": "AutoCAD 2.1",
+    "AC1.50": "AutoCAD 2.0",
+    "AC1.40": "AutoCAD 1.4",
+    "AC1.2": "AutoCAD 1.2",
+    "MC0.0": "AutoCAD 1.0",
+}
+
+#: A DWG opens with its six-byte version string: `AC` and four digits from R9 on,
+#: a dotted form before that.
+_DWG_MAGIC = re.compile(rb"^(?:AC\d{4}|AC\d\.\d{1,2}|MC0\.0)")
+
 _BINARY_DXF = b"AutoCAD Binary DXF\r\n\x1a\x00"
 _ASCII_DXF = re.compile(rb"^\s*(?:999\s*\r?\n[^\n]*\r?\n\s*)*0\s*\r?\nSECTION\b")
 
+
+def _binary_after(head: bytes, start: int) -> bool:
+    """Do binary bytes follow the version string?
+
+    Every DWG header continues in binary right after its version string (five
+    zero bytes from R13 on). A text file that happens to begin `AC1009,` does
+    not, and must not be refused as an old drawing when it is no drawing at all.
+    """
+    tail = head[start:start + 32]
+    return any(b < 0x09 or 0x0E <= b < 0x20 or b >= 0x7F for b in tail)
+
 #: Zip limits. A real permit set is a few dozen sheet files; a 2 GB DXF is not a
-#: permit set. These bound the work and the disk a single upload can claim.
+#: permit set. These bound the work and the disk a single upload can claim — and
+#: on Cloud Run the disk is memory. 1 GB unpacked is already more DXF than one
+#: job may read (`fbcreview.cad.DEFAULT_MAX_DXF_MB`; a DWG only grows when it
+#: is converted), so nothing reviewable is lost by refusing it at the zip.
 MAX_MEMBERS = 400
 MAX_DRAWINGS = 120
-MAX_UNPACKED_BYTES = 3 * 1024 ** 3
+MAX_UNPACKED_BYTES = 1024 ** 3
 #: Deflate does well on DXF text (about 10:1 measured); anything far beyond that
 #: is a bomb rather than a drawing.
 MAX_RATIO = 200
@@ -71,11 +107,10 @@ def sniff_bytes(head: bytes) -> Optional[str]:
     """The format of a file from its first bytes, or None when it is none of ours."""
     if head.startswith(b"%PDF-"):
         return PDF
-    if head[:6].decode("latin-1") in DWG_VERSIONS:
-        return DWG
-    if head[:2] in (b"AC", b"MC") and head[2:3].isdigit():
-        # An older DWG (AC1009 = R11/R12, AC1006 = R10 …). Recognised so the
-        # refusal can say what it is instead of "not a drawing".
+    magic = _DWG_MAGIC.match(head)
+    if magic and _binary_after(head, magic.end()):
+        # Older and newer releases than the adapter reads are recognised too,
+        # so the refusal can say what the file is instead of "not a drawing".
         return DWG
     if head.startswith(_BINARY_DXF):
         return DXF
@@ -94,20 +129,31 @@ def sniff(path: str) -> Optional[str]:
 def dwg_version(path: str) -> str:
     """`AC1032`, or "" when the file is not a DWG."""
     with open(path, "rb") as fh:
-        head = fh.read(6).decode("latin-1", "replace")
-    return head if head.startswith("AC") else ""
+        m = _DWG_MAGIC.match(fh.read(6))
+    return m.group().decode("ascii") if m else ""
 
 
 def check_dwg_version(path: str) -> str:
     """The DWG's release name; raises SourceError for a release LibreDWG cannot
-    give us layouts from."""
+    give us layouts from — naming the release, and saying which way it is out
+    of range, because "save it as 2000 or later" is the wrong advice for a
+    file from an AutoCAD newer than any this service knows."""
     ver = dwg_version(path)
     if ver in DWG_VERSIONS:
         return DWG_VERSIONS[ver]
+    newest = max(DWG_VERSIONS)
+    if re.fullmatch(r"AC\d{4}", ver) and ver > newest:
+        raise SourceError(
+            "unsupported_dwg_version",
+            f"That drawing is saved in a DWG format newer than this service reads ({ver}; "
+            f"the newest it reads is {newest}, {DWG_VERSIONS[newest]}). Save it as "
+            f"{DWG_VERSIONS[newest]} DWG, or export it as DXF, and upload it again.")
+    release = OLD_DWG_VERSIONS.get(ver)
+    named = f"{release} ({ver})" if release else (ver or "an unrecognised version")
     raise SourceError(
         "unsupported_dwg_version",
-        f"That drawing is saved in an old DWG format ({ver or 'unknown'}). Open it in "
-        "AutoCAD and save it as AutoCAD 2000 or later, then upload it again.")
+        f"That drawing is saved in an old DWG format: {named}. Open it in AutoCAD and "
+        "save it as AutoCAD 2000 or later, then upload it again.")
 
 
 @dataclass
@@ -174,7 +220,8 @@ def unpack(zip_path: str, dest: str) -> Unpacked:
         if total > MAX_UNPACKED_BYTES:
             raise SourceError("zip_too_large",
                               f"That zip unpacks to {total / 1024 ** 3:.1f} GB. The limit is "
-                              f"{MAX_UNPACKED_BYTES / 1024 ** 3:.0f} GB.")
+                              f"{MAX_UNPACKED_BYTES / 1024 ** 3:.0f} GB; upload the permit "
+                              "set's drawings only.")
 
         for info in infos:
             if info.is_dir():
@@ -196,18 +243,24 @@ def unpack(zip_path: str, dest: str) -> Unpacked:
                 out.skipped[name] = f"beyond the first {MAX_DRAWINGS} drawings"
                 continue
             target = root / f"{len(out.drawings):03d}_{_flat(base)}"
-            with zf.open(info) as src, open(target, "wb") as dst:
-                written = 0
-                while True:
-                    chunk = src.read(1 << 20)
-                    if not chunk:
-                        break
-                    written += len(chunk)
-                    if written > info.file_size + (1 << 20):
-                        # The header lied about the size; stop before the disk does.
-                        raise SourceError("zip_bomb", "That zip file expands beyond the "
-                                                      "size it declares. It was not unpacked.")
-                    dst.write(chunk)
+            try:
+                _extract(zf, info, target)
+            except SourceError:
+                target.unlink(missing_ok=True)
+                raise
+            except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError,
+                    RuntimeError) as exc:
+                # A member whose bytes do not match its own header — a CRC that
+                # fails, a size that lies, a compression method zipfile cannot
+                # undo. Python's zipfile stops at the declared size and then
+                # fails the CRC, so a lying header surfaces here, not as a full
+                # disk. Refused whole: a set with a damaged member is not the set
+                # the person sent.
+                target.unlink(missing_ok=True)
+                raise SourceError("corrupt_zip",
+                                  "A file inside that zip is damaged or does not match the "
+                                  f"zip's own record of it ({exc.__class__.__name__}). It was "
+                                  "not unpacked; zip the drawings again and upload that.")
             kind = sniff(str(target))
             if kind not in (DWG, DXF):
                 target.unlink(missing_ok=True)
@@ -217,6 +270,25 @@ def unpack(zip_path: str, dest: str) -> Unpacked:
     if not out.drawings:
         raise SourceError("no_drawings", "That zip holds no DWG or DXF drawings.")
     return out
+
+
+def _extract(zf: zipfile.ZipFile, info: zipfile.ZipInfo, target: Path) -> None:
+    """Copy one member out, never writing more than it declares (plus slack).
+
+    zipfile itself stops reading at the declared size; the count here is the
+    second line, for a reader that does not.
+    """
+    with zf.open(info) as src, open(target, "wb") as dst:
+        written = 0
+        while True:
+            chunk = src.read(1 << 20)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > info.file_size + (1 << 20):
+                raise SourceError("zip_bomb", "That zip file expands beyond the size it "
+                                              "declares. It was not unpacked.")
+            dst.write(chunk)
 
 
 def _flat(name: str) -> str:

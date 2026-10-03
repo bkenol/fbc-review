@@ -467,3 +467,9 @@ boundaries as closed polylines. Reading it needs a converter (the ODA File
 Converter, free but proprietary, or LibreDWG, GPL-3.0) to DXF, then `ezdxf`.
 [`ARCHITECTURE-V2.md`](ARCHITECTURE-V2.md) §5 designs that adapter; it is not
 built, because there is no DWG to test it against yet.
+
+> **Built 2026-10-03** (`fbcreview/cad`, `ARCHITECTURE-V2.md` §5). The test
+> reference is a real AutoCAD 2018 drawing, converted with LibreDWG and read
+> with ezdxf: 8 layouts, 7 sheet numbers from the title block, every
+> viewport's exact scale, 151 attributes and 110 dimensions. User guide:
+> [`CAD-INPUT.md`](CAD-INPUT.md).

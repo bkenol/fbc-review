@@ -7,6 +7,7 @@
  * https://openapi-generator.tech
  * Do not edit the class manually.
  */
+import { CadReport } from './cad-report';
 import { ProjectDeclaration } from './project-declaration';
 import { ReviewOptions } from './review-options';
 import { CalibrationReport } from './calibration-report';
@@ -19,6 +20,10 @@ import { SourceProfile } from './source-profile';
 
 export interface Job { 
     bytes: number;
+    /**
+     * Present once a drawing upload has been read; null for a PDF.
+     */
+    cad?: CadReport | null;
     /**
      * What the calibration overlay did to this review. Present on any finished review, including one where it changed nothing.
      */
@@ -56,9 +61,13 @@ export interface Job {
      */
     rerun_of?: string | null;
     /**
-     * What kind of PDF was uploaded, measured at admission.
+     * What kind of PDF the engine reads: measured at admission for a PDF upload, and once it has been plotted for a drawing.
      */
     source?: SourceProfile | null;
+    /**
+     * What was uploaded, decided from its bytes. A drawing (`dwg`, `dxf`, `zip`) is plotted to PDF by the review itself, and `source`, `pages` and `downloads.source_pdf` then describe that plot.
+     */
+    source_format?: JobSourceFormatEnum;
     /**
      * Index into `stages`.
      */
@@ -69,6 +78,12 @@ export interface Job {
     state: JobStateEnum;
     summary?: Summary | null;
 }
+export enum JobSourceFormatEnum {
+    Pdf = 'pdf',
+    Dwg = 'dwg',
+    Dxf = 'dxf',
+    Zip = 'zip'
+};
 export enum JobStateEnum {
     Queued = 'queued',
     Running = 'running',

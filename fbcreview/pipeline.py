@@ -429,7 +429,14 @@ def _read_facts(doc, facts: ProjectFacts, readings=None, cad=None) -> Dict[int, 
     codes = {s.index: s.code for s in facts.sheets}
     layouts = {p: page_layout(doc[p]) for p in range(doc.page_count)}
     store = FactStore()
-    store.extend(read_layouts(layouts, codes))
+    claims = read_layouts(layouts, codes)
+    stamped = 0
+    if cad is not None:
+        # Named before they enter the store: two entities printing the same
+        # words on one sheet are then two claims, not one dropped as a repeat.
+        from .read import cad as cad_read
+        stamped = cad_read.stamp_sources(claims, cad)
+    store.extend(claims)
     facts.discharges = exit_discharges(layouts, codes)
     facts.occupancy_rows = occupancy_rows(layouts, codes)
     facts.plumbing = plumbing_count(layouts, codes)
@@ -439,7 +446,7 @@ def _read_facts(doc, facts: ProjectFacts, readings=None, cad=None) -> Dict[int, 
         ground_readings(readings, layouts, codes, store)
         facts.meta["ai_reading"] = readings.summary()
     if cad is not None:
-        _read_cad(facts, cad, codes, store)
+        _read_cad(facts, cad, codes, store, stamped)
     facts.store = store
     facts.meta["rotation"] = {p: doc[p].rotation for p in range(doc.page_count)
                               if doc[p].rotation}
@@ -473,10 +480,11 @@ def _cad_sheets(facts: ProjectFacts, cad) -> None:
             s.title = title
 
 
-def _read_cad(facts: ProjectFacts, cad, codes: Dict[int, str], store: FactStore) -> None:
+def _read_cad(facts: ProjectFacts, cad, codes: Dict[int, str], store: FactStore,
+              stamped: int = 0) -> None:
     from .read import cad as cad_read
     claims = cad_read.attribute_claims(cad, codes)
-    stamped = cad_read.stamp_sources(store.each(), cad)
+    stamped += cad_read.stamp_sources(store.each(), cad)       # the AI reader's, if any
     store.extend(claims)
     store.changed()
     facts.meta["cad"] = cad_read.summary(cad, claims=len(claims), stamped=stamped)

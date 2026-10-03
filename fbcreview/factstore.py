@@ -130,12 +130,33 @@ class Resolution:
                LEGACY: "read from", AI: "read by AI and verified on",
                CAD: f"read from the drawing's {b.label or 'attribute'} field, printed on"
                }.get(b.method, "read from")
-        others = [s for s in self.sheets if s != b.sheet]
-        also = f"; also stated on {', '.join(others)}" if others else ""
+        stated, shown = self._other_sheets()
+        also = f"; also stated on {', '.join(stated)}" if stated else ""
+        if shown:
+            # one model-space note seen through viewports on several layouts is
+            # one statement, wherever it shows
+            also += f"; the same drawing entity is also shown on {', '.join(shown)}"
         agreed = (" — two independent readers agree"
                   if len(self.methods) > 1 and independent(self.claims) else "")
         note = f"'{b.raw}' {how} {b.where()}{also}{agreed}"
         return Evidence(self.value, b.where(), self.confidence, note, b.page)
+
+    def _other_sheets(self) -> Tuple[List[str], List[str]]:
+        """Sheets other than the best claim's, split into those that state the
+        value again and those that only show the best claim's own drawing
+        entity again. Claims read off a PDF carry no source, so for them every
+        other sheet is a second statement, as it always was."""
+        b = self.best
+        mine = set(b.source.split("+")) if b.source else set()
+        stated: List[str] = []
+        shown: List[str] = []
+        for s in self.sheets:
+            if s == b.sheet:
+                continue
+            on = [c for c in self.claims if c.sheet == s]
+            same = bool(mine) and all(c.source and mine & set(c.source.split("+")) for c in on)
+            (shown if same else stated).append(s)
+        return stated, shown
 
     def as_meta(self) -> Dict[str, Any]:
         return {
@@ -199,23 +220,34 @@ def _tokens(c: Claim) -> set:
 def independent(claims: List[Claim]) -> bool:
     """Do these agreeing claims come from more than one reading?
 
-    The rule that has always held: two readers, or two sheets, are independent.
-    Stated as clusters — claims join a cluster when they share a token, and a
-    claim's token is its (page, method) — it is the same rule, and it extends to
-    a set read from a drawing, where a claim's tokens are the drawing entities
-    behind it. There the layout reader and the CAD reader finding one ATTRIB, or
-    one model-space note seen through viewports on two sheets, are one reading:
-    agreeing with yourself is not corroboration.
+    The rule that has always held: two readers, or two sheets, are independent;
+    one reader twice on one sheet is not. Stated as clusters — claims join a
+    cluster when they share a token, and a PDF claim's token is its (page,
+    method) — it is the same rule, and it extends to a set read from a drawing,
+    where a claim's tokens are the drawing entities behind it. There the layout
+    reader and the CAD reader finding one ATTRIB, or one model-space note seen
+    through viewports on two sheets, are one reading: agreeing with yourself is
+    not corroboration.
+
+    Two clusters are independent when between them they span two sheets or two
+    readers — the old rule, applied to clusters instead of claims. So two
+    separate entities that one reader found on one sheet stay one reading, as
+    the same words printed twice on a PDF page always were.
     """
-    clusters: List[set] = []
+    clusters: List[Tuple[set, set, set]] = []          # tokens, pages, methods
     for c in claims:
-        t = _tokens(c)
-        merged = [k for k in clusters if k & t]
-        for k in merged:
+        tokens, pages, methods = set(_tokens(c)), {c.page}, {c.method}
+        for k in [k for k in clusters if k[0] & tokens]:
             clusters.remove(k)
-            t |= k
-        clusters.append(t)
-    return len(clusters) > 1
+            tokens |= k[0]
+            pages |= k[1]
+            methods |= k[2]
+        clusters.append((tokens, pages, methods))
+    for i, (_t, pages, methods) in enumerate(clusters):
+        for _u, pages2, methods2 in clusters[i + 1:]:
+            if len(pages | pages2) > 1 or len(methods | methods2) > 1:
+                return True
+    return False
 
 
 def _general(sheet: str) -> bool:
@@ -232,8 +264,14 @@ class FactStore:
     def add(self, claim: Claim) -> None:
         key = (claim.field, claim.role)
         for c in self._claims[key]:
+            # On a drawn sheet two entities can print the same words. Both are
+            # kept — a sheet that shows another sheet's note *and* states it
+            # itself must say so — while `independent` still counts them as one
+            # reader on one sheet. A source of "" (every PDF claim) compares
+            # equal, so a PDF reads exactly as before.
             if (c.page == claim.page and c.method == claim.method
-                    and _same(claim.field, c.value, claim.value) and c.raw == claim.raw):
+                    and _same(claim.field, c.value, claim.value) and c.raw == claim.raw
+                    and c.source == claim.source):
                 return                                    # the same reading twice
         self._claims[key].append(claim)
         self._cache.pop(key, None)

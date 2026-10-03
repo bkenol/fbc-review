@@ -15,9 +15,13 @@
 export interface Downloads { 
     expires_at: string;
     findings_json: string;
+    /**
+     * The drawing with the findings drawn into it on layers FBC-REVIEW and FBC-REVIEW-TEXT, as zipped DXF. Empty unless the upload was a drawing, and empty if writing it failed — the marked-up PDF is the review of record.
+     */
+    markup_dxf?: string;
     markup_pdf: string;
     /**
-     * The set as uploaded. The in-app viewer renders this and draws the findings itself as an overlay, rather than rendering `markup_pdf` — otherwise every marker would be drawn twice, once burnt into the page and once interactively, and neither could be turned off.
+     * The PDF the engine read, which the in-app viewer renders: the set as uploaded, or for a drawing upload the sheets plotted from it — every finding\'s `rect` is in this file\'s page space. The viewer draws the findings itself as an overlay rather than rendering `markup_pdf`; otherwise every marker would be drawn twice, once burnt into the page and once interactively, and neither could be turned off.
      */
     source_pdf?: string;
 }

@@ -1,10 +1,18 @@
-"""Cloud Storage: the upload and the two artefacts.
+"""Cloud Storage: the upload and the artefacts made from it.
 
 Layout, one prefix per job:
 
-    uploads/{job_id}/{original_filename}
-    outputs/{job_id}/markup.pdf
-    outputs/{job_id}/findings.json
+    uploads/{job_id}/{original_filename}     the set as sent: a PDF, DWG, DXF or zip
+    outputs/{job_id}/markup.pdf              the marked-up report
+    outputs/{job_id}/findings.json           the findings register
+    outputs/{job_id}/source.pdf              a drawing upload only: the sheets as
+                                             plotted from it, which the engine read
+                                             and the viewer renders
+    outputs/{job_id}/markup-dxf.zip          a drawing upload only: the drawing with
+                                             the findings on FBC-REVIEW layers
+
+A re-run writes its own `outputs/` and reads the first review's `uploads/`
+object; nothing under `uploads/` is ever copied.
 
 The bucket is private — uniform bucket-level access, public access prevention
 enforced — and the browser reaches the artefacts through V4 signed URLs only.
@@ -28,6 +36,12 @@ log = logging.getLogger("fbc.storage")
 
 MARKUP = "markup.pdf"
 FINDINGS = "findings.json"
+#: The PDF plotted from a drawing upload. Every finding's `rect` is in this
+#: file's page space, so it — not the DWG — is what the viewer must render.
+SOURCE_PDF = "source.pdf"
+#: The marked-up drawing: one DXF per drawing with sheets, zipped. A DXF of a
+#: real set is 170 MB; zipped it is about 15.
+MARKUP_DXF = "markup-dxf.zip"
 
 
 def upload_path(job_id: str, filename: str) -> str:

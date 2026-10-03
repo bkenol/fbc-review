@@ -50,7 +50,7 @@ export class ReviewsApi extends BaseService {
     /**
      * Accept a permit set and start a review.
      * @endpoint post /api/review
-     * @param file The permit set, as a PDF.
+     * @param file The permit set: a PDF plotted from CAD, or the drawing itself as a DWG, a DXF, or a zip of them. Recognised from its bytes, not its name.
      * @param declaration A JSON-encoded ProjectDeclaration: what the applicant says the building is. Optional in whole and in part — every field may be omitted, and omitting the part entirely reproduces the review exactly as it ran before declarations existed. Values are validated against the schema &#x60;/api/config&#x60; publishes.
      * @param reviewOptions A JSON-encoded ReviewOptions object.
      * @param observe set whether or not to return the data Observable as the body, response or events. defaults to returning the body.
@@ -314,7 +314,7 @@ export class ReviewsApi extends BaseService {
 
     /**
      * Read what a permit set already states about itself.
-     * Parses a set and returns the declaration answers the drawings themselves state, so the applicant confirms or corrects them rather than transcribing their own drawing. Starts nothing, stores nothing, and makes no model calls — it is the same pure-Python parse the review runs, stopped after the facts are built. The suggestions are advisory: what the applicant submits to &#x60;POST /api/review&#x60; is what gets declared.
+     * Parses a set and returns the declaration answers the drawings themselves state, so the applicant confirms or corrects them rather than transcribing their own drawing. Starts nothing, stores nothing, and makes no model calls — it is the same pure-Python parse the review runs, stopped after the facts are built. The suggestions are advisory: what the applicant submits to &#x60;POST /api/review&#x60; is what gets declared. A PDF only: a drawing (DWG, DXF or zip) is refused with &#x60;prefill_not_available&#x60;, after the same admission checks a review would make, because it is converted when the review runs.
      * @endpoint post /api/prefill
      * @param file The permit set, as a PDF.
      * @param observe set whether or not to return the data Observable as the body, response or events. defaults to returning the body.
