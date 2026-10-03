@@ -303,6 +303,44 @@ class PlotFrontend(UniversalFrontend):
         except text_layout.LayoutError:
             self.draw_simple_mtext(mtext, properties)
 
+    def draw_composite_entity(self, entity, properties) -> None:
+        """An INSERT, and its block's visible constant attributes.
+
+        A constant attribute has no ATTRIB on the INSERT: AutoCAD shows the
+        block definition's value, and ezdxf draws nothing (measured: a code
+        block's constant RISK_CATEGORY `II` was missing from the plot and the
+        text layer, and the value reported as not stated). Each is drawn as
+        the ATTRIB AutoCAD would show, placed by the INSERT.
+        """
+        super().draw_composite_entity(entity, properties)
+        if entity.dxftype() != "INSERT":
+            return
+        try:
+            block = entity.block()
+            consts = [a for a in block.get_const_attdefs() if not a.is_invisible] \
+                if block is not None else []
+        except Exception:
+            return
+        if not consts:
+            return
+        from ezdxf.entities import Attrib
+        self.ctx.push_state(properties)
+        try:
+            for ins in (entity.multi_insert() if entity.mcount > 1 else [entity]):
+                m = ins.matrix44()
+                drawn = []
+                for a in consts:
+                    at = Attrib.new(dxfattribs=a.dxfattribs(drop={"prompt", "handle", "owner"}),
+                                    doc=entity.doc)
+                    if a.has_embedded_mtext_entity:
+                        at.embed_mtext(a.virtual_mtext_entity())
+                    at.transform(m)
+                    at.set_source_of_copy(a)
+                    drawn.append(at)
+                self.draw_entities(drawn)
+        finally:
+            self.ctx.pop_state()
+
 
 class _SharedPageRender(pmb.PyMuPdfRenderBackend):
     """ezdxf's PyMuPDF render backend, drawing into one document for the whole set.

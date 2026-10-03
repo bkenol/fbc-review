@@ -13,7 +13,7 @@ from typing import List, Optional, Tuple
 import pymupdf
 
 from . import rule, Finding, RuleResult
-from ..confidence import Abstention
+from ..confidence import HIGH, Abstention
 from ..facts import ProjectFacts
 
 EGRESS_LAYER = "egress path"
@@ -132,10 +132,16 @@ def egress_extent(f: ProjectFacts, out: RuleResult):
         # On a set plotted from a drawing the scale is not a printed label: it is
         # the viewport's own, exact, or for a model-space drawing the factor it
         # was fitted to the sheet at. Say which — the sheet never "states" it.
-        if f.meta.get("cad") is not None:
+        # Only a scale the drawing gave — a viewport's, or the fit of model
+        # space — is the drawing's. A sheet drawn on paper is converted at its
+        # printed label, like any PDF, and is described as one.
+        if f.meta.get("cad") is not None and "layout '" in (ev.source or ""):
             how = (f"converted at the scale the drawing itself defines for this view "
                    f"({scale:g} pt/ft, {ev.confidence} confidence — {ev.source}; {ev.note})")
-            cite = "FBC-B Table 1017.2 · scale exact from the drawing's own coordinates"
+            cite = ("FBC-B Table 1017.2 · scale exact from the drawing's own coordinates"
+                    if ev.confidence == HIGH else
+                    "FBC-B Table 1017.2 · scale from the drawing's own coordinates, its units "
+                    "inferred (see the note)")
         else:
             how = (f"converted at the scale the sheet itself states for this drawing "
                    f"({scale:g} pt/ft, {ev.confidence} confidence — {ev.source})")

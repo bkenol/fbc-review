@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..cad import EMPTY_VIEW_SHARE
-from ..confidence import HIGH, Evidence
+from ..confidence import HIGH, MEDIUM, Evidence
 from ..extract.scale import _LABEL, _agrees, label_value
 from ..facts import ViewScale
 from ..factstore import CAD, RIVAL_SCORE, Claim
@@ -59,6 +59,20 @@ def _label(rec: dict) -> str:
     return " ".join(str(raw or "").replace("_", " ").replace("-", " ").split()).upper()
 
 
+def _prefix(sidecar: dict, page: dict) -> str:
+    """What makes a handle unique across the upload: handles are numbered per
+    drawing, so two sheet files made from one template give the same note the
+    same handle (measured: "the same drawing entity is also shown on" a sheet
+    that states it itself). With more than one drawing, a token carries the
+    drawing's position in the sidecar — not its name, which may hold the `+`
+    or `:` the token is built with. With one, it is the bare handle."""
+    names = [d.get("name", "") for d in (sidecar or {}).get("drawings", [])]
+    if len(names) < 2:
+        return ""
+    d = page.get("drawing", "")
+    return f"{names.index(d)}/" if d in names else ""
+
+
 def attribute_claims(sidecar: dict, codes: Dict[int, str]) -> List[Claim]:
     """Catalog facts the drawing's block attributes state."""
     out: List[Claim] = []
@@ -88,7 +102,8 @@ def attribute_claims(sidecar: dict, codes: Dict[int, str]) -> List[Claim]:
             # A tag's name is never printed, so it never outranks a printed
             # label: at RIVAL_SCORE it can still raise a conflict, never win one.
             c.score = min(c.score, RIVAL_SCORE)
-            c.source = f"dxf:{rec.get('source') or rec.get('handle', '')}"
+            c.source = (f"dxf:{_prefix(sidecar, page_info.get(pno, {}))}"
+                        f"{rec.get('source') or rec.get('handle', '')}")
             c.layout = layout
             c.layer = rec.get("layer", "")
             c.note = (f"the drawing's {rec.get('kind', 'ATTRIB')} '{label}' — the field's "
@@ -98,7 +113,8 @@ def attribute_claims(sidecar: dict, codes: Dict[int, str]) -> List[Claim]:
 
 
 def _covered(claim: Box, cell: Box, slack: float = 0.5) -> bool:
-    """Is most of a text cell inside a claim's box?
+    """Is most of a text cell inside a claim's box, or most of the claim
+    inside the cell?
 
     A claim's box is made of PDF word boxes, which reach about 0.3 × the cap
     height below the baseline and a little above the cap line; a cell is cap
@@ -111,8 +127,16 @@ def _covered(claim: Box, cell: Box, slack: float = 0.5) -> bool:
     x1, y1 = min(claim[2] + slack, cell[2]), min(claim[3] + slack, cell[3])
     if x1 <= x0 or y1 <= y0:
         return False
+    inter = (x1 - x0) * (y1 - y0)
     area = max(cell[2] - cell[0], 0.1) * max(cell[3] - cell[1], 0.1)
-    return (x1 - x0) * (y1 - y0) >= 0.5 * area
+    # Or most of the claim inside the cell: the AI quotes the shortest run
+    # holding label and value — `OCCUPANT LOAD: 70` of a longer note — and that
+    # box covers under half of the note's cell. Unstamped, it passed for a
+    # second, independent reader of the very text the layout reader read
+    # (measured: HIGH, "two independent readers agree"). A one-row claim's
+    # thin reach into the next row of a tight stack is still neither.
+    own = max(claim[2] - claim[0], 0.1) * max(claim[3] - claim[1], 0.1)
+    return inter >= 0.5 * area or inter >= 0.5 * own
 
 
 def stamp_sources(claims: Iterable[Claim], sidecar: dict) -> int:
@@ -132,7 +156,8 @@ def stamp_sources(claims: Iterable[Claim], sidecar: dict) -> int:
             if _covered(tuple(c.box), tuple(cell["box"])):
                 handles.update(h for h in cell.get("handles", []) if h)
         if handles:
-            c.source = "+".join(f"dxf:{h}" for h in sorted(handles))
+            pre = _prefix(sidecar, info[c.page])
+            c.source = "+".join(f"dxf:{pre}{h}" for h in sorted(handles))
             c.layout = info[c.page].get("layout", "")
             n += 1
     return n
@@ -163,22 +188,40 @@ def page_scales(sidecar: dict, pno: int, sheet: str,
     p = pages(sidecar).get(pno)
     if p is None:
         return None
-    units = _units(sidecar, p.get("drawing", ""))
     src = f"{sheet}: layout '{p.get('layout', '')}'"
+    printed = _labels(layout)
+    if not p.get("model") and not p.get("viewports"):
+        # Drawn on paper, through no viewport. What is on it is at whatever
+        # scale its label prints — the drawing defines none — so a printed
+        # label governs, through the PDF path's own resolver (measured: a
+        # life-safety plan at a printed 1/4" = 1'-0" lost its 18 pt/ft and
+        # its egress measure to "nothing on it is drawn to a scale").
+        if printed:
+            return None
+        return Evidence.abstain(
+            src, "the layout has no viewport onto model space and prints no scale label, so "
+                 "nothing on it has a scale to convert at", pno), []
+    units = _units(sidecar, p.get("drawing", ""))
     if units is None or units.get("inches_per_unit") is None:
         why = "the drawing declares no units, so its coordinates cannot be converted to feet"
         return Evidence.abstain(src, why, pno), [
             ViewScale(tuple(v["rect"]), Evidence.abstain(f"{src}, viewport {v['handle']}", why, pno))
             for v in p.get("viewports", [])]
     per_ft = 12.0 / float(units["inches_per_unit"])
-    basis = ("" if units.get("basis") == "stated"
+    stated_units = units.get("basis") == "stated"
+    basis = ("" if stated_units
              else f"; units {units.get('name')} inferred — {units.get('note', '')}")
-    printed = _labels(layout)
+    # Exact only when the drawing states its units. Inferred units make the
+    # ratio exact and the feet an inference, and an inference is not graded
+    # as a stated fact (the PDF path drops an unconfirmed label the same way).
+    conf = HIGH if stated_units else MEDIUM
+    exact = "exact from the drawing" if stated_units else \
+        "from the drawing's coordinates, its units inferred"
 
     if p.get("model"):
         v = round(_pt_per_unit(p["to_page"]) * per_ft, 3)
-        ev = Evidence(v, f"{src} (model space)", HIGH,
-                      f"exact from the drawing: model space fitted to the sheet at {v:g} pt per "
+        ev = Evidence(v, f"{src} (model space)", conf,
+                      f"{exact}: model space fitted to the sheet at {v:g} pt per "
                       f"foot; there is no plotted scale to read{basis}", pno)
         return ev, []
 
@@ -196,14 +239,14 @@ def page_scales(sidecar: dict, pno: int, sheet: str,
                      + ") do not match it — the viewport is what is drawn")
         else:
             check = ""
-        note = (f"exact from the drawing: viewport {vp['handle']} shows model space at "
+        note = (f"{exact}: viewport {vp['handle']} shows model space at "
                 f"{ratio_txt} = {pt_ft:g} pt per foot; not a printed label{check}{basis}")
         views.append(ViewScale(tuple(vp["rect"]),
-                               Evidence(pt_ft, f"{src}, viewport {vp['handle']}", HIGH, note, pno)))
+                               Evidence(pt_ft, f"{src}, viewport {vp['handle']}", conf, note, pno)))
         distinct.append(pt_ft)
     uniq = sorted({round(v, 3) for v in distinct})
     if not views:
-        why = "the layout has no viewport onto model space; nothing on it is drawn to a scale"
+        why = "none of the layout's viewports onto model space could be read"
     else:
         why = ("the sheet holds viewports at " + ", ".join(f"{v:g}" for v in uniq) +
                " pt per foot; each governs only the geometry inside it")

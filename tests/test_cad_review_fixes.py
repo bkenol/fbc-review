@@ -675,3 +675,146 @@ def test_one_note_shown_on_two_sheets_is_not_a_cross_sheet_pass(tmp_path):
     passed = [f for f in res.findings if f.rule_id == "XSHEET.STATED_CONFLICT"]
     assert passed == [], [(f.status, f.result) for f in passed]
     assert any(a.rule_id == "XSHEET.STATED_CONFLICT" for a in res.abstentions)
+
+
+# ── provenance and confidence, read off a drawing ───────────────────────────
+
+def test_a_short_quote_inside_a_long_text_is_that_texts_reading():
+    """The AI quotes the shortest run holding label and value — `OCCUPANT
+    LOAD: 70` of a longer note — so its box covered under half the note's
+    cell and went unstamped. Unstamped, it counted as a second, independent
+    reader of the very text the layout reader had read: HIGH, "two independent
+    readers agree"."""
+    from fbcreview.factstore import AI, Claim
+    from fbcreview.read.cad import stamp_sources
+    cell = {"box": [144.7, 300.0, 1093.8, 310.0], "handles": ["96"]}
+    sidecar = {"pages": [{"page": 0, "layout": "A-101", "text": [cell]}]}
+    ai = Claim("occupant_load", 70.0, "OCCUPANT LOAD: 70", 0, "A-101",
+               (144.7, 299.5, 273.4, 311.0), AI)
+    assert stamp_sources([ai], sidecar) == 1
+    assert ai.source == "dxf:96"
+
+
+def _template_sheet(path, number):
+    """A sheet file made from the office template: the same entities, so the
+    same handles, in every file made from it."""
+    doc = ezdxf.new("R2018", setup=True)
+    doc.header["$INSUNITS"] = 1
+    lay = doc.layouts.new("SHEET")
+    lay.page_setup(size=(36, 24), margins=(0, 0, 0, 0), units="inch")
+    lay.add_text("RISK CATEGORY: II", height=0.2).set_placement((24.5, 20))
+    lay.add_text(f"SHEET {number}", height=0.3).set_placement((31, 1))
+    doc.saveas(path)
+    return path
+
+
+def test_two_drawings_from_one_template_are_two_statements(tmp_path):
+    """Handles are per drawing. Two sheet files from one template give the same
+    note the same handle, and the fact store took the second for the first
+    one shown again — MEDIUM, "the same drawing entity is also shown on"."""
+    from fbcreview.cad import ingest
+    from fbcreview.confidence import HIGH
+    from fbcreview.pipeline import build_facts
+    a = _template_sheet(tmp_path / "A-101.dxf", "A-101")
+    b = _template_sheet(tmp_path / "A-102.dxf", "A-102")
+    cs = ingest(_zip(tmp_path, [("A-101.dxf", a), ("A-102.dxf", b)]), str(tmp_path / "w"))
+    r = build_facts(cs.pdf_path, cad=cs.data).store.resolve("risk_category")
+    assert r.value == "II" and r.confidence == HIGH, r.evidence().note
+    assert "the same drawing entity" not in r.evidence().note
+
+
+def _egress_on_paper(tmp_path, insunits=1):
+    doc = ezdxf.new("R2018", setup=True)
+    doc.header["$INSUNITS"] = insunits
+    doc.layers.add("EGRESS PATH")
+    lay = doc.layouts.new("LS-1")
+    lay.page_setup(size=(36, 24), margins=(0, 0, 0, 0), units="inch")
+    lay.add_lwpolyline([(2, 2), (30, 2), (30, 20), (2, 20)], close=True)
+    lay.add_line((4, 10), (24, 10), dxfattribs={"layer": "EGRESS PATH"})
+    lay.add_text("LIFE SAFETY PLAN", height=0.25).set_placement((4, 4))
+    lay.add_text('SCALE: 1/4" = 1\'-0"', height=0.125).set_placement((4, 3.5))
+    path = tmp_path / "ps.dxf"
+    doc.saveas(path)
+    return path
+
+
+def test_a_sheet_drawn_on_paper_keeps_its_printed_scale(tmp_path):
+    """A layout with no viewport, its plan drawn on paper at a printed 1/4" =
+    1'-0". As a PDF its scale resolves from the label (18 pt/ft); with the
+    sidecar it was declared to have no scale at all — "nothing on it is drawn
+    to a scale" — and the egress measure stood down."""
+    from fbcreview.cad import ingest
+    from fbcreview.pipeline import build_facts
+    from fbcreview.rules import run_all
+    cs = ingest(str(_egress_on_paper(tmp_path)), str(tmp_path / "w"), name="ps.dxf")
+    plain = build_facts(cs.pdf_path).geometry[0].scale_pt_per_ft.value
+    facts = build_facts(cs.pdf_path, cad=cs.data)
+    assert plain == 18.0
+    assert facts.geometry[0].scale_pt_per_ft.value == plain
+    meas = [f for f in run_all(facts).findings if f.rule_id == "MEASURE.EGRESS_EXTENT"]
+    assert meas, "the measure stood down"
+    assert "the drawing itself defines" not in meas[0].checked   # the sheet's label did
+    assert "drawing's own coordinates" not in meas[0].code
+
+
+def test_a_scale_from_inferred_units_is_not_exact(tmp_path):
+    """$INSUNITS 0 with architectural display units: inches are inferred. The
+    scale was still HIGH and cited as "exact from the drawing's own
+    coordinates" — an inference passing for a stated fact."""
+    from test_cad_followups import _egress_drawing
+
+    from fbcreview.cad import ingest
+    from fbcreview.confidence import HIGH
+    from fbcreview.pipeline import build_facts
+    from fbcreview.rules import run_all
+    path = _egress_drawing(tmp_path / "egress.dxf")
+    doc = ezdxf.readfile(path)
+    doc.header["$INSUNITS"] = 0
+    doc.header["$LUNITS"] = 4
+    doc.units = 0
+    doc.saveas(path)
+    cs = ingest(str(path), str(tmp_path / "w"), name="egress.dxf")
+    facts = build_facts(cs.pdf_path, cad=cs.data)
+    ev = facts.geometry[0].scale_pt_per_ft
+    assert ev.value and ev.confidence != HIGH, (ev.confidence, ev.note)
+    meas = [f for f in run_all(facts).findings if f.rule_id == "MEASURE.EGRESS_EXTENT"]
+    assert meas and "exact" not in meas[0].code, meas[0].code if meas else None
+    assert "inferred" in meas[0].code
+
+
+def test_the_drawing_note_names_the_value_that_came_from_the_drawing():
+    """The required travel distance printed on G-001, the provided one read
+    from an attribute on A-101: the note said the *required* value was read
+    from the drawing's attribute, on G-001."""
+    from fbcreview.facts import ProjectFacts
+    from fbcreview.factstore import CAD, PAIR, Claim, FactStore
+    from fbcreview.rules._stated import stated
+    store = FactStore()
+    store.add(Claim(field="egress.travel_distance", value=250.0,
+                    raw="MAX TRAVEL DISTANCE: 250 FT", page=0, sheet="G-001",
+                    box=(0.0, 0.0, 9.0, 9.0), method=PAIR, label="MAX TRAVEL DISTANCE",
+                    role="required"))
+    store.add(Claim(field="egress.travel_distance", value=180.0, raw="180", page=1,
+                    sheet="A-101", box=(0.0, 0.0, 9.0, 9.0), method=CAD,
+                    label="TRAVEL DISTANCE PROVIDED", role="provided", source="dxf:A1"))
+    d = stated(ProjectFacts(source_path="set.pdf", store=store), "1017.2")
+    assert d is not None and d.required == 250.0 and d.provided == 180.0
+    assert "A-101" in d.note and "provided" in d.note and "G-001" not in d.note
+
+
+def test_a_constant_attribute_is_on_the_sheet(tmp_path):
+    """A constant attribute has no ATTRIB on the INSERT; AutoCAD shows its
+    value from the block, ezdxf draws nothing. `RISK CATEGORY: II` from a code
+    block with a constant RISK_CATEGORY was missing from the plot and the
+    text layer, and reported as not stated."""
+    from fbcreview.cad import ingest
+    doc, lay = _sheet_doc()
+    code = doc.blocks.new("CODE")
+    code.add_text("RISK CATEGORY:", height=0.2).set_placement((0, 0))
+    code.add_attdef("RISK_CATEGORY", (2.4, 0), dxfattribs={"height": 0.2, "flags": 2}) \
+        .dxf.text = "II"
+    lay.add_blockref("CODE", (24.0, 20.0))
+    doc.saveas(tmp_path / "c.dxf")
+    cs = ingest(str(tmp_path / "c.dxf"), str(tmp_path / "w"), name="c.dxf")
+    words = " ".join(w[4] for w in _words_of_page(cs))
+    assert "RISK CATEGORY: II" in words or "CATEGORY: II" in words, words

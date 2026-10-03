@@ -93,7 +93,10 @@ _NOT_PRINTED = ("measured", "computed")
 
 def _entities(c) -> str:
     """The drawing entities a claim names, as `entity 1A2` / `entities 1A2, 1A3`."""
-    handles = [t.split(":", 1)[1] for t in (c.source or "").split("+")
+    # `dxf:<handle>`, or `dxf:<n>/<handle>` in an upload of several drawings;
+    # a handle inside a block is a path, `INSERT:TEXT`. The entity is shown as
+    # the drafter would find it: the handle AutoCAD's LIST command reports.
+    handles = [t.split(":", 1)[1].rsplit("/", 1)[-1] for t in (c.source or "").split("+")
                if t.startswith("dxf:") and t.split(":", 1)[1]]
     if not handles:
         return ""
