@@ -53,10 +53,10 @@ from ezdxf import bbox as ezbbox
 from ezdxf.addons.drawing import RenderContext
 from ezdxf.addons.drawing import layout as dl
 from ezdxf.addons.drawing import pymupdf as pmb
-from ezdxf.addons.drawing.config import Configuration
+from ezdxf.addons.drawing.config import Configuration, ImagePolicy
 from ezdxf.addons.drawing.frontend import UniversalFrontend
 from ezdxf.tools import text_layout
-from ezdxf.addons.drawing.pipeline import RenderPipeline2d
+from ezdxf.addons.drawing.pipeline import RenderPipeline2d, prepare_string_for_rendering
 from ezdxf.document import Drawing
 from ezdxf.math import BoundingBox2d, Matrix44, Vec2
 from ezdxf.tools.text_layout import Fraction as _EzFraction
@@ -130,6 +130,12 @@ class TextRun:
     x0: float
     x1: float
     cap: float
+    #: The entity itself, through every block it is drawn from: `INSERT` or
+    #: `INSERT:TEXT`, `INSERT:INSERT:TEXT` for blocks in blocks. `handle` is
+    #: the INSERT for everything inside one, so two notes in one block — or a
+    #: whole embedded xref — would read as one entity, and agreeing with
+    #: itself is not corroboration while two notes are.
+    source: str = ""
 
 
 @dataclass
@@ -203,6 +209,17 @@ class CapturePipeline(RenderPipeline2d):
     def _record(self, text, transform, properties, cap_height, dxftype) -> None:
         if not text or not text.strip():
             return
+        # Measure the string ezdxf draws, not the one it was given: it draws an
+        # MTEXT tab as eight spaces and a TEXT tab as `?`, and the words after a
+        # tab were placed about eight spaces left of their ink (measured: 24 pt
+        # at 9 pt text). A TEXT tab is written as a space, so a value after it
+        # stays its own word rather than fusing with a `?`.
+        if dxftype in ("TEXT", "ATTRIB", "ATTDEF"):
+            text = text.replace("\t", " ")
+        try:
+            text = prepare_string_for_rendering(text, dxftype)
+        except (TypeError, AssertionError):
+            pass
         font = properties.font or self.default_font_face
         paths = self.text_engine.get_text_glyph_paths(text, font, cap_height)
         pts: list = []
@@ -215,6 +232,9 @@ class CapturePipeline(RenderPipeline2d):
         m = self.clipping_portal.transform_matrix(transform.copy())
         inner = self._stack[-1] if self._stack else None
         outer = self._stack[0] if self._stack else None
+        source = ":".join([self._current_entity_handle or ""] + [
+            e.source_of_copy.dxf.handle for e in self._stack
+            if e.is_virtual and getattr(e, "source_of_copy", None) is not None])
         kind = inner.dxftype() if inner is not None else dxftype
         tag = prompt = ""
         if kind in ("ATTRIB", "ATTDEF"):
@@ -253,7 +273,7 @@ class CapturePipeline(RenderPipeline2d):
                 text=piece, layer=properties.layer, handle=self._current_entity_handle or "",
                 kind=kind, parent=outer.dxftype() if outer is not None else kind,
                 tag=tag, prompt=prompt, viewport=self._viewport, m=m,
-                x0=px0, x1=px1, cap=cap_height))
+                x0=px0, x1=px1, cap=cap_height, source=source))
 
 
 class PlotFrontend(UniversalFrontend):
@@ -265,7 +285,17 @@ class PlotFrontend(UniversalFrontend):
     a wall note, `2-1/2"`, at width 9.7e-20: drawn in the plot by AutoCAD,
     missing from ours. Drawn as plain MTEXT instead, it keeps its words and
     position and loses only the inline styling.
+
+    And it never opens a file the drawing names. An IMAGEDEF is a path, and
+    ezdxf's default is to read it and draw the picture: a DXF naming any image
+    on the server had that file embedded in the PDF its uploader downloads.
+    Images are drawn as their frames, whatever configuration is passed.
     """
+
+    def __init__(self, ctx, pipeline, config: Optional[Configuration] = None,
+                 bbox_cache: Optional[ezbbox.Cache] = None) -> None:
+        config = (config or Configuration()).with_changes(image_policy=ImagePolicy.RECT)
+        super().__init__(ctx, pipeline, config, bbox_cache)
 
     def draw_complex_mtext(self, mtext, properties) -> None:
         try:
@@ -447,6 +477,18 @@ def empty_view_share(viewports: Sequence[ViewportInfo]) -> float:
     return sum(area(v) for v in counted if v.drawn == 0) / total
 
 
+def _drawn_viewports(layout) -> list:
+    """The viewports ezdxf draws through, chosen as its `_draw_viewports` does:
+    status above 0, in status order, less the first if its status is 1 (the
+    layout's own). A scale reported for any other would describe a view that
+    is not on the page."""
+    vps = sorted((v for v in layout.query("VIEWPORT") if v.dxf.get("status", 0) > 0),
+                 key=lambda v: v.dxf.get("status", 0))
+    if vps and vps[0].dxf.get("status", 1) == 1:
+        vps.pop(0)
+    return vps
+
+
 def render_sheet(doc: Drawing, spec: SheetSpec, cache: Optional[ezbbox.Cache],
                  target: PlotTarget, names: Optional[Dict[str, str]] = None) -> RenderedSheet:
     """Plot one sheet as the next page of `target`."""
@@ -475,8 +517,8 @@ def render_sheet(doc: Drawing, spec: SheetSpec, cache: Optional[ezbbox.Cache],
 
     viewports: List[ViewportInfo] = []
     if not spec.model:
-        for vp in layout.query("VIEWPORT"):
-            if _is_paper_viewport(vp) or vp.dxf.get("status", 0) < 1:
+        for vp in _drawn_viewports(layout):
+            if _is_paper_viewport(vp):
                 continue
             try:
                 vm = vp.get_transformation_matrix() @ m
@@ -608,7 +650,8 @@ def cells(runs: Sequence[TextRun], to_page: Affine) -> List[Cell]:
 
     def relation(r, o, e, cap):
         """(same entity and baseline direction, along, across) of a run to `cur`."""
-        same_entity = r.handle == cur.runs[-1].handle and r.viewport == cur.runs[-1].viewport
+        same_entity = ((r.source or r.handle) == (cur.runs[-1].source or cur.runs[-1].handle)
+                       and r.viewport == cur.runs[-1].viewport)
         ang = math.atan2(e[1] - o[1], e[0] - o[0])
         dang = abs((ang - cur.angle + math.pi) % (2 * math.pi) - math.pi)
         u, up = _frame(cur.angle)

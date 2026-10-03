@@ -76,7 +76,7 @@ def attribute_claims(sidecar: dict, codes: Dict[int, str]) -> List[Claim]:
         layout = page_info.get(pno, {}).get("layout", "")
         for c in claims_from_pair(pair, codes.get(pno, f"p{pno + 1}"), method=CAD):
             c.raw = rec["text"]            # what is printed; the tag is not
-            c.source = f"dxf:{rec.get('handle', '')}"
+            c.source = f"dxf:{rec.get('source') or rec.get('handle', '')}"
             c.layout = layout
             c.layer = rec.get("layer", "")
             c.note = (f"the drawing's {rec.get('kind', 'ATTRIB')} '{label}' — the field's "

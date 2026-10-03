@@ -24,6 +24,7 @@ service.
 """
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import os
@@ -40,7 +41,7 @@ log = logging.getLogger("fbc.cad")
 
 #: Bumped whenever rendering or the text layer changes what a page holds, so AI
 #: readings cached against an older rendering of the same file are not replayed.
-RENDER_VERSION = "cad-render-2"
+RENDER_VERSION = "cad-render-3"
 
 #: File names inside a CAD job's working directory.
 RENDERED_PDF = "rendered.pdf"
@@ -80,13 +81,13 @@ def max_dxf_bytes() -> int:
     return int(mb * 1024 ** 2)
 
 
-def _check_size(dxf_paths: Dict[str, str]) -> None:
+def _check_size(dxf_paths: Dict[str, str], *, several: Optional[bool] = None) -> None:
     """Refuse a set whose DXF is more than one job can hold in memory."""
     total = sum(os.path.getsize(p) for p in dxf_paths.values())
     limit = max_dxf_bytes()
     if total <= limit:
         return
-    several = len(dxf_paths) > 1
+    several = len(dxf_paths) > 1 if several is None else several
     raise SourceError(
         "drawing_too_large",
         f"{'Those drawings convert' if several else 'That drawing converts'} to "
@@ -165,7 +166,10 @@ def _title_block_identity(runs) -> tuple:
     number, source, best = "", "", 0.0
     titles = []
     for r in runs:
-        if r.kind not in ("ATTRIB", "ATTDEF"):
+        # Model space seen through a viewport never names the sheet: a section
+        # callout's SHEETNUMBER is the sheet it points to, and drawn at 48x its
+        # raw height beat the title block's (measured: A-101 became A-501).
+        if r.kind not in ("ATTRIB", "ATTDEF") or getattr(r, "viewport", ""):
             continue
         label = r.prompt if r.kind == "ATTDEF" and r.prompt else r.tag
         text = r.text.strip()
@@ -208,7 +212,18 @@ def _plot_sheet(op, member: str, spec, cache, target, names, index=None):
     Returns (SheetPage, the runs captured, text runs that could not be placed).
     """
     from . import render
+    from .claims import _run_box
     sheet = render.render_sheet(op.doc, spec, cache, target, names)
+    # Only what is on the paper is on the sheet. A spare title block parked
+    # beside the paper is drawn by the frontend all the same; its attributes
+    # became claims "printed on" the sheet and could name it (measured).
+    x0, y0, x1, y1 = render.box_through(sheet.to_page, spec.window)
+
+    def on_paper(r) -> bool:
+        b = _run_box(r, sheet.to_page)
+        cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        return min(x0, x1) <= cx <= max(x0, x1) and min(y0, y1) <= cy <= max(y0, y1)
+    sheet.runs = [r for r in sheet.runs if on_paper(r)]
     if index is not None:
         for v in sheet.viewports:
             v.drawn = render.drawn_in(index, v.model_window, v.frozen_layers)
@@ -224,7 +239,7 @@ def _plot_sheet(op, member: str, spec, cache, target, names, index=None):
         number_source=number_source, title=title,
         empty_view_share=render.empty_view_share(sheet.viewports),
         text=[{"box": [round(v, 1) for v in c.box()],
-               "handles": sorted({r.handle for r in c.runs if r.handle}),
+               "handles": sorted({r.source or r.handle for r in c.runs if r.handle}),
                "kind": c.runs[0].kind, "layer": c.runs[0].layer} for c in cell_list])
     return sp, sheet.runs, sheet.skipped_text
 
@@ -275,14 +290,26 @@ def ingest(src: str, workdir: str, name: str = "",
         try:
             if sniff(path) == DWG:
                 info["release"] = check_dwg_version(path)
+                # The budget is spent as the set converts, not checked after:
+                # each DWG may write only what is left of it (measured: the
+                # reference 23 MB DWG wrote 170 MB of DXF, on a disk that is
+                # memory), and once it is gone nothing more is converted.
+                left = max_dxf_bytes() - sum(os.path.getsize(p) for p in dxf_paths.values())
+                if left <= 0:
+                    _check_size(dict(dxf_paths, **{member: path}), several=True)
+                    raise SourceError("drawing_too_large", "Those drawings convert to more "
+                                      "DXF than this service can hold in memory for one "
+                                      "review. Upload fewer drawings at once.")
                 say(f"converting {os.path.basename(member)}")
-                conv = convert.dwg_to_dxf(path, str(work / f"{i:03d}.dxf"))
+                conv = convert.dwg_to_dxf(path, str(work / f"{i:03d}.dxf"), max_bytes=left)
                 info["conversion"] = conv.to_dict()
                 dxf_paths[member] = conv.dxf_path
             else:
                 dxf_paths[member] = path
         except unread_errors as exc:
-            if kind != ZIP:
+            # A damaged member costs that drawing; a set past the memory budget
+            # is the set's to fix, whichever member happened to cross it.
+            if kind != ZIP or getattr(exc, "code", "") == "drawing_too_large":
                 raise
             unread[member] = exc
             continue
@@ -310,24 +337,37 @@ def ingest(src: str, workdir: str, name: str = "",
 
     by_file = {os.path.basename(m).lower(): m for m in opened}
     by_stem = {os.path.splitext(os.path.basename(m))[0].lower(): m for m in opened}
-    referenced = set()
+
+    def member_of(fname: str) -> Optional[str]:
+        base = fname.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        return by_file.get(base) or by_stem.get(os.path.splitext(base)[0])
+
+    # ── who is a sheet, decided from the drawings as uploaded ──────────────
+    # A drawing is plotted when it has sheet layouts, or when nothing
+    # references it. One with neither is an xref, if a plotted drawing reaches
+    # it; if nothing plotted does — drawings that only reference each other,
+    # such as two plans overlaying one another — it is plotted too, rather than
+    # the set being refused for having no sheets (measured: it was).
+    refs: Dict[str, set] = {m: set() for m in opened}
     for member, op in opened.items():
         for block in op.doc.blocks:
             if getattr(block.block_record, "is_xref", False):
-                p = str(block.block.dxf.get("xref_path", "") or "").replace("\\", "/")
-                base = os.path.basename(p).lower()
-                target = by_file.get(base) or by_stem.get(os.path.splitext(base)[0])
-                if target and target != member:
-                    referenced.add(target)
-
-    def resolver(host: str):
-        def resolve(fname: str):
-            base = fname.lower()
-            target = by_file.get(base) or by_stem.get(os.path.splitext(base)[0])
-            if target is None or target == host:
-                return None
-            return opened[target].doc
-        return resolve
+                target_m = member_of(str(block.block.dxf.get("xref_path", "") or ""))
+                if target_m and target_m != member:
+                    refs[member].add(target_m)
+    has_layouts = {m: read.has_sheet_layouts(op.doc) for m, op in opened.items()}
+    referenced = {t for ts in refs.values() for t in ts}
+    plotted = {m for m in opened if has_layouts[m] or m not in referenced}
+    reached, stack = set(), list(plotted)
+    while stack:
+        for t in refs[stack.pop()]:
+            if t not in plotted and t not in reached:
+                reached.add(t)
+                stack.append(t)
+    for m in sorted(set(opened) - plotted - reached, key=_natural):
+        plotted.add(m)
+        warnings.append(f"{m} is plotted as a sheet of its own: it has no sheet layouts, and "
+                        "the drawings that reference it are only referenced by each other.")
 
     # An xref that was uploaded but could not be read is that, not missing.
     unreadable: Dict[str, str] = {}
@@ -335,13 +375,40 @@ def ingest(src: str, workdir: str, name: str = "",
         base = os.path.basename(member).lower()
         unreadable[base] = unreadable[os.path.splitext(base)[0]] = _unread_reason(exc)
 
-    # nested xrefs arrive with the first embed; a few rounds settle them
-    for member, op in opened.items():
-        for _round in range(4):
-            before = dict(op.xrefs)
-            read.embed_xrefs(op, resolver(member), unreadable)
-            if op.xrefs == before:
-                break
+    # ── what embedding costs ───────────────────────────────────────────────
+    # Every embed copies the referenced model space into the host: measured,
+    # 300 xref blocks naming one 1.2 MB base, in a 104 KB zip, peaked at 1.7
+    # GB. Each copy is charged at the referenced DXF's size against the budget
+    # the DXF itself is held to. A plotted drawing is let go once its sheets
+    # are drawn, so twelve sheet files sharing one base are charged one copy
+    # at a time, not twelve.
+    held = sum(os.path.getsize(p) for p in dxf_paths.values())
+    limit = max_dxf_bytes()
+    changed: set = set()                 # plotted drawings their own embeds altered
+
+    def resolver(host: str, charged: List[int]):
+        fresh: Dict[str, object] = {}
+
+        def resolve(fname: str):
+            target_m = member_of(fname)
+            if target_m is None or target_m == host:
+                return None
+            charged[0] += os.path.getsize(dxf_paths[target_m])
+            if held + charged[0] > limit:
+                raise SourceError(
+                    "drawing_too_large",
+                    f"The external references in {os.path.basename(host)} copy more drawing "
+                    "into its sheets than this service can hold in memory for one review (the "
+                    f"limit is {limit / 1024 ** 2:,.0f} MB of DXF). Upload fewer drawings at "
+                    "once, or detach the xrefs the permit sheets do not show.")
+            if target_m not in changed:
+                return opened[target_m].doc          # still as uploaded
+            # A sheet file another sheet references, already altered by its own
+            # embeds (or let go): read again, as uploaded.
+            if target_m not in fresh:
+                fresh[target_m] = read.open_dxf(dxf_paths[target_m], target_m).doc
+            return fresh[target_m]
+        return resolve
 
     # ── plot ───────────────────────────────────────────────────────────────
     target = render.PlotTarget()
@@ -351,13 +418,25 @@ def ingest(src: str, workdir: str, name: str = "",
     cad_found: List[dict] = []
     layers = set()
     failed_sheets = 0
+    finished: Dict[str, dict] = {}
     for member in sorted(opened, key=_natural):
         op = opened[member]
-        specs = read.sheets(op.doc)
-        has_layouts = any(not s.model for s in specs)
-        if member in referenced and not has_layouts:
+        if member not in plotted:
             drawings[member]["role"] = "xref"
             continue
+        # Nested xrefs arrive with the first embed; a few rounds settle them.
+        charged = [0]
+        resolve = resolver(member, charged)
+        chain: Dict[str, frozenset] = {}
+        for _round in range(4):
+            before = dict(op.xrefs)
+            read.embed_xrefs(op, resolve, unreadable, member_of=member_of, chain=chain)
+            if op.xrefs == before:
+                break
+        if any(v == "embedded" for v in op.xrefs.values()):
+            changed.add(member)
+        specs = read.sheets(op.doc)
+        has_layouts_now = any(not s.model for s in specs)
         drawings[member]["role"] = "sheets"
         drawings[member]["blocks"] = cad_claims.blocks(op.doc)
         if not specs:
@@ -365,8 +444,8 @@ def ingest(src: str, workdir: str, name: str = "",
             warnings.extend(op.warnings)
             continue
         say(f"indexing {os.path.basename(member)}")
-        cache = render.model_bbox_cache(op.doc) if has_layouts else None
-        index = render.model_index(op.doc, cache) if has_layouts else None
+        cache = render.model_bbox_cache(op.doc) if has_layouts_now else None
+        index = render.model_index(op.doc, cache) if has_layouts_now else None
         names = render._layer_names(op.doc)
         layers.update(read.layer_names(op.doc))
         where = f" in {member}" if len(opened) > 1 else ""
@@ -410,6 +489,15 @@ def ingest(src: str, workdir: str, name: str = "",
                     "block and notes and no drawing there. If AutoCAD shows one, it is in a "
                     "file that was not uploaded, or the conversion lost it.")
         warnings.extend(op.warnings)
+        # Its sheets are drawn: let it go, so the next sheet file's embeds are
+        # charged against memory this one gave back.
+        finished[member] = op.to_dict()
+        if member not in referenced or member in changed:
+            # nobody reads it again, or whoever does reads it fresh from disk
+            op.doc = None
+            changed.add(member)
+        cache = index = resolve = None
+        gc.collect()
 
     if out.page_count == 0:
         if failed_sheets:
@@ -452,7 +540,7 @@ def ingest(src: str, workdir: str, name: str = "",
         "ezdxf": ezdxf.__version__,
         # what the upload's own header said (a DWG's release, its conversion)
         # wins over what the converted DXF says about itself
-        "drawings": [dict(opened[m].to_dict(), **drawings[m])
+        "drawings": [dict(finished.get(m) or opened[m].to_dict(), **drawings[m])
                      for m in sorted(opened, key=_natural)],
         # relative to the working directory: the markup step re-opens these
         "dxf_paths": {m: os.path.relpath(p, work) for m, p in dxf_paths.items()},

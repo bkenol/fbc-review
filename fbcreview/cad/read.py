@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
@@ -48,10 +49,16 @@ VSF_OFF = 0x20000
 _INCHES_PER_UNIT = {
     1: 1.0, 2: 12.0, 3: 63360.0, 4: 1 / 25.4, 5: 1 / 2.54, 6: 1000 / 25.4,
     7: 1_000_000 / 25.4, 8: 1e-6, 9: 1e-3, 10: 36.0, 14: 100 / 25.4,
-    15: 10_000 / 25.4, 16: 100_000 / 25.4, 21: 12.0 * 1200 / 3937, 22: 1200 / 3937,
+    15: 10_000 / 25.4, 16: 100_000 / 25.4,
+    # US survey units: the survey foot is 1200/3937 m exactly (NIST), not the
+    # international foot's 0.3048 m. The table once held metres per survey foot
+    # as if it were inches, 3.28x short of the truth.
+    21: 1200 / 3937 / 0.0254, 22: 100 / 3937 / 0.0254, 23: 3600 / 3937 / 0.0254,
+    24: 6_336_000 / 3937 / 0.0254,
 }
 _UNIT_NAMES = {1: "inches", 2: "feet", 4: "millimetres", 5: "centimetres", 6: "metres",
-               10: "yards", 21: "US survey feet", 22: "US survey inches"}
+               10: "yards", 21: "US survey feet", 22: "US survey inches",
+               23: "US survey yards", 24: "US survey miles"}
 
 
 class ReadError(Exception):
@@ -133,9 +140,31 @@ class Opened:
                 "xrefs": dict(self.xrefs), "warnings": list(self.warnings)}
 
 
+#: How every DXF ends: group code 0 and `EOF` (ASCII), or `EOF` and a NUL
+#: (binary). ezdxf's recover mode reads a file cut short without complaint —
+#: measured: 90% of a sheet set read back with no layouts, and was reviewed as
+#: one model-space drawing — so the end is checked before it reads.
+_ASCII_EOF = re.compile(rb"(?:^|\n)[ \t]*0[ \t]*\r?\nEOF[ \t\r\n\x00\x1a]*$")
+
+
+def _ends_whole(path: str) -> bool:
+    with open(path, "rb") as fh:
+        fh.seek(max(0, os.path.getsize(path) - 64))
+        tail = fh.read()
+    return bool(_ASCII_EOF.search(tail)) or tail.rstrip(b"\r\n\x1a").endswith(b"EOF\x00")
+
+
 def open_dxf(path: str, name: str = "") -> Opened:
     """Read a DXF in recover mode and audit it. Raises ReadError."""
     t0 = time.monotonic()
+    try:
+        whole = _ends_whole(path)
+    except OSError as exc:
+        raise ReadError(f"The drawing could not be read ({exc.__class__.__name__}).")
+    if not whole:
+        raise ReadError("The drawing file is incomplete: it stops before the end marker "
+                        "every DXF closes with. It may have been cut short in upload or "
+                        "export. Export it again, or upload the DWG, and try again.")
     try:
         doc, auditor = recover.readfile(path)
     except (IOError, OSError) as exc:
@@ -178,8 +207,11 @@ def repair_viewports(doc: Drawing) -> int:
         if not vps or any(v.dxf.get("status", 0) > 0 for v in vps):
             continue
         paper = next((v for v in vps if _is_paper_viewport(v)), None)
-        if paper is None and vps:
-            # AutoCAD creates the layout's own viewport first.
+        if paper is None and len(vps) > 1 and _contains_all(vps[0], vps[1:]):
+            # AutoCAD creates the layout's own viewport first, and it spans the
+            # sheet. A first viewport that does not hold the others is a view
+            # like any other — on a layout with one viewport, the plan itself:
+            # made the paper viewport, it went undrawn (measured).
             paper = vps[0]
         k = 2
         for v in vps:
@@ -193,6 +225,20 @@ def repair_viewports(doc: Drawing) -> int:
                 k += 1
             changed += 1
     return changed
+
+
+def _contains_all(outer, others) -> bool:
+    """Whether `outer`'s paper rectangle holds every one of `others`."""
+    def rect(v):
+        c, w, h = v.dxf.center, v.dxf.width / 2, v.dxf.height / 2
+        return c.x - w, c.y - h, c.x + w, c.y + h
+    try:
+        ox0, oy0, ox1, oy1 = rect(outer)
+        tol = 1e-6 * max(abs(ox1 - ox0), abs(oy1 - oy0), 1.0)
+        return all(ox0 - tol <= x0 and oy0 - tol <= y0 and x1 <= ox1 + tol and y1 <= oy1 + tol
+                   for x0, y0, x1, y1 in (rect(v) for v in others))
+    except AttributeError:
+        return False
 
 
 def _content(layout: Layout) -> int:
@@ -288,6 +334,12 @@ def _window(layout: Paperspace) -> Tuple[float, float, float, float]:
 ARCH_D_MM = (914.4, 609.6)
 
 
+def has_sheet_layouts(doc: Drawing) -> bool:
+    """Whether any paper-space layout has something on it — `sheets()` would
+    plot a layout — without working out a single window."""
+    return any(not layout.is_modelspace and _content(layout) > 0 for layout in doc.layouts)
+
+
 def sheets(doc: Drawing) -> List[SheetSpec]:
     """The sheets a drawing plots, in tab order."""
     out: List[SheetSpec] = []
@@ -336,8 +388,15 @@ def sheets(doc: Drawing) -> List[SheetSpec]:
 Loader = Callable[[str], Optional[Drawing]]
 
 
+#: What an xref that leads back to a drawing already on its chain is recorded
+#: as. AutoCAD draws a circular reference once and stops; so does this.
+CIRCULAR = "circular reference (drawn once, not again)"
+
+
 def embed_xrefs(opened: Opened, resolve: Loader,
-                unreadable: Optional[Dict[str, str]] = None) -> None:
+                unreadable: Optional[Dict[str, str]] = None, *,
+                member_of: Optional[Callable[[str], Optional[str]]] = None,
+                chain: Optional[Dict[str, frozenset]] = None) -> None:
     """Bring each external reference's model space into the drawing.
 
     `resolve(file_name)` returns the referenced drawing, already converted and
@@ -347,9 +406,22 @@ def embed_xrefs(opened: Opened, resolve: Loader,
     missing from the upload. Every xref's outcome is recorded on
     `opened.xrefs`; an xref left unresolved also becomes a warning that names
     it, because the sheets that show it are missing content.
+
+    Called again, it settles the xrefs the last call brought in nested. Two
+    things keep that faithful to what AutoCAD shows:
+
+    * **Overlays do not nest.** An xref a referenced drawing *overlays* is
+      left out when that drawing is copied in; only attached xrefs come
+      along. A drawing's own overlays are embedded as before.
+    * **A chain never loops.** With `member_of(file_name)` naming the uploaded
+      drawing a file resolves to, and `chain` (kept up to date here) naming
+      the drawings each nested xref block came through, an xref that leads
+      back to the host or to a drawing already on its chain is recorded as
+      `CIRCULAR` and not drawn again — never as missing from the upload.
     """
     from ezdxf import xref as xr
     doc = opened.doc
+    chain = chain if chain is not None else {}
     for block in list(doc.blocks):
         rec = block.block_record
         if not getattr(rec, "is_xref", False):
@@ -361,6 +433,11 @@ def embed_xrefs(opened: Opened, resolve: Loader,
             continue
         if block.name in opened.xrefs:
             continue          # settled in an earlier round, whatever the outcome
+        came_through = chain.setdefault(block.name, frozenset({opened.name}))
+        member = member_of(fname) if member_of is not None else None
+        if member is not None and member in came_through:
+            opened.xrefs[block.name] = CIRCULAR
+            continue
         loaded = resolve(fname)
         why = (unreadable or {}).get(fname.lower()) or \
             (unreadable or {}).get(os.path.splitext(fname.lower())[0])
@@ -383,9 +460,23 @@ def embed_xrefs(opened: Opened, resolve: Loader,
             # This is the rest of what it does, given the drawing we resolved.
             if loaded.dxfversion > doc.dxfversion:
                 raise ezdxf.DXFVersionError("xref saved in a newer format than its host")
+            # What the referenced drawing overlays stays out: AutoCAD does not
+            # carry an overlay into a drawing that references the one
+            # overlaying it. Read off `loaded` as uploaded — the bit is
+            # cleared only on a drawing's own embedded overlays.
+            nested_overlays = {
+                b.name for b in loaded.blocks
+                if getattr(b.block_record, "is_xref", False)
+                and b.block.dxf.get("flags", 0) & ezdxf.const.BLK_XREF_OVERLAY}
+            before = {b.name for b in doc.blocks}
             loader = xr.Loader(loaded, doc, conflict_policy=xr.ConflictPolicy.XREF_PREFIX)
-            loader.load_modelspace(block)
+            loader.load_modelspace(block, filter_fn=lambda e: not (
+                e.dxftype() == "INSERT" and e.dxf.name in nested_overlays))
             loader.execute(xref_prefix=block.name)
+            if member is not None:
+                for b in doc.blocks:
+                    if b.name not in before and getattr(b.block_record, "is_xref", False):
+                        chain[b.name] = came_through | {member}
             # ezdxf's own `embed()` clears XREF and EXTERNAL but leaves the
             # OVERLAY bit, so an embedded overlay (the reference drawing's
             # title block is one: flags 12) would still report itself as an

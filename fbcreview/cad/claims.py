@@ -76,6 +76,7 @@ def attributes(page: int, runs: List[TextRun], to_page) -> List[dict]:
             continue
         out.append({"type": "attribute", "page": page, "kind": r.kind, "tag": r.tag,
                     "prompt": r.prompt, "text": text, "layer": r.layer, "handle": r.handle,
+                    "source": r.source or r.handle,
                     "viewport": r.viewport, "box": _r(_run_box(r, to_page))})
     return out
 

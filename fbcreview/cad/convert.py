@@ -29,13 +29,17 @@ from __future__ import annotations
 import logging
 import os
 import re
+import resource
 import shutil
+import signal
 import subprocess
 import time
 from collections import Counter
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Dict, Optional
+
+from .source import SourceError
 
 log = logging.getLogger("fbc.cad")
 
@@ -114,8 +118,19 @@ def _diagnostics(stderr: str) -> Dict[str, int]:
     return dict(kinds.most_common(12))
 
 
-def dwg_to_dxf(dwg_path: str, dxf_path: str, timeout_s: Optional[int] = None) -> Conversion:
-    """Convert one DWG. Raises ConversionUnavailable or ConversionFailed."""
+def _file_size_limit(max_bytes: int):
+    """Runs in the converter's process before it starts: it cannot write a
+    file past `max_bytes`. A C converter is stopped by SIGXFSZ there; one that
+    ignores the signal gets EFBIG. Either way the output stops at the cap."""
+    def limit() -> None:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (max_bytes, max_bytes))
+    return limit
+
+
+def dwg_to_dxf(dwg_path: str, dxf_path: str, timeout_s: Optional[int] = None,
+               max_bytes: Optional[int] = None) -> Conversion:
+    """Convert one DWG. Raises ConversionUnavailable or ConversionFailed, or
+    SourceError `drawing_too_large` when the DXF would pass `max_bytes`."""
     b = binary()
     if not b:
         raise ConversionUnavailable(
@@ -131,7 +146,8 @@ def dwg_to_dxf(dwg_path: str, dxf_path: str, timeout_s: Optional[int] = None) ->
     try:
         proc = subprocess.run([b, "-y", "-o", dxf_path, dwg_path], capture_output=True,
                               text=True, errors="replace", timeout=timeout,
-                              cwd=os.path.dirname(dxf_path) or None)
+                              cwd=os.path.dirname(dxf_path) or None,
+                              preexec_fn=_file_size_limit(max_bytes) if max_bytes else None)
     except subprocess.TimeoutExpired:
         raise ConversionFailed(f"The drawing took longer than {timeout} s to convert and "
                                "was stopped. Purge and audit it in AutoCAD, or export it as "
@@ -140,7 +156,20 @@ def dwg_to_dxf(dwg_path: str, dxf_path: str, timeout_s: Optional[int] = None) ->
         raise ConversionUnavailable(f"The DWG converter could not be started ({exc.strerror}).")
     seconds = time.monotonic() - t0
     diag = _diagnostics(proc.stderr or "")
-    ok = os.path.exists(dxf_path) and os.path.getsize(dxf_path) > 64
+    size = os.path.getsize(dxf_path) if os.path.exists(dxf_path) else 0
+    if max_bytes and (size >= max_bytes or proc.returncode == -signal.SIGXFSZ):
+        os.remove(dxf_path)
+        log.info("dwg conversion stopped at the size limit",
+                 extra={"seconds": round(seconds, 2), "limit_bytes": max_bytes})
+        raise SourceError(
+            "drawing_too_large",
+            f"That drawing converts to more than {max_bytes / 1024 ** 2:,.0f} MB of DXF, beyond "
+            "what this service can hold in memory for one review. Purge it, or save the "
+            "layouts for this permit to a drawing of their own, and upload that.")
+    # A converter killed by a signal (a crash) may still leave a DXF ezdxf can
+    # recover — measured: 90% of a sheet set, no layouts, reviewed silently as
+    # one model-space drawing. A crash is a failed conversion, whatever it left.
+    ok = proc.returncode >= 0 and size > 64
     log.info("dwg converted", extra={"seconds": round(seconds, 2), "returncode": proc.returncode,
                                      "ok": ok, "diagnostic_kinds": len(diag),
                                      "diagnostic_lines": sum(diag.values())})

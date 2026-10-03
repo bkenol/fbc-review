@@ -68,7 +68,12 @@ OLD_DWG_VERSIONS: Dict[str, str] = {
 _DWG_MAGIC = re.compile(rb"^(?:AC\d{4}|AC\d\.\d{1,2}|MC0\.0)")
 
 _BINARY_DXF = b"AutoCAD Binary DXF\r\n\x1a\x00"
-_ASCII_DXF = re.compile(rb"^\s*(?:999\s*\r?\n[^\n]*\r?\n\s*)*0\s*\r?\nSECTION\b")
+#: Each CR and LF can be matched exactly one way: a comment line cannot hold a
+#: CR and a whitespace run cannot reach into a line ending. The first pattern let
+#: `\s*` or `\r?` take each CR, and forty CRLF comment lines and a non-match
+#: backtracked for minutes on the upload request's event loop.
+_ASCII_DXF = re.compile(
+    rb"^[ \t\r\n]*(?:999[ \t]*\r?\n[^\r\n]*\r?\n[ \t\r\n]*)*0[ \t]*\r?\nSECTION\b")
 
 
 def _binary_after(head: bytes, start: int) -> bool:
