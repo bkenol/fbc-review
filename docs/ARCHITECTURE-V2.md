@@ -5,6 +5,7 @@ status: accepted
 created: 2026-09-27
 decided-by: project owner, 2026-09-27 (hybrid; the zero-LLM rule is withdrawn from CLAUDE.md)
 supersedes: ARCHITECTURE.md §2 "Tier B" sketch, FEATURE-PROMPT-inference-ladder.md §0 and §12 first bullet
+amended: 2026-10-03 (§5 the CAD adapter, built; owner chose LibreDWG and a marked-up DXF output)
 ---
 
 # Architecture v2 — AI reads, rules decide
@@ -83,7 +84,7 @@ flowchart TB
     subgraph Ingest["1 · Ingest"]
         PDF[PDF adapter<br/>PyMuPDF: words, spans, paths, OCGs, /Measure]
         OCR[Raster recovery<br/>Tesseract words for raster sheets and pasted tables]
-        CAD[CAD adapter — designed, not built<br/>DWG→DXF→ezdxf]
+        CAD[CAD adapter — built, §5<br/>DWG→dwg2dxf→DXF→ezdxf<br/>plotted PDF + cad.json]
     end
     subgraph Layout["2 · Layout (deterministic)"]
         LN[lines by baseline overlap]
@@ -109,10 +110,13 @@ flowchart TB
     subgraph Out["6 · Output"]
         FJ[findings.json<br/>+ rect, + evidence, page base stated]
         MK[marked-up PDF]
+        MD[marked-up DXF<br/>FBC-REVIEW layers, zipped]
     end
     PDF --> LN
     OCR --> LN
-    CAD -.-> LN
+    CAD -- plotted pages, invisible text --> PDF
+    CAD -- attribute claims --> FS
+    CAD -- viewport scales, sheet numbers --> SI
     LN --> SG --> KV
     PDF --> TB
     PDF --> SI
@@ -130,6 +134,7 @@ flowchart TB
     CC --> RL
     RL --> FJ
     RL --> MK
+    FJ -- rect --> MD
 ```
 
 Package layout:
@@ -142,7 +147,9 @@ fbcreview/
   factstore.py       claims → resolved facts, conflicts             (new)
   extract/           sheet identity, scale, views, schedules, code rows (kept)
   reconcile.py       declaration vs drawn — drawn side now from the fact store
-  rules/  codes/     pure; never import ai/
+  cad/               DWG/DXF/zip -> plotted PDF + cad.json; marked-up DXF  (2026-10-03)
+  read/cad.py        cad.json -> sheet numbers, attribute claims, exact viewport scales
+  rules/  codes/     pure; never import ai/ or cad/
 ```
 
 ---
@@ -158,7 +165,11 @@ fbcreview/
   what the grounding verifier checks a model's reading of a pasted table
   against, so on a set like ITEC the model and OCR are two readers of the same
   pixels, and a value is accepted only where they agree.
-- **CAD adapter.** Designed in §5, not built.
+- **CAD adapter.** Built (§5). A DWG, a DXF or a zip of them is plotted to a
+  PDF with an invisible text layer of the drafter's own strings, so it enters
+  through the PDF adapter like any set; what a plot cannot carry (title-block
+  attributes, each viewport's exact scale, the layer table) rides beside it in
+  `cad.json`.
 
 ### 3.2 Layout
 
@@ -233,7 +244,7 @@ inferred values, quote exactly as printed, omit anything it cannot see.
 ```mermaid
 flowchart LR
     C1[claim · G-0 · stacked pair<br/>OCCUPANCY: ASSEMBLY A-3<br/>deterministic] --> R{resolve}
-    C2[claim · G-0 · quote 'OCCUPANCY: ASSEMBLY (A-3)'<br/>ai, grounded] --> R
+    C2["claim · G-0 · quote 'OCCUPANCY: ASSEMBLY (A-3)'<br/>ai, grounded"] --> R
     C3[claim · G-1 · 'OCCUPANCY CLASSIFICATION: GROUP A'<br/>deterministic] --> R
     R --> F[occupancy_group = A-3<br/>HIGH — two readers agree<br/>A agrees: less specific]
     D1[claim · G-0 grid row 1006.2.1<br/>50 LF] --> R2{resolve}
@@ -412,33 +423,139 @@ flowchart LR
 
 ---
 
-## 5. The CAD adapter — designed, build later
+## 5. The CAD adapter — built 2026-10-03
 
-A permit set arrives as PDF; the DWG behind it, when a client shares it, is far
-richer. The adapter produces the same layout input as the PDF adapter, so
-nothing downstream changes.
+A permit set usually arrives as PDF; the DWG behind it, when a client shares
+it, is far richer. §5 was designed with the rule that it would be built only
+against a real drawing, and there is one now: `EVERGREEN_BLDG_1.dwg`, an
+AutoCAD 2018-format precast set, 23 MB, eight layouts, about 296 000
+model-space entities. Every number below was measured on it. The drawing is a
+client file and lives in the git-ignored `samples/`; tests build their own
+drawings in code with ezdxf.
 
-| DWG/DXF entity | Becomes |
+The design held in one respect and changed in another. It held: **the engine
+downstream does not change** — a drawing is turned into the PDF the engine
+already reads, and the layout layer, both readers, the rules and the viewer
+take it unchanged. It changed: the adapter does not hand the layout layer
+words directly. It *plots* each sheet and lays the drafter's exact strings back
+over the plot as invisible text, because a plot is what a person reviews, what
+the viewer shows and what a finding's `rect` points into, and because every
+existing reader already speaks PDF.
+
+### 5.1 The pipeline as built
+
+```mermaid
+flowchart TB
+    U["upload<br/>.dwg · .dxf · .zip"] --> SN{"sniff the bytes<br/>source.py"}
+    SN -- "AC1012…AC1032" --> V[check the DWG version<br/>R13 to the 2018 format]
+    SN -- zip --> UZ[unpack, with limits<br/>members re-sniffed]
+    SN -- DXF --> RD
+    V --> CV["dwg2dxf -y -o<br/>LibreDWG, subprocess<br/>convert.py"]
+    UZ --> CV
+    UZ --> RD
+    CV --> RD[ezdxf recover + audit<br/>read.open_dxf]
+    RD --> RV[viewport repair<br/>read.repair_viewports]
+    RV --> XR[xrefs embedded by file name<br/>read.embed_xrefs]
+    XR --> SH["sheets: paper layouts in tab order,<br/>else model space fitted to ARCH D<br/>read.sheets"]
+    SH --> CP[CapturePipeline<br/>every string ezdxf draws, with its transform<br/>render.py]
+    CP --> PT[one shared PlotTarget<br/>one page per sheet, one OCG per real layer]
+    CP --> TC[text cells → invisible text<br/>render mode 3, font = cap height]
+    PT --> PDF[(rendered.pdf)]
+    TC --> PDF
+    CP --> CL[sidecar records<br/>attributes · dimensions · areas · blocks<br/>claims.py]
+    CL --> SC[(cad.json)]
+    PDF --> BF["build_facts(rendered.pdf, cad=…)<br/>pipeline.py"]
+    SC --> BF
+    BF --> RC["read/cad.py<br/>sheet numbers · attribute claims ·<br/>sources · exact viewport scales"]
+    RC --> FS[(fact store)] --> RL[rules] --> OUT[findings.json · marked-up PDF]
+    OUT --> MD["cad/markup.write<br/>findings re-drawn on each layout<br/>FBC-REVIEW layers → zipped DXF"]
+    SC --> MD
+```
+
+| Stage | Where | What it does, and why |
+| --- | --- | --- |
+| Sniff | `fbcreview/cad/source.py` | Decides PDF, DWG, DXF or zip from the leading bytes, never the file name. A DWG older than R13 is refused with that reason. A zip is unpacked with limits on member count, total size and compression ratio, refuses paths that climb out, and keeps only members that sniff as drawings. |
+| Convert | `fbcreview/cad/convert.py` | `dwg2dxf` as a subprocess with a timeout (`FBC_DWG_TIMEOUT_S`). Its stderr is reduced to counts by kind, because LibreDWG quotes handles and names. |
+| Read | `fbcreview/cad/read.py` | `ezdxf.recover` plus an audit, so a slightly damaged file still opens. Units from `$INSUNITS`, or inferred (and labelled inferred) where AutoCAD itself infers them. |
+| Repair | `read.repair_viewports` | LibreDWG writes status 0 on the viewports it converts (65 of 71 on the reference drawing), and ezdxf, correctly by the DXF reference, skips a viewport with status below 1 — every sheet plotted as a title block over an empty frame. Status is rebuilt from the separate "viewport off" flag; a file whose statuses are already set is left alone. |
+| Sheets | `read.sheets` | A sheet is a paper layout with something drawn on it, in tab order. A drawing with none is plotted from model space as one sheet, fitted to ARCH D, and says so. |
+| Plot | `fbcreview/cad/render.py` | ezdxf's PyMuPDF backend draws each sheet as vectors with every CAD layer as an optional-content group, into one shared document, so the set has one layer table with the real names. |
+| Text | `render.cells` / `write_cells` | ezdxf draws text as glyph outlines, so the plot has no text layer. `CapturePipeline` records every string as it is drawn — TEXT, MTEXT, ATTRIB, dimension text, model-space notes seen through a viewport — with the exact transform, and writes it back invisible, in cells joined the way the layout layer reads them. |
+| Sidecar | `fbcreview/cad/claims.py` → `cad.json` | What the plot cannot carry, per page: title-block attributes with tag and prompt, dimension text beside measured length, closed outlines on area layers with measured area, each viewport's exact scale and model→page map, a block inventory, the layer table. |
+| Into the engine | `pipeline.build_facts(path, cad=)` → `fbcreview/read/cad.py` | Sheet numbers, attribute claims (method `cad`), source stamps on every claim read off a drawn sheet, exact per-viewport scales. With `cad=None` the review is byte-identical to before. |
+| Back into the drawing | `fbcreview/cad/markup.py` | Re-opens each drawing's DXF and draws every finding on the layout it was found on, at the place `findings.json`'s `rect` says, through the inverse of that page's map: revision clouds on `FBC-REVIEW` for findings that need action, rectangles on `FBC-REVIEW-VERIFIED` for checks that passed, ids and titles on `FBC-REVIEW-TEXT`, each outline's identity in XDATA under `FBC_REVIEW`. Zipped. It follows the marked-up PDF's labelling rules word for word. |
+| Process boundary | `webapp/cadjob.py`, `python -m fbcreview.cad` | Ingest and markup each run in a subprocess, at most `FBC_CAD_CONCURRENCY` at once per instance, each under `FBC_CAD_TIMEOUT_S`: the gigabyte a large drawing takes is returned on exit, a converter crash costs a subprocess, and a deadline can kill it. Nothing the subprocess prints is logged; the log gets counts and an outcome code. |
+
+### 5.2 What each entity became
+
+| DWG/DXF entity | Designed to become | Built as |
+| --- | --- | --- |
+| `TEXT`, `MTEXT`, `ATTRIB`, dimension text | words with model-space boxes | the drafter's strings as invisible text on the plotted page, where the plot puts them, read by the layout layer like any PDF text |
+| `ATTRIB` / `ATTDEF` in a title block | — | the sheet number, only from a field whose tag or prompt says it is the sheet number (`SHEET_NO`, `DWG No.`, a prompt `SHEET No. (1)`) — never a layout tab name |
+| `ATTRIB` whose tag names a catalog field | a symbol | a claim through `claims_from_pair`, method `cad`, basis stated, naming the entity and layout |
+| `VIEWPORT` | sheets and their scales | an exact `ViewScale` per viewport with HIGH evidence; a page with viewports at several scales abstains from a page-wide scale |
+| layers | the real layer table | the layer names in `facts.meta["cad_layers"]` and as the plotted page's OCGs, so geometry rules see real names |
+| `DIMENSION` | a measured value | a sidecar record: printed text beside measured length. **No rule reads it yet.** |
+| closed outline on an area layer | room polygon and area | a sidecar record, basis measured. **No rule reads it yet.** |
+| `INSERT` | door tag, room tag | a block inventory per drawing |
+
+### 5.3 Decisions
+
+| Decision | When, by whom | Why |
+| --- | --- | --- |
+| **LibreDWG `dwg2dxf`** as the converter, run as a separate unmodified program | owner, 2026-10-03 | ODA File Converter is proprietary and hosted commercial use appears to need a membership; Autodesk Platform Services is paid per translation and sends every client drawing to Autodesk. LibreDWG is GPL-3.0, runs in the container, and converted the reference drawing in 4–7 s. Running it as a program the service calls, not a library it links, is what keeps the licence question to the converter alone; `docs/DEPLOYMENT.md` §9a has the obligations if the image is ever distributed. |
+| A real DWG is the test reference | owner, 2026-10-03 | The reproduce-before-you-change rule. Every repair below is a fault measured on it, not anticipated. |
+| Outputs: the marked-up PDF report **and** a marked-up DXF | owner, 2026-10-03 | The PDF is the review of record a plans examiner reads; the DXF is the same review for the drafter who fixes the drawing, on layers that can be frozen or deleted without touching their work. |
+| ASCII DXF, not binary | measured | `dwg2dxf -b` reads back twice as fast and truncates every text-style and linetype name to one character and drops every block attribute — 0 against 1 088. |
+| Success judged by the output, not the exit code | measured | `dwg2dxf` reports ~1 700 `ERROR` lines on the reference drawing and exits 0; nearly all are fields the review never reads, and the drawing reads back whole. |
+| Invisible text at font size = cap height (`FONT_PER_CAP = 1.0`), squeezed to the ink width | measured | PyMuPDF reports a Helvetica word box 1.374 × the font size tall, and the layout layer drops a stacked value whose box overlaps its label's by more than a quarter of that. 1.0 × cap reads every stacked pitch a drafter uses down to 1.1 × cap; Helvetica at the visible cap height loses single-line TEXT stacked at 1.25 × cap. Never shrunk to fit width, which would change the box height every threshold is a multiple of. |
+| Sheet numbers only from title-block fields | design | A layout tab name is the drafter's working label (`Layout3`, `PLAN-REV`), not what the sheet prints. A sheet whose title block has no such field keeps the PDF path's identification. |
+| Measured values never under catalog keys | design, CLAUDE.md | A measured area or dimension length is arithmetic on the drawing, not a statement the set makes. It stays in the sidecar labelled measured; a rule that takes a stated value never sees it. The inference ladder (`FEATURE-PROMPT-inference-ladder.md`) is where measured values earn a rule, on a rung of their own. |
+| Source-aware independence | design | `factstore.independent` clusters claims by the drawing entity behind them. The layout reader reading an ATTRIB's text off the plot and the CAD reader reading the same ATTRIB are one reading, and one model-space note seen through viewports on two sheets is one reading — agreeing with yourself is not corroboration. |
+| AI readings cached by what the reader saw | design, then measured | A rendered PDF's bytes never repeat, so its hash cannot key the readings cache. The identity (`ai/readings.py`, `plotted_identity`) is the upload's SHA-256 plus the converter that ran, the ezdxf and plotter versions, and a digest of the text layer's words and boxes — the digest because one plotter edit changed every page's text layer under an unchanged version string. Computed from the sidecar and the PDF, so the service never imports ezdxf for it. |
+| A damaged zip member costs that drawing, not the set | 2026-10-03, this build | Forty sheet files should not lose thirty-nine to one bad file. A member that cannot be converted or read is left out with a warning naming it (`unread` in the sidecar); an xref that failed says *unreadable*, never *not uploaded*. Only when no member can be read is the upload refused, with the first member's reason. A single-drawing upload has nothing else to review, so its failure is the job's. |
+| A layout that cannot be plotted costs that sheet | 2026-10-03, this build | Same reasoning, one level down. Any page it began is removed, so page *N* of the PDF stays page *N* of the sidecar, and the warning names the layout. |
+| A sheet number printed on several sheets is kept, and reported | measured | The reference drawing's title blocks give `SZ-1` on three layouts — a title block copied and not renumbered. What is printed is what the sheet is called, so each keeps it; a warning names the layouts, because every finding on them names the same sheet. |
+| One review holds at most 300 MB of DXF (`FBC_CAD_MAX_DXF_MB`) | measured | 170 MB of DXF peaked at 1.13 GB. Every member of a zip is open at once while xrefs resolve, and on Cloud Run the DXF also sits on the in-memory disk; past the budget the subprocess would be killed and reported as an unreadable drawing. The size is known the moment the DXF exists, so the refusal comes then and says what it is. The zip's own unpack cap (1 GB) sits above it for the same reason. |
+
+### 5.4 Measured on the reference drawing
+
+| Step | Measured |
 | --- | --- |
-| `TEXT`, `MTEXT`, `ATTRIB` | words with model-space boxes — exact, no OCR |
-| `INSERT` with attributes | a symbol: door tag + width, room tag + name + area |
-| `LWPOLYLINE` (closed) on room/area layers | room polygons — spatial association and area by shoelace, at 1:1 |
-| `DIMENSION` | a measured value with its definition points |
-| layers | the real layer table, so geometry rules stop guessing names |
-| layouts / viewports | sheets and their scales, directly |
+| `dwg2dxf` | 4–7 s; 23 MB DWG → 170 MB ASCII DXF |
+| ezdxf read (recover + audit) | ~60 s |
+| model-space bounding-box index | ~17 s |
+| plotting | 3–15 s per sheet |
+| whole ingest, 8 sheets | ~188 s, 1.13 GB peak RSS (in its subprocess) |
+| DXF markup | ~85 s (re-reads the DXF) |
+| outputs | `rendered.pdf` 5 MB; marked-up DXF zip 14.5 MB |
 
-Pipeline: `DWG → DXF` with a converter, then `ezdxf` (MIT). Converter options
-and their constraints:
+Those numbers set the deployment: Cloud Run memory 4 GiB, one drawing at a
+time per instance, and an upload limit that makes a DWG — or a zipped DXF — the
+practical form to send (`docs/DEPLOYMENT.md` §3, §6, §9a).
 
-- **ODA File Converter** — free download, proprietary licence; confirm the terms
-  permit use inside a hosted service before shipping it in the container.
-- **LibreDWG `dwg2dxf`** — GPL-3.0; server-side use is not distribution, but the
-  quality varies by DWG version.
-- **Autodesk Platform Services (Model Derivative)** — hosted, paid, and sends
-  the client's drawing to a third party.
+### 5.5 What it deliberately does not do yet
 
-Build it when there is a real DWG of a reference set to test against — the same
-reproduce-before-you-change rule as everything else.
+- **No dimension-override check.** A dimension whose printed text disagrees
+  with the length it measures is a classic drafting error, and the sidecar
+  holds both numbers. No rule compares them yet: a finding needs a tolerance
+  and a citation, and those are deliberate corpus work, not a side effect.
+- **No rule on measured areas.** Closed outlines on area layers are measured and
+  recorded, `basis = measured`. Using them is the inference ladder's measured
+  rung, with its own labelling — not a shortcut around it.
+- **MULTILEADER text depends on proxy graphics.** ezdxf 1.4.4's renderer draws a
+  MULTILEADER only from the proxy graphics the saving application stored with
+  it (its frontend lists `MULTILEADER` among the proxy-graphic-only entities).
+  On the reference drawing all 802 MULTILEADERs in the converted DXF carry them,
+  so their notes reach the plot and the text layer. A drawing whose leaders
+  carry none would plot their notes as nothing, and the review does not yet say
+  so.
+- **No Revit.** A `.rvt` is closed to everything but Autodesk's own software and
+  cloud. Revit users export sheets to DWG today (`docs/CAD-INPUT.md`); reading
+  Revit's native IFC export is a separate, planned path
+  (`docs/FEATURE-PROMPT-revit-ifc.md`).
+- **No region selection.** A review covers every sheet. Selecting a region of a
+  drawing to review is planned in `docs/FEATURE-PROMPT-cad-region-plugin.md`.
 
 ---
 
@@ -452,6 +569,13 @@ reproduce-before-you-change rule as everything else.
 | `tests/test_ai_reader.py` | the reader's request, through the real SDK over a mock transport; refusal, error, deadline, sheet limit, cache |
 | `tests/test_worker_ai.py`, `tests/test_cli.py` | the worker stage and `run.py --ai` / `--readings`, with readings built in code — no test makes a network call |
 | `tests/test_ai_review.py`, `tests/test_worker_ai_review.py` | the result review: revise, add and withdraw apply and are labelled; an edit without a quote on the sheet is not applied; a withdrawal is an abstention; pass 2 acts on pass 1's notes; never more than three passes; every failure keeps the last good state; a stored trace replays with no call |
+| `tests/test_cad_ingest.py`, `tests/test_cad_overlay.py`, `tests/test_factstore_cad.py` | drawings built in code with ezdxf (`tests/fixtures/cad_drawings.py`), read end to end: one page per drawn layout in tab order, repaired viewports and their exact scales, sheet numbers only from title-block fields; the invisible text layer pairs labels and values the way a plotted PDF does, never fuses words and lies over its ink; one entity read twice is one reading, and a PDF's claims behave exactly as before |
+| `tests/test_cad_reference.py` | the real reference drawing through LibreDWG, ingest and the engine, holding the measured numbers — including what the drawing does *not* state, on which the review must abstain. Opt-in (`FBC_CAD_REFERENCE=1`, about three minutes and a gigabyte) and only where the drawing and `dwg2dxf` both are; skipped in CI |
+| `tests/test_cad_source.py`, `tests/test_cad_upload.py` | a drawing upload is recognised by its bytes, an old DWG or a hostile zip is refused at the door with a typed reason, a DWG on a deployment with no converter is refused rather than half-read |
+| `tests/test_worker_cad.py`, `tests/test_cli_cad.py` | a DXF built in code goes through the subprocess, the engine and both outputs; converter failures and timeouts become typed errors, not crashes; logs carry counts, never names — with a stand-in converter, so CI needs no LibreDWG |
+| `tests/test_cad_markup.py` | each finding is re-drawn on the layout it was found on, around what it is about, on a plain, a 90°-rotated and a model-space sheet; nothing is added to any other layout; the PDF's labelling rules hold in the DXF |
+| `tests/test_cad_provenance.py`, `tests/test_cad_followups.py` | a value read from a drawing says so on the finding; one entity read twice is not two readings; a measured value never shows as a printed quote; a plotted sheet's report never claims the drawing was untouched |
+| `tests/test_container_cad.py` | the image builds LibreDWG from the checksummed GNU release, ships `dwg2dxf` and a font, pins ezdxf exactly, and both deploy paths size for a drawing — read from the files, no Docker needed |
 | `scripts/scorecard.py` | how much of the hand review the engine reproduces — the number to move |
 
 ---
@@ -466,6 +590,8 @@ reproduce-before-you-change rule as everything else.
 | The model misreads a value | it cannot enter the store unless the quote is on the sheet and the value re-parses from it |
 | The model reads a value from the wrong row | the quote pins label and value together; a quote spanning two rows fails the compactness check |
 | Prompt injection via sheet text | the model's output is data validated against a schema and the page; it has no tools and nothing it says is executed or trusted |
+| A drawing carries more than its sheets — every layer, every xref | stored like a PDF upload (private bucket, signed URLs, lifecycle delete); the converted DXF stays in the job's scratch directory and is never stored; the AI reader is shown the plotted sheets, not the drawing |
+| The converter is C code parsing an untrusted binary format | run as a subprocess, as the unprivileged service user, with a timeout and one at a time per instance; a crash fails that job with a typed error and costs the service nothing |
 
 ---
 
@@ -481,6 +607,7 @@ reproduce-before-you-change rule as everything else.
 | E | frontend conformance: one page base, unique keys, `rect` placement (30/30 findings placed on Sculpted), evidence on cards, the AI stage and summary | unchanged, by design |
 | F | the real ITEC Alico Park set | pending — needs the PDF |
 | G | the result review: AI reviewer that edits findings directly (labelled, evidenced), focused re-reads, check / edit / verify, `ai_review.json` replay (§4.1) | unchanged with AI off, by design |
+| H | the CAD adapter (§5): DWG, DXF and zip uploads plotted to the reviewed PDF with the drafter's text as an invisible layer; title-block sheet numbers, attribute claims and exact viewport scales from the drawing; a marked-up DXF beside the PDF report. Built and measured on a real AutoCAD 2018 drawing | unchanged on a PDF, by design — `build_facts(cad=None)` is byte-identical |
 
 Of the four open register entries still missed, three (M-06 interior finish
 classes, M-07 the accessible counter, M-08 trap seal protection) need checks on

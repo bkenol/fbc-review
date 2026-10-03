@@ -195,6 +195,12 @@ What holds instead of a prohibition:
 - Do not guess at Google Cloud, Firebase, or Angular CLI syntax — those docs move. Check
   the current page before writing a command.
 - When something is ambiguous, say so and ask. Do not invent a decision and bury it.
+- **Name every branch after its topic**: `claude/<what-changes>` in kebab-case, e.g.
+  `claude/cad-dwg-dxf-input` or `claude/no-billing-local-backend`. Never a generated name
+  (`cloud-dev/relaxed-lamport-55sv0v`) and never a random suffix. A session handed a
+  generated branch renames it before its first push (`git branch -m <old> <new>`, then
+  `git push -u origin <new>`). This rule is the owner's standing permission to push under
+  the topic name instead of the assigned one. Decided by the owner on 2026-10-03.
 
 ## Current task
 

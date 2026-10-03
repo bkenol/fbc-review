@@ -93,6 +93,12 @@ def render_knob_value(value: object) -> str:
         return ", ".join(str(v) for v in value)
     return str(value)
 SheetKind = Literal["vector", "hybrid", "raster", "blank"]
+#: What was uploaded, decided from its bytes: a PDF plot, or a drawing — a DWG, a
+#: DXF, or a zip of them. Separate from `DocumentKind`, which says what kind of
+#: PDF the engine read; a drawing upload is reviewed as the PDF plotted from it.
+SourceFormat = Literal["pdf", "dwg", "dxf", "zip"]
+#: The `SourceFormat`s that are drawings.
+DrawingFormat = Literal["dwg", "dxf", "zip"]
 DocumentKind = Literal["vector", "mixed", "raster", "blank"]
 
 
@@ -803,6 +809,19 @@ class ConfigResponse(BaseModel):
                     "to be read again, for at most three passes. Only ever on with AI "
                     "reading; `FBC_AI_REVIEW=off` turns it off.",
     )
+    accepted_formats: List[SourceFormat] = Field(
+        default_factory=lambda: ["pdf"],
+        description=(
+            "Upload formats this deployment admits, decided from a file's bytes rather "
+            "than its name: `pdf`, and `dxf` and `zip` (of drawings) always; `dwg` only "
+            "where a DWG converter is installed."
+        ),
+    )
+    cad_available: bool = Field(
+        default=False,
+        description="Whether a DWG converter is installed here. Without one a DXF, or a "
+                    "zip of DXFs, is still read; a DWG is refused at upload.",
+    )
 
 
 # ── findings ──────────────────────────────────────────────────────────────
@@ -812,7 +831,11 @@ class FindingEvidence(BaseModel):
     Written by `fbcreview/payload.py`. `method` says which reader found it —
     `pair`, `line` and `table` are the layout reader; `ai` is the AI sheet
     reader, whose readings are used only after the quote has been found on the
-    sheet, and `note` says so in words a card can show.
+    sheet; `cad` is a block attribute read from an uploaded drawing — and `note`
+    says so in words a card can show. `basis` says whether the value is printed
+    (`stated`), a table's own sum (`tabulated`), worked out (`computed`) or
+    measured off the geometry (`measured`), so an estimate never reads as a
+    statement.
     """
 
     field: str = Field(description="The catalog field, e.g. `egress.common_path`.")
@@ -830,6 +853,8 @@ class FindingEvidence(BaseModel):
     sheets: List[str] = Field(default_factory=list,
                               description="Every sheet that states the same value.")
     note: str = ""
+    basis: str = Field(default="stated",
+                       description="`stated`, `tabulated`, `computed` or `measured`.")
 
 
 class FindingAiRevision(BaseModel):
@@ -1076,6 +1101,11 @@ class Summary(BaseModel):
         default=None,
         description="What the result reviewer did on this review. Null when it did not run.",
     )
+    source_format: Optional[SourceFormat] = Field(
+        default=None,
+        description="What was uploaded, when it was a drawing (`dwg`, `dxf`, `zip`); "
+                    "null for a PDF. The sheets reviewed are the ones plotted from it.",
+    )
 
 # ── what kind of PDF was uploaded ─────────────────────────────────────────
 class RasterRegion(BaseModel):
@@ -1158,6 +1188,53 @@ class ConversionReport(BaseModel):
     traced_segments: int
 
 
+class CadReport(BaseModel):
+    """What reading a drawing upload produced, in counts.
+
+    Reported for the same reason `ConversionReport` is: a drawing with eight
+    layouts that plotted to two sheets is a thin review, and the person needs to
+    see why. Counts only — no layer names, no attribute text — because this sits
+    on the job record, and the drawing's content lives in the bucket.
+    """
+
+    format: DrawingFormat = Field(description="What was uploaded: `dwg`, `dxf` or `zip`.")
+    drawings: int = Field(default=0, description="Drawing files read (a zip may hold several).")
+    sheets: int = Field(
+        default=0,
+        description="Pages plotted: one per paper-space layout with something on it, or "
+                    "model space when a drawing has no layouts.",
+    )
+    sheets_identified: int = Field(
+        default=0,
+        description="Sheets whose number was read from a title-block field that says it is "
+                    "the sheet number. A layout's tab name is never taken for one.",
+    )
+    layers: int = Field(default=0, description="Layers in the drawings' own layer tables.")
+    viewports: int = Field(
+        default=0, description="Viewports onto model space, each with its exact scale."
+    )
+    attributes: int = Field(default=0, description="Block attributes read with their tags.")
+    dimensions: int = Field(
+        default=0, description="Dimensions read, with printed text and measured length."
+    )
+    claims: int = Field(
+        default=0,
+        description="Facts the engine took from the drawing itself (block attributes that "
+                    "name a catalog field), each saying it came from the drawing.",
+    )
+    converter: str = Field(
+        default="",
+        description="The DWG converter and its version; empty when none ran (a DXF).",
+    )
+    render_version: str = Field(default="", description="The plotter's version.")
+    seconds: float = Field(default=0.0, description="Time spent converting and plotting.")
+    warnings: List[str] = Field(
+        default_factory=list,
+        description="What could not be read, in prose: a zip member skipped and why, text "
+                    "that could not be placed, an xref that was not supplied.",
+    )
+
+
 # ── jobs ──────────────────────────────────────────────────────────────────
 class Downloads(BaseModel):
     """V4 signed URLs, fetched straight from Cloud Storage by the browser."""
@@ -1167,10 +1244,20 @@ class Downloads(BaseModel):
     source_pdf: str = Field(
         default="",
         description=(
-            "The set as uploaded. The in-app viewer renders this and draws the "
-            "findings itself as an overlay, rather than rendering `markup_pdf` — "
+            "The PDF the engine read, which the in-app viewer renders: the set as "
+            "uploaded, or for a drawing upload the sheets plotted from it — every "
+            "finding's `rect` is in this file's page space. The viewer draws the "
+            "findings itself as an overlay rather than rendering `markup_pdf`; "
             "otherwise every marker would be drawn twice, once burnt into the page "
             "and once interactively, and neither could be turned off."
+        ),
+    )
+    markup_dxf: str = Field(
+        default="",
+        description=(
+            "The drawing with the findings drawn into it on layers FBC-REVIEW and "
+            "FBC-REVIEW-TEXT, as zipped DXF. Empty unless the upload was a drawing, "
+            "and empty if writing it failed — the marked-up PDF is the review of record."
         ),
     )
     expires_at: dt.datetime
@@ -1301,11 +1388,25 @@ class Job(BaseModel):
     bytes: int
     pages: Optional[int] = None
     source: Optional[SourceProfile] = Field(
-        default=None, description="What kind of PDF was uploaded, measured at admission."
+        default=None,
+        description="What kind of PDF the engine reads: measured at admission for a PDF "
+                    "upload, and once it has been plotted for a drawing.",
     )
     summary: Optional[Summary] = None
     conversion: Optional[ConversionReport] = Field(
         default=None, description="Present when scanned sheets were rebuilt."
+    )
+    source_format: SourceFormat = Field(
+        default="pdf",
+        description=(
+            "What was uploaded, decided from its bytes. A drawing (`dwg`, `dxf`, `zip`) "
+            "is plotted to PDF by the review itself, and `source`, `pages` and "
+            "`downloads.source_pdf` then describe that plot."
+        ),
+    )
+    cad: Optional[CadReport] = Field(
+        default=None,
+        description="Present once a drawing upload has been read; null for a PDF.",
     )
     calibration: Optional[CalibrationReport] = Field(
         default=None,

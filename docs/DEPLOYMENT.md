@@ -32,7 +32,7 @@ building it.
 | Review engine (`fbcreview/`) | Unchanged from the baseline. Never modified. |
 | API (`webapp/`) | Hardened, typed, authenticated, Firestore + GCS backed |
 | Client (`web/`) | Angular 22, built, tested, exercised in a browser |
-| Container | Built and verified locally, incl. OCR inside the image |
+| Container | Built and verified locally, incl. OCR inside the image. The LibreDWG stage and font added on 2026-10-03 for drawing uploads are written, not yet built (§3) |
 | GitHub repo | `bkenol/fbc-review` (private), `main` pushed |
 | GCP project | `fbc-reviewer` (983366817143) exists; no open billing account |
 | Cloud Run service | Not deployed — blocked on billing |
@@ -752,6 +752,43 @@ size becomes a problem, the honest fix is a second image without them and a
 `--platform linux/amd64` is explicit in CI. Cloud Run runs amd64 and an
 accidentally-arm64 image fails at start rather than at build.
 
+### The CAD adapter in the image (2026-10-03)
+
+The Dockerfile gained a first stage, `libredwg`, that downloads the GNU
+LibreDWG 0.14 release, checks its SHA-256, and builds the library and its
+programs with the flags the reference drawing was converted with. Only
+`dwg2dxf` and `libredwg.so.0`, stripped, are copied into the runtime image, with
+the licence and a note of the source (§9a has why that matters). The runtime
+stage also installs `fonts-dejavu-core` — ezdxf draws a plotted sheet's text
+with system fonts, and the slim image has none — and builds ezdxf's font cache
+as the `fbc` user. Two checks run during the build, so a broken image fails
+there rather than on the first drawing: `dwg2dxf --version`, and that ezdxf
+finds `DejaVuSans.ttf`.
+
+**Not yet built with these changes.** The session that wrote them had no Docker
+daemon. The `libredwg` stage's commands were run outside Docker on Ubuntu 24.04
+against the same tarball — checksum verified, the same configure flags, `make -C
+src`, `make -C programs`, install, strip — in 356 s on 4 cores. The stripped
+`dwg2dxf` plus `libredwg.so.0` come to 20 MB (the library is 75 MB before
+stripping), `dwg2dxf --version` prints `dwg2dxf 0.14` and exits 0, and it
+converted the reference DWG in 3.7 s to a DXF **byte-identical** to the one
+every number in §9a was measured on. The image itself, its size and the
+in-Docker build time are unmeasured. On the first build:
+
+```bash
+docker build -t fbc-review:dev .
+docker run --rm fbc-review:dev dwg2dxf --version
+# dwg2dxf 0.14
+docker run --rm fbc-review:dev python -c "import ezdxf; from ezdxf.addons.drawing import pymupdf; print(ezdxf.__version__)"
+# 1.4.4
+docker run --rm fbc-review:dev python -c "from fbcreview.cad import convert; print(convert.version())"
+# dwg2dxf 0.14
+```
+
+and record the image size here beside the 893 MB above. Expect it to grow by
+the 20 MB of LibreDWG, the font package, and the ezdxf, fontTools and Pillow
+wheels; the compiler stays in the discarded stage.
+
 ### Deploy [not yet run]
 
 ```bash
@@ -854,19 +891,27 @@ gcloud run services proxy fbc-review --region="$REGION" &
 gcloud run deploy fbc-review \
   --image="$IMAGE" \
   --region="$REGION" \
-  --memory=2Gi --cpu=2 \
+  --memory=4Gi --cpu=2 \
   --concurrency=4 \
   --timeout=900 \
   --min-instances=0 --max-instances=5 \
   --service-account="$SA" \
-  --set-env-vars="FBC_BUCKET=${BUCKET},FBC_PROJECT_ID=${PROJECT_ID},FBC_ALLOWED_EMAILS=bertin.kenol@omniflexfitness.com,FBC_SIGNER_SA=${SA}" \
+  --set-env-vars="FBC_BUCKET=${BUCKET},FBC_PROJECT_ID=${PROJECT_ID},FBC_ALLOWED_EMAILS=bertin.kenol@omniflexfitness.com,FBC_SIGNER_SA=${SA},FBC_CAD_CONCURRENCY=1" \
   --no-allow-unauthenticated
 ```
 
 Sizing, so it is not changed blindly:
 
-- **2 GiB** — PyMuPDF holds the whole document plus the rendered output in
-  memory; a 300-page raster-heavy set is the worst case.
+- **4 GiB** (2 GiB until 2026-10-03) — PyMuPDF holds the whole document plus
+  the rendered output in memory; a 300-page raster-heavy set is the worst case
+  for a PDF. A drawing adds a subprocess that peaked at **1.13 GB** reading the
+  23 MB reference DWG, and the 170 MB DXF it converts to sits on Cloud Run's
+  local disk, which is memory: the docs list *"Writing files to the file
+  system"* among what the limit has to cover
+  (<https://docs.cloud.google.com/run/docs/configuring/services/memory-limits>).
+  `FBC_CAD_CONCURRENCY=1` holds that to one drawing per instance, beside up to
+  one PDF review on the other worker. 4 GiB needs at least 1 vCPU; 2 vCPU allows
+  up to 8 GiB, so `--cpu=2` stands.
 - **concurrency 4** — the review is CPU-bound, not IO-bound. The default 80
   would let one instance thrash.
 - **max-instances 5** — a cost guard. Raise deliberately, not reactively.
@@ -1180,8 +1225,13 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_SIGNED_URL_TTL` | 3600 | Signed URL lifetime, seconds |
 | `FBC_RATE_PER_HOUR` | 10 | Reviews per user per hour |
 | `FBC_RATE_CONCURRENT` | 3 | Concurrent reviews per user |
-| `FBC_STALE_RUNNING_MINUTES` | 15 | A `running` job older than this is failed at startup |
+| `FBC_STALE_RUNNING_MINUTES` | 45 | A `running` job older than this is failed at startup. 45, not 15, since drawings: one CAD job can spend two `FBC_CAD_TIMEOUT_S` steps plus a wait for the CAD slot, and marking a live one interrupted is worse than noticing a dead one late (`webapp/config.py`). Keep it above 4 × `FBC_CAD_TIMEOUT_S` in minutes. |
 | `FBC_WORKERS` | 2 | Worker threads per instance |
+| `FBC_DWG2DXF` | `/usr/local/bin/dwg2dxf` in the image; else `dwg2dxf` on `PATH` | LibreDWG's converter. Set by the Dockerfile. Unset and not on `PATH` (a local run without LibreDWG), a `.dwg` upload is refused with `cad_unavailable` and a `.dxf` or a zip of DXFs still works. |
+| `FBC_DWG_TIMEOUT_S` | 300 | Seconds one DWG may take to convert before the converter is stopped. The 23 MB reference converts in 4–7 s. |
+| `FBC_CAD_TIMEOUT_S` | 600 | Seconds the drawing ingest (convert, read, plot every layout), and separately the DXF markup, may run in their subprocess before it is killed. Measured: ingest 186 s, markup 85 s on the reference drawing. Minimum 30. |
+| `FBC_CAD_CONCURRENCY` | 1 | Drawing subprocesses at once per instance. Each peaks at ~1.1 GB; a second drawing waits for the slot rather than doubling that. Both deploy paths set 1 explicitly, sized against `--memory=4Gi`. Read once at startup. |
+| `FBC_CAD_MAX_DXF_MB` | 300 | DXF one drawing review may hold open, all of a zip's drawings together (a DWG counts at its converted size). Measured: 170 MB of DXF peaked at 1.13 GB, about 6.6×; 300 MB is ~2.3 GB beside the worker on `--memory=4Gi`, where the DXF itself also sits on the in-memory disk. Above it the job fails `payload_too_large` with the size in the message, before ezdxf reads anything — not an out-of-memory kill reported as an unreadable drawing. Raise it only with the memory (`fbcreview/cad/__init__.py`). |
 | `FBC_BACKEND` | `gcp` | `gcp` for Firestore + Cloud Storage, `local` for the filesystem stand-ins. Independent of `FBC_DEV_UNSAFE_AUTH` — see section 0d. Forced to `gcp` whenever `K_SERVICE` is set, because Cloud Run's disk is ephemeral. |
 | `FBC_ARTEFACT_SECRET` | generated per process | Signs local artefact URLs. Only read on the `local` backend. Unset means outstanding links break on restart; set it for a service that restarts often or runs more than one uvicorn worker. |
 | `FBC_COLLECTION` | `reviews` | Firestore collection |
@@ -1595,7 +1645,7 @@ Estimated, not measured — nothing is deployed. Order-of-magnitude, us-east1.
 | Item | Basis | Monthly |
 | --- | --- | --- |
 | Cloud Run CPU | 50 × ~30 s wall × 2 vCPU | ~$0.07 |
-| Cloud Run memory | same × 2 GiB | ~$0.02 |
+| Cloud Run memory | same × 4 GiB (2 GiB before drawings were accepted) | ~$0.04 |
 | Cloud Run requests | ~2 k, first 2 M free | $0 |
 | Cloud Storage | ~1.8 GB held, 30-day lifecycle | ~$0.04 |
 | Egress | 50 × ~18 MB downloaded | ~$0.11 |
@@ -1617,6 +1667,13 @@ transform on a large sheet is minutes of CPU, not seconds. Fifty *scanned* sets
 would still land under a dollar of CPU, but it is the one thing that could move
 the number, and `max-instances=5` is what bounds it.
 
+**Drawings change it the same way.** A DWG review measured about five minutes
+of CPU on the reference drawing (ingest 186 s, markup 85 s), roughly ten PDF
+reviews' worth, and keeps a 170 MB DXF on the instance while it runs. At this
+volume that is still cents. If CPU stops being throttled outside requests
+(§9a, *Not decided — CPU outside requests*), the basis changes from request
+time to instance time and this table has to be redone.
+
 ### Cold start
 
 **Not measured — nothing is deployed.** Measure it once the service is up and
@@ -1631,7 +1688,8 @@ curl -s -o /dev/null -w '%{time_total}\n' https://fbc.omniflexfitness.com/health
 Expect it to be poor by web standards: the image is 893 MB and importing
 PyMuPDF, OpenCV and the Google client libraries is not free. If it is
 unacceptable, `--min-instances=1` costs roughly $13/month for an always-warm
-2 GiB / 2 vCPU instance and should be weighed against that.
+2 GiB / 2 vCPU instance and should be weighed against that. That figure predates
+the move to 4 GiB; the memory part of it doubles.
 
 ---
 
@@ -1764,13 +1822,106 @@ Decided rather than deferred.
 only routes are Autodesk's Model Derivative API — which uploads clients' permit
 sets to Autodesk — or a licensed Revit install on Windows, which Cloud Run
 cannot be. Ask for a PDF or DWG export instead; that is what firms send for
-permit review anyway.
+permit review anyway. *(2026-10-03: still true for `.rvt`. A Revit user exports
+sheets to DWG today — `docs/CAD-INPUT.md` says how — and reading Revit's own
+IFC export is planned as a separate path, `docs/FEATURE-PROMPT-revit-ifc.md`.)*
 
-**DWG: DXF only, when it comes up.** `accoreconsole.exe` ships with the AutoCAD
-on this workstation and converts DWG headlessly, but it is Windows-only and
-licence-bound and cannot run in the container. `ezdxf` reads DXF, not DWG. So
-the supported path is DXF in, rendered to a layered PDF in-process, with no
-external binary and no licensing question.
+**DWG: DXF only, when it comes up.** *(Superseded 2026-10-03 — see below.)*
+`accoreconsole.exe` ships with the AutoCAD on this workstation and converts DWG
+headlessly, but it is Windows-only and licence-bound and cannot run in the
+container. `ezdxf` reads DXF, not DWG. So the supported path is DXF in, rendered
+to a layered PDF in-process, with no external binary and no licensing question.
+
+#### 2026-10-03 — DWG is read directly, through LibreDWG
+
+Decided by the owner on 2026-10-03, with a real drawing to test against
+(`EVERGREEN_BLDG_1.dwg`: AutoCAD 2018 format, 23 MB, eight layouts). The upload
+can now be a `.dwg`, a `.dxf`, or a `.zip` of drawings with their xrefs; the
+engine plots each layout to the PDF it reviews and also returns the drawing
+marked up. How it works is `docs/ARCHITECTURE-V2.md` §5; what a user can send
+and get back is `docs/CAD-INPUT.md`.
+
+**The converter is GNU LibreDWG's `dwg2dxf`**, chosen over the two
+alternatives:
+
+| Option | Why not |
+| --- | --- |
+| ODA File Converter | free to download, proprietary licence; use inside a hosted commercial service appears to need an ODA membership |
+| Autodesk Platform Services (Model Derivative) | paid per translation, and every client drawing leaves the deployment for Autodesk's cloud |
+| **LibreDWG `dwg2dxf`** | **chosen**: GPL-3.0-or-later, runs inside the container, converts the reference drawing in 4–7 s |
+
+**How it is used, and why that matters for the licence.** The service runs
+`dwg2dxf` as a separate, unmodified program — a subprocess that takes two file
+paths and writes a DXF (`fbcreview/cad/convert.py`). Nothing links against
+LibreDWG, and its source is not changed. Two consequences, from the licence
+text itself (<https://www.gnu.org/licenses/gpl-3.0.html>):
+
+- **Running the service is not distribution.** GPL-3.0 §0: *"Mere interaction
+  with a user through a computer network, with no transfer of a copy, is not
+  conveying."* (GPL-3.0 has no network clause; that is the AGPL.) Pushing the
+  image to this project's own private Artifact Registry and running it on Cloud
+  Run conveys nothing to anyone.
+- **Calling it as a program keeps the rest of the code out of the GPL's scope.**
+  The GNU FAQ treats pipes and command-line arguments between two programs as
+  communication between separate works, not one combined program
+  (<https://www.gnu.org/licenses/gpl-faq.html#MereAggregation>).
+
+**If the container image is ever given to anyone** — a client, a contractor, a
+public registry — that *is* conveying object code, and GPL-3.0 §6 then requires
+offering the Corresponding Source for `dwg2dxf` and `libredwg.so.0`. It is
+unmodified upstream source:
+
+```
+https://ftp.gnu.org/gnu/libredwg/libredwg-0.14.tar.xz
+SHA-256 62ebb73b984f865960f20ed26619ea5f8789d5e3fd088fa40a2598384da81275
+```
+
+plus the build steps, which are the Dockerfile's `libredwg` stage. The image
+carries both, at `/usr/local/share/doc/libredwg/COPYING` and `SOURCE`. Under
+§6(d) the source may be offered from a different server than the image, with
+directions next to the image saying where — but whoever distributes stays
+responsible for it remaining available, so keep a copy of the tarball rather
+than relying on GNU's mirror forever. None of this touches `fbcreview/` or
+`webapp/`. `tests/test_container_cad.py` fails if the Dockerfile and this
+paragraph name different tarballs.
+
+**What it costs the deployment.** Measured on the reference drawing:
+
+| Step | Measured |
+| --- | --- |
+| `dwg2dxf` conversion | 4–7 s; reports ~1 700 `ERROR` lines and exits 0 — the DXF reads back whole, so success is judged by the output, not the exit code |
+| DXF size | 170 MB from a 23 MB DWG — ASCII DXF, because `dwg2dxf -b` (binary) truncates every text-style and linetype name to one character and drops all 1 088 block attributes |
+| ezdxf read + bounding-box index | ~60 s + ~17 s |
+| plotting | 3–15 s per sheet; 8 sheets in ~188 s end to end |
+| peak memory | 1.13 GB, in the `python -m fbcreview.cad` subprocess |
+| outputs | `rendered.pdf` 5 MB; marked-up DXF zip 14.5 MB |
+
+So: Cloud Run memory goes from 2Gi to **4Gi** (§3, and both `scripts/provision.sh`
+and `.github/workflows/deploy.yml`), CAD work is limited to one drawing at a
+time per instance (`FBC_CAD_CONCURRENCY=1`), and the new variables are in §6.
+The tunnel deployment (§0c) runs the same image on the workstation under Docker
+Desktop, which sets no per-container limit but caps the whole Docker VM; the
+same 4 GB has to fit inside that cap, so check it (Docker Desktop's resource
+settings, or `.wslconfig` under the WSL 2 backend) before the first drawing
+review there, and rebuild the image so it carries the converter.
+
+**Upload size.** `FBC_MAX_UPLOAD_MB` (120) applies to drawings as it does to
+PDFs, and DXF is the bulky form: the 23 MB DWG above is a 170 MB DXF. Upload
+the DWG; if only a DXF is available, zip it — DXF text deflates about 10:1, and
+a zip of drawings is accepted and unpacked with limits on member count, total
+size and compression ratio (`fbcreview/cad/source.py`). Behind the Cloudflare
+tunnel the 95 MB ceiling of §0c still applies.
+
+**Not decided — CPU outside requests.** The review runs on a background thread
+after `POST /api/review` has answered 202. Under Cloud Run's default
+request-based billing, *"CPU is only allocated during request processing"*
+(<https://docs.cloud.google.com/run/docs/configuring/billing-settings>), so that
+thread runs at full speed only while some request — the client's status polls —
+is in flight on the instance. A PDF review is ~30 s and has lived with it; a
+drawing review is about five minutes of CPU (ingest ~186 s, markup ~85 s). The
+fix is `--no-cpu-throttling` (instance-based billing), which changes what an
+idle instance costs. That is a billing decision for the owner, so it is recorded
+here and not made: neither deploy path sets it today.
 
 **Before any of that, check the cheap fix.** The Sculpted set's 200 optional
 content groups are literally AutoCAD layer names — `A-Wall`, `A-Anno-Titl`,

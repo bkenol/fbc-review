@@ -35,6 +35,27 @@ samples/
 *.pdf
 !docs/**/*.pdf
 
+# Client drawings are never committed, wherever they land — the same rule as a
+# client PDF. A DWG or DXF is the drafter's whole model, not a plot of it, and a
+# DXF converted from one is 7x the size. Tests build their drawings in code
+# with ezdxf. A zip is either an uploaded set of drawings with their xrefs or
+# the marked-up DXF the review writes back (python -m fbcreview.cad markup), so
+# it goes too. Also AutoCAD's lock and autosave files, and Revit/IFC models,
+# for when that path exists.
+*.dwg
+*.dxf
+*.dwf
+*.dwfx
+*.dwt
+*.dwl
+*.dwl2
+*.sv$
+*.zip
+*.rvt
+*.rfa
+*.ifc
+*.ifczip
+
 # Firebase CLI artefacts
 firebase-debug.log
 firestore-debug.log

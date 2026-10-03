@@ -365,7 +365,26 @@ def config(
         ],
         ai_reading=ai_config() is not None,
         ai_review=reviewer_config() is not None,
+        accepted_formats=_accepted_formats(),
+        cad_available=_dwg_converter(),
     )
+
+
+def _dwg_converter() -> bool:
+    """Whether a DWG converter answers here. Its version is asked once per process."""
+    try:
+        from fbcreview.cad import convert
+
+        return convert.available()
+    except Exception:
+        log.exception("could not check for a DWG converter")
+        return False
+
+
+def _accepted_formats() -> List[str]:
+    """What admission takes. A DXF and a zip of drawings are read by ezdxf alone;
+    a DWG needs the converter, and is refused at the door without one."""
+    return ["pdf", *(["dwg"] if _dwg_converter() else []), "dxf", "zip"]
 
 
 # -- submit ----------------------------------------------------------------
@@ -381,19 +400,35 @@ def config(
         "their own drawing. Starts nothing, stores nothing, and makes no model calls "
         "— it is the same pure-Python parse the review runs, stopped after the facts "
         "are built. The suggestions are advisory: what the applicant submits to "
-        "`POST /api/review` is what gets declared."
+        "`POST /api/review` is what gets declared. A PDF only: a drawing (DWG, DXF or "
+        "zip) is refused with `prefill_not_available`, after the same admission checks "
+        "a review would make, because it is converted when the review runs."
     ),
 )
 async def prefill_declaration(
     file: UploadFile = File(..., description="The permit set, as a PDF."),
     user: User = Depends(current_user),
 ) -> models.PrefillResponse:
-    filename = upload.safe_basename(file.filename or "")
     scratch = Path(tempfile.mkdtemp(prefix="fbc-pre-"))
-    local = scratch / "source.pdf"
+    local = scratch / "upload"
 
     try:
-        size = await upload.stream_to_disk(file, local)
+        size, kind = await upload.stream_to_disk(file, local)
+        local = upload.with_extension(local, kind)
+        filename = upload.safe_basename(file.filename or "", kind)
+        if kind in upload.CAD_KINDS:
+            # Refused the way a review would refuse it first, so an unsafe zip
+            # or an unreadable DWG is reported now, with the review's own code.
+            upload.admit_cad(local, kind)
+            # Never converted here. Reading a real drawing takes minutes and a
+            # gigabyte, and this handler runs on the event loop that answers
+            # every other request on the instance.
+            raise ApiError(
+                422, errors.PREFILL_NOT_AVAILABLE,
+                "Suggestions are read from a PDF. A drawing is converted when the review "
+                "runs, so answer the questions yourself, or leave them blank — what the "
+                "drawing states is still reconciled against them in the review.",
+            )
         # allow_raster: a scanned set is not an error here. It simply states
         # very little, and saying so is more useful than refusing to look.
         pages, source = upload.probe(local, allow_raster=True)
@@ -432,7 +467,13 @@ async def prefill_declaration(
     summary="Accept a permit set and start a review.",
 )
 async def create_review(
-    file: UploadFile = File(..., description="The permit set, as a PDF."),
+    file: UploadFile = File(
+        ...,
+        description=(
+            "The permit set: a PDF plotted from CAD, or the drawing itself as a DWG, a "
+            "DXF, or a zip of them. Recognised from its bytes, not its name."
+        ),
+    ),
     # Named `review_options` rather than `options`: openapi-generator's
     # typescript-angular services already take a parameter called `options` for
     # the per-request HttpClient settings, and a form field of the same name
@@ -494,16 +535,26 @@ async def create_review(
         raise ApiError(429, errors.RATE_LIMITED, exc.message)
 
     job_id = uuid.uuid4().hex[:12]
-    filename = upload.safe_basename(file.filename or "")
     scratch = Path(tempfile.mkdtemp(prefix=f"fbc-in-{job_id}-"))
-    local = scratch / "source.pdf"
+    local = scratch / "upload"
 
     try:
-        size = await upload.stream_to_disk(file, local)
-        pages, source = upload.probe(local, allow_raster=parsed.convert_raster)
+        size, kind = await upload.stream_to_disk(file, local)
+        local = upload.with_extension(local, kind)
+        # Named after what the bytes are, so a DWG sent as `set.pdf` is `set.dwg`.
+        filename = upload.safe_basename(file.filename or "", kind)
+        is_cad = kind in upload.CAD_KINDS
+        if is_cad:
+            # A header and a zip directory: everything that can be refused
+            # without reading the drawing, refused before a job or a blob exists.
+            # The page cap and the rest wait for the worker, which reads it.
+            upload.admit_cad(local, kind)
+            pages, source = 0, None
+        else:
+            pages, source = upload.probe(local, allow_raster=parsed.convert_raster)
 
         blob = storage.upload_path(job_id, filename)
-        files.upload_file(str(local), blob, "application/pdf")
+        files.upload_file(str(local), blob, upload.CONTENT_TYPES[kind])
     finally:
         with contextlib.suppress(Exception):
             local.unlink(missing_ok=True)
@@ -517,9 +568,11 @@ async def create_review(
         **{k: v for k, v in parsed.model_dump().items() if k in engine_fields}
     )
     # Regions count too: a vector sheet with its code table pasted in as a
-    # picture needs the rebuild stage just as much as a scanned one does.
-    needs_rebuild = parsed.convert_raster and bool(source.raster_pages or source.region_pages)
-    job_stages = stages_for(needs_rebuild)
+    # picture needs the rebuild stage just as much as a scanned one does. A
+    # drawing never does: the PDF the review reads is one it plots itself.
+    needs_rebuild = (source is not None and parsed.convert_raster
+                     and bool(source.raster_pages or source.region_pages))
+    job_stages = stages_for(needs_rebuild, cad=is_cad)
 
     store.create(
         job_id=job_id,
@@ -527,15 +580,21 @@ async def create_review(
         email=user.email,
         filename=filename,
         size_bytes=size,
+        # A drawing's page count and source profile are not known until the
+        # worker has plotted it; it writes both onto the record then.
         pages=pages,
         options=parsed.model_dump(),
         upload_blob=blob,
         stages=job_stages,
-        source=source.to_dict(),
+        source=source.to_dict() if source is not None else None,
         # Part of the audit trail, not a convenience: the register prints what
         # was asserted, and support has to be able to see it after the fact.
         declaration=declared.to_dict(),
     )
+    if is_cad:
+        # Through update rather than a create() parameter: the record is
+        # otherwise the shape every store and test double already writes.
+        store.update(job_id, source_format=kind)
 
     log.info(
         "review accepted",
@@ -546,9 +605,10 @@ async def create_review(
             "pages": pages,
             "bytes": size,
             "declared_fields": declared.answered_count(),
-            "source_kind": source.kind,
-            "raster_pages": len(source.raster_pages),
-            "region_pages": len(source.region_pages),
+            "source_kind": source.kind if source is not None else kind,
+            "source_format": kind,
+            "raster_pages": len(source.raster_pages) if source is not None else 0,
+            "region_pages": len(source.region_pages) if source is not None else 0,
         },
     )
 
@@ -571,16 +631,36 @@ async def create_review(
         declaration=declared,
         store=store,
         store_files=files,
-        convert_raster=parsed.convert_raster,
-        raster_pages=list(source.raster_pages),
+        convert_raster=parsed.convert_raster and not is_cad,
+        raster_pages=list(source.raster_pages) if source is not None else [],
         raster_regions={
             sheet.page: [(r.x0, r.y0, r.x1, r.y1) for r in sheet.raster_regions]
             for sheet in source.sheets
             if sheet.has_readable_regions
-        },
+        } if source is not None else {},
         profile=profile,
+        source_format=kind,
     )
     return JSONResponse({"id": job_id}, status_code=202)
+
+
+#: Stored record values `Job.source_format` accepts. Anything else on an old or
+#: hand-edited record reads as a PDF rather than failing the whole job view.
+_SOURCE_FORMATS = ("pdf", "dwg", "dxf", "zip")
+
+
+def _source_format(record: Dict[str, Any]) -> str:
+    """What a job's upload was: from the record, else from its stored name.
+
+    The name is the fallback only for a record written before the field existed.
+    It is trustworthy there because admission named the stored file after its
+    sniffed kind (`upload.safe_basename`).
+    """
+    stored = record.get("source_format")
+    if stored in _SOURCE_FORMATS:
+        return stored
+    suffix = Path(str(record.get("filename") or "")).suffix.lower().lstrip(".")
+    return suffix if suffix in upload.CAD_KINDS else "pdf"
 
 
 def _profile_for(mode: str, user: User, feedback: FeedbackStore
@@ -724,6 +804,7 @@ def get_job(
 
 def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
     state = record.get("state", "queued")
+    source_format = _source_format(record)
     stage = int(record.get("stage", 0) or 0)
     stages = list(record.get("stages") or STAGES)
     created = record.get("created_at") or utcnow()
@@ -732,6 +813,12 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
     source = record.get("source") or {}
     region_pages = list(source.get("region_pages") or [])
     raster_pages = list(source.get("raster_pages") or [])
+    if source_format != "pdf":
+        # A drawing was plotted by this review; there is no scan in it. An image
+        # on the plot is one the drafter placed — a logo, an underlay — and
+        # rebuilding "scanned sheets" cannot read it (a drawing's re-run never
+        # rebuilds), so no abstention may be blamed on it and no rebuild offered.
+        region_pages, raster_pages = [], []
     converted = bool(record.get("conversion"))
     measured_off = (record.get("options") or {}).get("include_measured") is False
 
@@ -762,17 +849,34 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
         ]
         job_id = record["id"]
         pdf_name = summary.pdf_name or "markup.pdf"
+        # The PDF the engine read, for the in-app viewer to render. The markup
+        # PDF has the findings burnt into the page; drawing the interactive
+        # layer on top of that would show every marker twice. For a PDF that is
+        # the upload. For a drawing it is the plot the worker made and stored,
+        # because every finding's rect is in that file's page space — and a
+        # DWG handed to pdf.js shows nothing at all, so a drawing job without
+        # one gets no viewer link rather than the upload.
+        if record.get("viewer_blob"):
+            source_pdf = files.signed_url(record["viewer_blob"])
+        elif record.get("upload_blob") and source_format == "pdf":
+            source_pdf = files.signed_url(record["upload_blob"])
+        else:
+            source_pdf = ""
+        stem = Path(str(record.get("filename") or "drawing")).stem or "drawing"
         downloads = models.Downloads(
             markup_pdf=files.signed_url(
                 storage.output_path(job_id, storage.MARKUP), download_as=pdf_name
             ),
             findings_json=files.signed_url(storage.output_path(job_id, storage.FINDINGS)),
-            # The set as uploaded, for the in-app viewer to render. The markup
-            # PDF has the findings burnt into the page; drawing the interactive
-            # layer on top of that would show every marker twice.
-            source_pdf=(
-                files.signed_url(record["upload_blob"])
-                if record.get("upload_blob") else ""
+            source_pdf=source_pdf,
+            # Only when the worker says it wrote one: it is never the reason a
+            # review fails, so its absence is an ordinary outcome.
+            markup_dxf=(
+                files.signed_url(
+                    storage.output_path(job_id, storage.MARKUP_DXF),
+                    download_as=f"{stem} — CODE REVIEW (DXF).zip",
+                )
+                if record.get("markup_dxf") else ""
             ),
             expires_at=files.expires_at(),
         )
@@ -805,6 +909,12 @@ def _to_model(record: Dict[str, Any], files: Storage) -> models.Job:
         conversion=(
             models.ConversionReport.model_validate(record["conversion"])
             if record.get("conversion")
+            else None
+        ),
+        source_format=source_format,
+        cad=(
+            models.CadReport.model_validate(record["cad"])
+            if record.get("cad") and source_format != "pdf"
             else None
         ),
         calibration=(
@@ -912,7 +1022,9 @@ def rerun_review(
         raise ApiError(
             409, errors.INVALID_REQUEST, f"This review's options cannot be replayed: {exc}"
         )
-    if body.convert_raster is not None:
+    source_format = _source_format(record)
+    is_cad = source_format != "pdf"
+    if body.convert_raster is not None and not is_cad:
         parsed = parsed.model_copy(update={"convert_raster": body.convert_raster})
     if parsed.mode == "training":
         _require_training()
@@ -936,6 +1048,10 @@ def rerun_review(
                 for r in regions
             ]
     needs_rebuild = parsed.convert_raster and bool(raster_pages or raster_regions)
+    if is_cad:
+        # A drawing is re-plotted from the first review's upload, and the plot
+        # has no scanned sheets to rebuild.
+        raster_pages, raster_regions, needs_rebuild = [], {}, False
 
     new_id = uuid.uuid4().hex[:12]
     store.create(
@@ -950,11 +1066,13 @@ def rerun_review(
         # not delete their upload, and copying a permit set to give the second
         # run its own path would double the storage for one file.
         upload_blob=blob,
-        stages=stages_for(needs_rebuild),
+        stages=stages_for(needs_rebuild, cad=is_cad),
         source=source or None,
         declaration=declared.to_dict(),
         rerun_of=job_id,
     )
+    if is_cad:
+        store.update(new_id, source_format=source_format)
 
     log.info(
         "review re-run accepted",
@@ -984,11 +1102,12 @@ def rerun_review(
         declaration=declared,
         store=store,
         store_files=files,
-        convert_raster=parsed.convert_raster,
+        convert_raster=parsed.convert_raster and not is_cad,
         raster_pages=raster_pages,
         raster_regions=raster_regions,
         profile=_profile_for(parsed.mode, user, feedback),
         rerun_of=job_id,
+        source_format=source_format,
     )
     return JSONResponse({"id": new_id}, status_code=202)
 
@@ -1946,7 +2065,8 @@ def artefact(blob_path: str, expires: str = "", sig: str = "", name: str = ""):
     if not str(target).startswith(str(root)) or not target.is_file():
         raise ApiError(404, errors.NOT_FOUND, "No such artefact.")
 
-    media = {"pdf": "application/pdf", "json": "application/json"}.get(
+    media = {"pdf": "application/pdf", "json": "application/json",
+             "zip": "application/zip"}.get(
         target.suffix.lstrip("."), "application/octet-stream"
     )
     return FileResponse(target, media_type=media, filename=name or target.name)

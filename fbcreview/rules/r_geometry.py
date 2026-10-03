@@ -129,6 +129,18 @@ def egress_extent(f: ProjectFacts, out: RuleResult):
                        f"you expect when the drawn run follows a band edge rather than the "
                        f"annotated centreline.")
         over = bool(limit and run_ft > limit)
+        # On a set plotted from a drawing the scale is not a printed label: it is
+        # the viewport's own, exact, or for a model-space drawing the factor it
+        # was fitted to the sheet at. Say which — the sheet never "states" it.
+        if f.meta.get("cad") is not None:
+            how = (f"converted at the scale the drawing itself defines for this view "
+                   f"({scale:g} pt/ft, {ev.confidence} confidence — {ev.source}; {ev.note})")
+            cite = "FBC-B Table 1017.2 · scale exact from the drawing's own coordinates"
+        else:
+            how = (f"converted at the scale the sheet itself states for this drawing "
+                   f"({scale:g} pt/ft, {ev.confidence} confidence — {ev.source})")
+            cite = ("FBC-B Table 1017.2 · scale from the sheet's own label and the PDF's "
+                    "/Measure dictionary")
         out.findings.append(Finding(
             "MEAS-1", "MEASURE.EGRESS_EXTENT", "OPEN" if over else "PASS",
             "CRITICAL" if over else "MEASURED", "Means of egress", pno, f.sheet_code(pno),
@@ -136,14 +148,12 @@ def egress_extent(f: ProjectFacts, out: RuleResult):
             f"Longest egress run measured off the drawing — {run_ft:.1f} ft",
             f"Every segment on the '{EGRESS_LAYER}' CAD layer of {f.sheet_code(pno)} was traced, "
             f"collinear dashes were merged back into continuous runs, and the longest run was "
-            f"converted at the scale the sheet itself states for this drawing "
-            f"({scale:g} pt/ft, {ev.confidence} confidence — {ev.source}).",
+            f"{how}.",
             f"{len(segs)} segments traced; longest continuous run {run_ft:.2f} ft "
             f"({_ft_in(run_ft)})." + cmp_txt +
             (f" Limit is {limit:g} ft." if limit else "") +
             (" THE MEASURED RUN EXCEEDS THE LIMIT." if over else " Inside the limit."),
-            "FBC-B Table 1017.2 · scale from the sheet's own label and the PDF's "
-            "/Measure dictionary",
+            cite,
             "Confirm the travel path and re-dimension." if over else "None."))
     finally:
         doc.close()

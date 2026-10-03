@@ -1,6 +1,7 @@
 # fbcreview
 
-Florida Building Code review of permit sets. PDF in, findings out. **AI reads; rules
+Florida Building Code review of permit sets. A PDF, or the drawings themselves — a DWG,
+a DXF, or a zip of them with their xrefs — in; findings out. **AI reads; rules
 decide:** the rules and the code corpus are pure Python, and when a deployment turns it on,
 Claude also reads each sheet — every value it proposes is found on the sheet before a rule
 may use it. Off, the review is deterministic and calls no model.
@@ -9,10 +10,18 @@ may use it. Off, the review is deterministic and calls no model.
 pip install -r requirements.txt
 
 python run.py path/to/permit-set.pdf --json findings.json   # CLI
+python run.py set.dwg --json f.json --markup-dxf review.zip  # a drawing; also mark up the DXF
 python run.py set.pdf --ai --save-readings readings.json     # also read sheets with Claude
 python run.py set.pdf --readings readings.json               # replay a reading, no API call
 uvicorn webapp.server:app --port 8000                        # web service -> http://127.0.0.1:8000
 ```
+
+A drawing upload is plotted, sheet by sheet, to the PDF the engine reads, with the drafter's
+own strings laid back over it as text; block attributes, each viewport's exact scale and the
+real layer table ride beside it. A DWG needs GNU LibreDWG's `dwg2dxf` (built into the
+container; locally, on `PATH` or at `FBC_DWG2DXF`) — a DXF needs nothing extra. What can be
+uploaded, what comes back (the marked-up PDF report and the drawing marked up on
+`FBC-REVIEW` layers) and the known limits are in `docs/CAD-INPUT.md`.
 
 ```
 fbcreview/
@@ -22,6 +31,7 @@ fbcreview/
   read/             the field catalog, value parsers and the deterministic reader
   factstore.py      every reading of every field, resolved — with rivals and provenance
   ai/               the optional AI sheet reader: prompt, cache, and the grounding check
+  cad/              DWG/DXF/zip -> plotted PDF + cad.json sidecar; findings back into the DXF
   extract/
     document.py     sheet identification from the title block, CAD layer inventory
     scale.py        drawing scale from /Measure + printed labels, with abstention
@@ -41,7 +51,7 @@ webapp/             FastAPI service + drag-and-drop front end (see webapp/README
   notify.py           mail, the prompt export, and GitHub issues
 tests/              regression against the hand-established findings
 ARCHITECTURE.md     what mechanises, what does not, and what it costs
-Dockerfile          python:3.12-slim, no GPU, ~2 s parse for a 24-sheet set
+Dockerfile          python:3.12-slim + LibreDWG dwg2dxf, no GPU, ~2 s parse for a 24-sheet set
 ```
 
 Design rules, in order of importance:

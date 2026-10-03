@@ -10,9 +10,13 @@
 
 
 /**
- * One reading a finding rests on: the value, the words as printed, and where.  Written by `fbcreview/payload.py`. `method` says which reader found it — `pair`, `line` and `table` are the layout reader; `ai` is the AI sheet reader, whose readings are used only after the quote has been found on the sheet, and `note` says so in words a card can show.
+ * One reading a finding rests on: the value, the words as printed, and where.  Written by `fbcreview/payload.py`. `method` says which reader found it — `pair`, `line` and `table` are the layout reader; `ai` is the AI sheet reader, whose readings are used only after the quote has been found on the sheet; `cad` is a block attribute read from an uploaded drawing — and `note` says so in words a card can show. `basis` says whether the value is printed (`stated`), a table\'s own sum (`tabulated`), worked out (`computed`) or measured off the geometry (`measured`), so an estimate never reads as a statement.
  */
 export interface FindingEvidence { 
+    /**
+     * `stated`, `tabulated`, `computed` or `measured`.
+     */
+    basis?: string;
     confidence: string;
     /**
      * The catalog field, e.g. `egress.common_path`.

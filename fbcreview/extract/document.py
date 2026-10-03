@@ -207,7 +207,15 @@ def sheet_index(doc: pymupdf.Document, text_by_page: Dict[int, str]) -> List[She
     return sheets
 
 
-def page_geometry(doc: pymupdf.Document, pno: int, text: str) -> PageGeometry:
+def page_geometry(doc: pymupdf.Document, pno: int, text: str,
+                  cad_views=None) -> PageGeometry:
+    """The page's layers and the scale of each view on it.
+
+    `cad_views` is `(page-wide, [ViewScale…])` for a page plotted from a drawing
+    (`fbcreview/read/cad.py`): each viewport's scale is known exactly, so views
+    are taken from it instead of segmented out of the linework and attributed
+    to printed labels.
+    """
     # Fetched once and passed on: get_drawings() is the most expensive call in
     # extraction — about a second on a densely plotted sheet — and view
     # segmentation needs the same paths this histogram walks.
@@ -217,6 +225,9 @@ def page_geometry(doc: pymupdf.Document, pno: int, text: str) -> PageGeometry:
         lay = p.get("layer")
         if lay:
             layers[lay] = layers.get(lay, 0) + 1
+    if cad_views is not None:
+        scale, views = cad_views
+        return PageGeometry(pno, scale, layers, list(views))
     scale, views = resolve(doc, pno, text, paths=paths)
     return PageGeometry(pno, scale, layers, views)
 

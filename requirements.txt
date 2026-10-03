@@ -19,6 +19,25 @@ google-cloud-firestore==2.28.1
 opencv-python-headless==5.0.0.93
 numpy==2.5.2
 
+# Reading a drawing upload (.dwg, .dxf, or a zip of them) — fbcreview/cad.
+# ezdxf reads the DXF (a DWG is converted to DXF first by LibreDWG's dwg2dxf,
+# a separate program the Dockerfile builds; it is not a Python package) and
+# plots each layout through its PyMuPDF backend, which imports Pillow; ezdxf
+# itself requires fontTools (glyph outlines for text) and pyparsing. All four
+# are pinned, not floated: the CAD pages' text layer is placed from the glyphs
+# ezdxf draws, so a different ezdxf or fontTools moves every text box, and the
+# ezdxf version is part of a plotted set's AI readings cache key
+# (fbcreview/ai/readings.py, plotted_identity). fbcreview.cad imports ezdxf
+# lazily, inside the functions that need it, and the service runs it in a
+# subprocess (webapp/cadjob.py): a PDF review never imports it.
+# Licences, from each wheel's metadata: ezdxf MIT,
+# Pillow MIT-CMU (the HPND-style licence it has always carried), fontTools MIT,
+# pyparsing MIT.
+ezdxf==1.4.4
+pillow==12.3.0
+fonttools==4.66.1
+pyparsing==3.3.3
+
 # Two uses, both optional and both imported lazily inside the one function that
 # needs the SDK:
 #   * webapp/assist.py reads the free-text half of training feedback, after a

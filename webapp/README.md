@@ -105,6 +105,15 @@ instead — a 24-sheet vector set lands around 17 MB, so this matters.
 | `FBC_WORKERS` | 2 | Concurrent reviews |
 | `FBC_MAX_UPLOAD_MB` | 120 | Rejected above this, streamed to disk not buffered |
 | `FBC_RETAIN_HOURS` | 24 | Jobs swept after this |
+| `FBC_STALE_RUNNING_MINUTES` | 45 | A job still running this long is taken to belong to a dead instance; above a drawing's worst case (4 × `FBC_CAD_TIMEOUT_S`) |
+| `FBC_DWG2DXF` | `dwg2dxf` on `PATH` | The LibreDWG converter; without one, DWG uploads are refused and DXF still works |
+| `FBC_DWG_TIMEOUT_S` | 300 | Seconds one DWG may take to convert |
+| `FBC_CAD_TIMEOUT_S` | 600 | Seconds a drawing's ingest or its DXF markup may run, each in its own subprocess |
+| `FBC_CAD_CONCURRENCY` | 1 | Drawing subprocesses at once per instance (each holds about 1.1 GB) |
+| `FBC_CAD_MAX_DXF_MB` | 300 | DXF one review may hold, all drawings together; more is refused as `payload_too_large` before it is read (~6.6× this in memory) |
+
+A DWG, a DXF or a zip of them is reviewed as the PDF the adapter plots from it; see
+[`docs/CAD-INPUT.md`](../docs/CAD-INPUT.md).
 
 ## Before this faces the public internet
 

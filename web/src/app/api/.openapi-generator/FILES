@@ -15,6 +15,7 @@ model/admin-overview.ts
 model/ai-reading-summary.ts
 model/ai-review-summary.ts
 model/assist-opinion.ts
+model/cad-report.ts
 model/calibration-adjustment.ts
 model/calibration-change.ts
 model/calibration-knob.ts

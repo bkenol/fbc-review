@@ -73,3 +73,9 @@ def configure() -> None:
     # These two are chatty at INFO and say nothing useful in this service.
     logging.getLogger("google.auth").setLevel("WARNING")
     logging.getLogger("urllib3").setLevel("WARNING")
+    # ezdxf logs at INFO what it repairs and what it cannot resolve, and those
+    # lines quote layer names, block names and xref paths — the drawing's
+    # content, which never goes to the log. The CAD adapter runs in its own
+    # process with its stderr captured and reduced to counts; this covers the
+    # service process, which imports ezdxf for the readings identity.
+    logging.getLogger("ezdxf").setLevel("WARNING")

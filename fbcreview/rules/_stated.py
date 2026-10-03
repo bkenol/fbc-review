@@ -12,7 +12,9 @@ reviewed exactly as before — and falls back to the fact store's reading of the
 same row: the catalog field for that section, its `required` and `provided`
 claims, and the sheet, page and label they were printed at. Nothing is
 inferred. A value only the AI reader located still says so, in the finding's
-own words (`noted`), because a rule's reader cannot otherwise tell.
+own words (`noted`), because a rule's reader cannot otherwise tell — and so does
+a value read only from a drawing's own block attribute (method `cad`), whose
+field name is the drawing's and is not printed on the sheet.
 """
 from __future__ import annotations
 
@@ -62,7 +64,11 @@ def stated(f: ProjectFacts, *sections: str) -> Optional[CodeDatum]:
         home = (req or prov).best
         from ..read.catalog import BY_KEY
         unit = _UNIT.get(BY_KEY[key].parse, "") if key in BY_KEY else ""
-        ai_only = [r for r in (req, prov) if r is not None and r.methods == ["ai"]]
+        only = {m for r in (req, prov) if r is not None and len(r.methods) == 1
+                for m in r.methods}
+        notes = [n for m, n in (("ai", f"read by AI and verified on {home.sheet}"),
+                                ("cad", f"read from the drawing's own attribute on {home.sheet}"))
+                 if m in only]
         return CodeDatum(
             section=section, label=home.label,
             required_raw=_printed(req.best) if req else "",
@@ -70,7 +76,7 @@ def stated(f: ProjectFacts, *sections: str) -> Optional[CodeDatum]:
             required=float(req.value) if req else None,
             provided=float(prov.value) if prov else None,
             unit=unit, sheet=home.sheet, page=home.page, anchor=home.label, box=home.box,
-            note=(f"read by AI and verified on {home.sheet}" if ai_only else ""))
+            note="; ".join(notes))
     return None
 
 

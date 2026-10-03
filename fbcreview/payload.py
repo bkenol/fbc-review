@@ -16,9 +16,12 @@ added here, once, for the worker and `run.py --json` alike:
   or for a finding that exists only under the declared reading, which is
   never drawn on the sheet.
 * `evidence` — the readings the rule's inputs rest on: the value, the words as
-  printed, the sheet and page, and which reader found it. A value the AI reader
-  located says so. Page numbers here are 0-based, like `Finding.page`; the
-  client converts both in one place.
+  printed, the sheet and page, which reader found it, and its `basis` (stated,
+  tabulated, measured…). A value the AI reader located says so; one read from a
+  drawing's own field names the field, the entity and the layout; a measured
+  one says measured, and has no quote, because nothing printed says it. Page
+  numbers here are 0-based, like `Finding.page`; the client converts both in
+  one place.
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pymupdf
 
+from .factstore import independent
 from .layout import viewer_rect
 
 #: The fact-store fields each rule reads, for `evidence`. A rule absent here
@@ -81,6 +85,64 @@ def _shown(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+#: Fact-store methods that are the layout reader (`fbcreview/read/deterministic.py`).
+_LAYOUT_READER = ("pair", "line", "table", "legacy")
+#: Bases whose `raw` is not words printed on the sheet but a derivation.
+_NOT_PRINTED = ("measured", "computed")
+
+
+def _entities(c) -> str:
+    """The drawing entities a claim names, as `entity 1A2` / `entities 1A2, 1A3`."""
+    handles = [t.split(":", 1)[1] for t in (c.source or "").split("+")
+               if t.startswith("dxf:") and t.split(":", 1)[1]]
+    if not handles:
+        return ""
+    return ("entity " if len(handles) == 1 else "entities ") + ", ".join(handles[:4]) + \
+        (f" and {len(handles) - 4} more" if len(handles) > 4 else "")
+
+
+def _from_drawing(c) -> str:
+    """Where in the drawing a CAD claim was read: field, entity, layout."""
+    where = ", ".join(x for x in (_entities(c), f"layout {c.layout}" if c.layout else "") if x)
+    field = f"{c.label} field" if c.label else "own attribute"
+    return f"read from the drawing's {field}" + (f" ({where})" if where else "")
+
+
+def _note(r, c) -> str:
+    """What a card says about where the value came from.
+
+    A value read by the layout reader alone needs no note, as before. Any other
+    reader says so: the AI reader, verified on the sheet; the drawing itself,
+    naming the field and the entity it was read from, so it can be found in
+    CAD; a measured value, as measured and never as a printed quote.
+    """
+    methods = r.methods
+    if c.basis in _NOT_PRINTED:
+        how = "measured from the drawing" if c.basis == "measured" else "computed"
+        where = ", ".join(x for x in (_entities(c), f"layout {c.layout}" if c.layout else "",
+                                      f"layer {c.layer}" if c.layer else "") if x)
+        return (f"{how}{f' ({where})' if where else ''}, not printed on the sheet"
+                + (f": {c.raw}" if c.raw else ""))
+    if methods == ["ai"]:
+        return f"read by AI and verified on {c.sheet}"
+    cad = next((x for x in r.claims if x.method == "cad"), None)
+    if "ai" not in methods and cad is None:
+        return ""
+    readers = []
+    if "ai" in methods:
+        readers.append("by AI")
+    if any(m in _LAYOUT_READER for m in methods):
+        readers.append("by the layout reader")
+    if cad is not None:
+        readers.append(_from_drawing(cad).replace("read ", "", 1))
+    if len(readers) == 1:
+        return f"read {readers[0]}"
+    # Two readers finding one drawing entity are one reading of it, and the
+    # note must not pass that off as corroboration (`factstore.independent`).
+    tail = ", in agreement" if independent(r.claims) else ", one reading of the same drawing text"
+    return f"read {', '.join(readers[:-1])} and {readers[-1]}{tail}"
+
+
 def _evidence(doc: Optional[pymupdf.Document], facts, rule_id: str) -> List[Dict[str, Any]]:
     store = getattr(facts, "store", None)
     if store is None:
@@ -94,14 +156,14 @@ def _evidence(doc: Optional[pymupdf.Document], facts, rule_id: str) -> List[Dict
         rect = None
         if doc is not None and c.box and 0 <= c.page < doc.page_count:
             rect = viewer_rect(doc[c.page], c.box)
-        ai_only = r.methods == ["ai"]
         out.append({
-            "field": key, "role": role, "value": _shown(r.value), "quote": c.raw,
+            "field": key, "role": role, "value": _shown(r.value),
+            # `quote` is words as printed. A measured value has none: its
+            # derivation is in the note, and is not dressed up as a quote.
+            "quote": "" if c.basis in _NOT_PRINTED else c.raw,
             "sheet": c.sheet, "page": c.page, "rect": rect, "method": c.method,
-            "confidence": r.confidence, "sheets": list(r.sheets),
-            "note": (f"read by AI and verified on {c.sheet}" if ai_only else
-                     "read by AI and by the layout reader, in agreement"
-                     if "ai" in r.methods else ""),
+            "basis": c.basis, "confidence": r.confidence, "sheets": list(r.sheets),
+            "note": _note(r, c),
         })
     return out
 

@@ -55,8 +55,24 @@ class Settings:
     signed_url_ttl_seconds: int
     rate_per_hour: int
     rate_concurrent: int
+    #: A job still "running" this long after it started is taken to belong to a
+    #: dead instance and marked interrupted. 45, not the 15 a PDF review needs:
+    #: a drawing's worst case is 40 min (see `cad_timeout_seconds`), and marking
+    #: a live CAD job interrupted is worse than noticing a dead one later.
     stale_running_minutes: int
     workers: int
+    #: Seconds one drawing's ingest (DWG conversion, reading, plotting every
+    #: layout) or its DXF markup may run before the subprocess is killed. The
+    #: 23 MB reference DWG ingests in 186 s and marks up in 85 s, so 600 s is
+    #: three times the measured worst step without letting a pathological drawing
+    #: hold a worker for long. A CAD job can spend up to two of these, plus the
+    #: wait for a CAD slot behind another job's two, so `FBC_STALE_RUNNING_MINUTES`
+    #: must stay above 4 × this: 40 min at the defaults, hence its default of 45.
+    cad_timeout_seconds: int
+    #: How many CAD subprocesses one instance runs at once. Reading the reference
+    #: drawing peaks at about 1.1 GB, so on a 2 GiB instance that also serves the
+    #: API, one at a time is what fits; later CAD jobs wait for the slot.
+    cad_concurrency: int
 
     # ── misc ──────────────────────────────────────────────────────────────
     #: `gcp` or `local`. Deliberately independent of `dev_unsafe_auth`, which
@@ -163,8 +179,10 @@ def settings() -> Settings:
         signed_url_ttl_seconds=_int("FBC_SIGNED_URL_TTL", 3600),
         rate_per_hour=_int("FBC_RATE_PER_HOUR", 10),
         rate_concurrent=_int("FBC_RATE_CONCURRENT", 3),
-        stale_running_minutes=_int("FBC_STALE_RUNNING_MINUTES", 15),
+        stale_running_minutes=_int("FBC_STALE_RUNNING_MINUTES", 45),
         workers=_int("FBC_WORKERS", 2),
+        cad_timeout_seconds=max(30, _int("FBC_CAD_TIMEOUT_S", 600)),
+        cad_concurrency=max(1, _int("FBC_CAD_CONCURRENCY", 1)),
         backend=backend,
         collection=os.environ.get("FBC_COLLECTION", "reviews"),
         feedback_collection=os.environ.get("FBC_FEEDBACK_COLLECTION", "feedback"),
