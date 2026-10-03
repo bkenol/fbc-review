@@ -75,8 +75,8 @@ class Settings:
     #: a CAD slot while counted as running.
     cad_timeout_seconds: int
     #: How many CAD subprocesses one instance runs at once. Reading the reference
-    #: drawing peaks at about 1.1 GB, so on a 2 GiB instance that also serves the
-    #: API, one at a time is what fits; later CAD jobs wait for the slot.
+    #: drawing peaks at about 1.1 GB, so in the 2 GiB a 4 GiB instance keeps for
+    #: drawings, one at a time is what fits; later CAD jobs wait for the slot.
     cad_concurrency: int
 
     # ── misc ──────────────────────────────────────────────────────────────

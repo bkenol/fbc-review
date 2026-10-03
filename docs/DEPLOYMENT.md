@@ -933,8 +933,11 @@ Sizing, so it is not changed blindly:
   local disk, which is memory: the docs list *"Writing files to the file
   system"* among what the limit has to cover
   (<https://docs.cloud.google.com/run/docs/configuring/services/memory-limits>).
-  `FBC_CAD_CONCURRENCY=1` holds that to one drawing per instance, beside up to
-  one PDF review on the other worker. 4 GiB needs at least 1 vCPU; 2 vCPU allows
+  `FBC_CAD_CONCURRENCY=1` holds that to one drawing per instance. Drawing
+  reviews run on a pool of their own (`webapp/server.py`, `_cad_pool`), so one
+  drawing runs beside up to `FBC_WORKERS` (2) PDF reviews: the old 2 GiB stays
+  theirs and the API's, and the drawing gets the 2 GiB added — which is what
+  `FBC_CAD_MAX_DXF_MB` (250) is sized to. 4 GiB needs at least 1 vCPU; 2 vCPU allows
   up to 8 GiB, so `--cpu=2` stands.
 - **concurrency 4** — the review is CPU-bound, not IO-bound. The default 80
   would let one instance thrash.
@@ -1256,7 +1259,7 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_DWG_TIMEOUT_S` | 300 | Seconds one DWG may take to convert before the converter is stopped. The 23 MB reference converts in 4–7 s. |
 | `FBC_CAD_TIMEOUT_S` | 600 | Seconds the drawing ingest (convert, read, plot every layout), and separately the DXF markup, may run in their subprocess before it is killed. Measured: ingest 186 s, markup 85 s on the reference drawing. Minimum 30. |
 | `FBC_CAD_CONCURRENCY` | 1 | Drawing subprocesses at once per instance. Each peaks at ~1.1 GB; a second drawing waits for the slot rather than doubling that. Both deploy paths set 1 explicitly, sized against `--memory=4Gi`. Read once at startup. |
-| `FBC_CAD_MAX_DXF_MB` | 300 | DXF one drawing review may hold open, all of a zip's drawings together (a DWG counts at its converted size). Measured: 170 MB of DXF peaked at 1.13 GB, about 6.6×; 300 MB is ~2.3 GB beside the worker on `--memory=4Gi`, where the DXF itself also sits on the in-memory disk. Above it the job fails `payload_too_large` with the size in the message, before ezdxf reads anything — not an out-of-memory kill reported as an unreadable drawing. Raise it only with the memory (`fbcreview/cad/__init__.py`). |
+| `FBC_CAD_MAX_DXF_MB` | 250 | DXF one drawing review may hold open, all of a zip's drawings together (a DWG counts at its converted size as it converts, and each xref copy embedding makes into a sheet file counts again). Measured: 170 MB of DXF peaked at 1.13 GB, about 6.6×; 250 MB is ~1.65 GB of reading plus the DXF and the upload on the in-memory disk, about 2 GB — the 2 GiB `--memory=4Gi` added for drawings, beside the API and `FBC_WORKERS` PDF reviews. Above it the job fails `payload_too_large` with the size in the message, before ezdxf reads anything — not an out-of-memory kill reported as an unreadable drawing. Raise it only with the memory (`fbcreview/cad/__init__.py`). |
 | `FBC_CAD_MAX_ENTITIES` | 2000000 | Entities one drawing may expand to once every block and block array is drawn out. Bytes do not bound this: a 20 KB drawing of blocks nested six deep is a million lines and ran past `FBC_CAD_TIMEOUT_S` holding the only CAD slot. Counted before anything is drawn (0.09 s on the reference drawing, which expands to 304 147). Past it a single drawing fails `payload_too_large`; a zip member is left out with a warning. |
 | `FBC_BACKEND` | `gcp` | `gcp` for Firestore + Cloud Storage, `local` for the filesystem stand-ins. Independent of `FBC_DEV_UNSAFE_AUTH` — see section 0d. Forced to `gcp` whenever `K_SERVICE` is set, because Cloud Run's disk is ephemeral. |
 | `FBC_ARTEFACT_SECRET` | generated per process | Signs local artefact URLs. Only read on the `local` backend. Unset means outstanding links break on restart; set it for a service that restarts often or runs more than one uvicorn worker. |
@@ -1944,10 +1947,25 @@ request-based billing, *"CPU is only allocated during request processing"*
 (<https://docs.cloud.google.com/run/docs/configuring/billing-settings>), so that
 thread runs at full speed only while some request — the client's status polls —
 is in flight on the instance. A PDF review is ~30 s and has lived with it; a
-drawing review is about five minutes of CPU (ingest ~186 s, markup ~85 s). The
-fix is `--no-cpu-throttling` (instance-based billing), which changes what an
-idle instance costs. That is a billing decision for the owner, so it is recorded
-here and not made: neither deploy path sets it today.
+drawing review is about five minutes of CPU (ingest ~186 s, markup ~85 s), and
+its deadlines are wall-clock: `FBC_CAD_TIMEOUT_S` (600 s) kills the ingest
+however little CPU it was given. Between polls the client waits 3 s, so a
+throttled instance can spend most of those ten minutes without CPU, and a
+full-size DWG review can be killed at the deadline with its work half done —
+reported as an unreadable drawing. The post-merge review (2026-10-03) confirmed
+this from the flags both deploy paths pass. The choices, for the owner:
+
+1. `--no-cpu-throttling` (instance-based billing) on both deploy paths. Drawing
+   reviews run at full speed; an idle instance costs more while it is up
+   (`--min-instances=0` still lets it scale to zero).
+2. Keep request-based billing and refuse drawing uploads on Cloud Run until
+   one of the others is done (`cad_available=false`).
+3. Run each review inside a request — Cloud Tasks calling back into the
+   service — so the CPU is allocated because a request is in flight.
+
+It is recorded here and not made: neither deploy path sets the flag today, and
+the service is not deployed to Cloud Run yet. Until it is decided, a drawing
+review on Cloud Run is not to be relied on.
 
 **Before any of that, check the cheap fix.** The Sculpted set's 200 optional
 content groups are literally AutoCAD layer names — `A-Wall`, `A-Anno-Titl`,

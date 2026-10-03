@@ -66,11 +66,14 @@ _SHEET_SHAPED = re.compile(r"^[A-Z]{0,4}[\-.\s]?\d{1,4}(?:[.\-]\d{1,3})?[A-Z]?$|
 #: How much DXF one job may hold open, in MB (`FBC_CAD_MAX_DXF_MB`). Measured:
 #: the reference drawing's 170 MB of DXF peaked at 1.13 GB in ezdxf, about 6.6×.
 #: Every member of a zip is open at once while xrefs resolve, and on Cloud Run
-#: the DXF itself sits on an in-memory disk beside the worker, so 300 MB is about
-#: 2.3 GB of reading on a 4 GiB instance — room for the reference drawing
-#: nearly twice over, and a refusal that says why instead of an out-of-memory
-#: kill reported as "could not be read".
-DEFAULT_MAX_DXF_MB = 300
+#: the DXF itself sits on an in-memory disk beside the worker. 250 MB is about
+#: 1.65 GB of reading plus 0.25 GB of DXF and up to 0.12 GB of upload on that
+#: disk: 2 GB, the half of the 4 GiB instance that drawings were added to, the
+#: other half still serving the API and FBC_WORKERS PDF reviews. Room for the
+#: reference drawing half as much again, and a refusal that says why instead of
+#: an out-of-memory kill reported as "could not be read". (It was 300 until
+#: the post-merge review showed that left no margin beside two PDF reviews.)
+DEFAULT_MAX_DXF_MB = 250
 
 
 def max_dxf_bytes() -> int:

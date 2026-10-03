@@ -111,7 +111,7 @@ instead — a 24-sheet vector set lands around 17 MB, so this matters.
 | `FBC_DWG_TIMEOUT_S` | 300 | Seconds one DWG may take to convert |
 | `FBC_CAD_TIMEOUT_S` | 600 | Seconds a drawing's ingest or its DXF markup may run, each in its own subprocess |
 | `FBC_CAD_CONCURRENCY` | 1 | Drawing subprocesses at once per instance (each holds about 1.1 GB) |
-| `FBC_CAD_MAX_DXF_MB` | 300 | DXF one review may hold, all drawings together; more is refused as `payload_too_large` before it is read (~6.6× this in memory) |
+| `FBC_CAD_MAX_DXF_MB` | 250 | DXF one review may hold, all drawings together; more is refused as `payload_too_large` before it is read (~6.6× this in memory) |
 | `FBC_CAD_MAX_ENTITIES` | 2000000 | Entities one drawing may expand to through its blocks; counted before plotting, refused past it |
 
 A DWG, a DXF or a zip of them is reviewed as the PDF the adapter plots from it; see
