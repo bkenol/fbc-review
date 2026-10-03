@@ -253,7 +253,12 @@ class Renderer:
                 "applicant's own plot. The margin was <i>added</i> to the left of it. "
                 "<b>The drawing file is the authority</b>: where this plot and the drawing "
                 "differ, the drawing governs.<br><br>"
-                f"<b>Layers.</b> {layers}, all visible as printed.<br><br>")
+                f"<b>Layers.</b> {layers}, all visible as printed.<br><br>"
+                + ("<b>Little was seen here.</b> The viewports over most of this sheet "
+                   "frame nothing drawn in the drawing's model space, so this review saw "
+                   "the title block and notes and no drawing. If AutoCAD shows one, it is "
+                   "in a file that was not uploaded, or the conversion lost it.<br><br>"
+                   if sheet.get("shows_nothing") else ""))
 
     def _coverage_scope(self) -> str:
         """What 'sheets in the set' counts, in the register's coverage table."""

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from ..cad import EMPTY_VIEW_SHARE
 from ..confidence import HIGH, Evidence
 from ..extract.scale import _LABEL, _agrees, label_value
 from ..facts import ViewScale
@@ -224,7 +225,9 @@ def summary(sidecar: dict, claims: int = 0, stamped: int = 0) -> Dict[str, Any]:
         "sheets": [{"page": p["page"], "drawing": p.get("drawing"), "layout": p.get("layout"),
                     "number": p.get("number"),
                     "number_source": p.get("number_source"), "model": p.get("model"),
-                    "viewports": len(p.get("viewports", [])), "text_cells": p.get("cells", 0)}
+                    "viewports": len(p.get("viewports", [])), "text_cells": p.get("cells", 0),
+                    "empty_view_share": p.get("empty_view_share", 0.0),
+                    "shows_nothing": p.get("empty_view_share", 0.0) > EMPTY_VIEW_SHARE}
                    for p in sidecar.get("pages", [])],
         "layers": len(sidecar.get("layers", [])),
         "records": by_type,

@@ -98,6 +98,13 @@ def _check_size(dxf_paths: Dict[str, str]) -> None:
            "upload that."))
 
 
+#: Above this share of a sheet's viewport area framing nothing drawn, the
+#: sheet is reported as showing nothing (`render.empty_view_share`). Measured
+#: on the reference drawing: 6C at 0.95; the details sheet with one empty frame
+#: beside six full details at 0.36.
+EMPTY_VIEW_SHARE = 0.5
+
+
 def is_cad(kind: Optional[str]) -> bool:
     return kind in CAD_KINDS
 
@@ -195,13 +202,16 @@ def _unread_reason(exc: Exception) -> str:
         _unread_code(exc), "it could not be read")
 
 
-def _plot_sheet(op, member: str, spec, cache, target, names):
+def _plot_sheet(op, member: str, spec, cache, target, names, index=None):
     """Plot one sheet onto the next page of `target` and write its text layer.
 
     Returns (SheetPage, the runs captured, text runs that could not be placed).
     """
     from . import render
     sheet = render.render_sheet(op.doc, spec, cache, target, names)
+    if index is not None:
+        for v in sheet.viewports:
+            v.drawn = render.drawn_in(index, v.model_window, v.frozen_layers)
     page = target.doc[sheet.page]
     cell_list = render.cells(sheet.runs, sheet.to_page)
     written = render.write_cells(page, cell_list)
@@ -212,6 +222,7 @@ def _plot_sheet(op, member: str, spec, cache, target, names):
         viewports=sheet.viewports, cells=written, runs=len(sheet.runs),
         seconds=sheet.seconds, note=spec.note, number=number,
         number_source=number_source, title=title,
+        empty_view_share=render.empty_view_share(sheet.viewports),
         text=[{"box": [round(v, 1) for v in c.box()],
                "handles": sorted({r.handle for r in c.runs if r.handle}),
                "kind": c.runs[0].kind, "layer": c.runs[0].layer} for c in cell_list])
@@ -355,6 +366,7 @@ def ingest(src: str, workdir: str, name: str = "",
             continue
         say(f"indexing {os.path.basename(member)}")
         cache = render.model_bbox_cache(op.doc) if has_layouts else None
+        index = render.model_index(op.doc, cache) if has_layouts else None
         names = render._layer_names(op.doc)
         layers.update(read.layer_names(op.doc))
         where = f" in {member}" if len(opened) > 1 else ""
@@ -362,7 +374,8 @@ def ingest(src: str, workdir: str, name: str = "",
             say(f"plotting {spec.layout}")
             before = out.page_count
             try:
-                sp, runs, skipped_text = _plot_sheet(op, member, spec, cache, target, names)
+                sp, runs, skipped_text = _plot_sheet(op, member, spec, cache, target, names,
+                                                     index)
                 found = cad_claims.from_sheet(op, sp, runs)
             except MemoryError:
                 raise
@@ -385,6 +398,17 @@ def ingest(src: str, workdir: str, name: str = "",
             if skipped_text:
                 warnings.append(f"{skipped_text} text item(s) on {spec.layout} could "
                                 "not be placed in the text layer.")
+            if sp.empty_view_share > EMPTY_VIEW_SHARE:
+                # Measured: the reference drawing's 6C frames 5 model-space
+                # entities, none on a plotting layer, through the 1:128 view
+                # that is 95% of its viewport area. Reviewed without a word,
+                # it passed as a sheet with nothing wrong on it.
+                named = f" ({sp.number})" if sp.number else ""
+                warnings.append(
+                    f"The viewports on layout {spec.layout}{named}{where} frame nothing drawn "
+                    "in model space over most of the sheet, so this review saw its title "
+                    "block and notes and no drawing there. If AutoCAD shows one, it is in a "
+                    "file that was not uploaded, or the conversion lost it.")
         warnings.extend(op.warnings)
 
     if out.page_count == 0:
@@ -421,7 +445,10 @@ def ingest(src: str, workdir: str, name: str = "",
         "version": 1,
         "kind": kind,
         "render_version": RENDER_VERSION,
-        "converter": convert.version(),
+        # the DWG converter that ran, or "" for a set with no DWG in it: a
+        # DXF review must not say LibreDWG converted it because one is installed
+        "converter": (convert.version()
+                      if any("conversion" in d for d in drawings.values()) else ""),
         "ezdxf": ezdxf.__version__,
         # what the upload's own header said (a DWG's release, its conversion)
         # wins over what the converted DXF says about itself
