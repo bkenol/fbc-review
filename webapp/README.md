@@ -105,7 +105,8 @@ instead — a 24-sheet vector set lands around 17 MB, so this matters.
 | `FBC_WORKERS` | 2 | Concurrent reviews |
 | `FBC_MAX_UPLOAD_MB` | 120 | Rejected above this, streamed to disk not buffered |
 | `FBC_RETAIN_HOURS` | 24 | Jobs swept after this |
-| `FBC_STALE_RUNNING_MINUTES` | 45 | A job still running this long is taken to belong to a dead instance; above a drawing's worst case (4 × `FBC_CAD_TIMEOUT_S`) |
+| `FBC_STALE_RUNNING_MINUTES` | 15 | A PDF review still running this long is taken to belong to a dead instance |
+| `FBC_STALE_DRAWING_MINUTES` | 60 | The same for a drawing review: two CAD steps of `FBC_CAD_TIMEOUT_S`, AI reading and the result review |
 | `FBC_DWG2DXF` | `dwg2dxf` on `PATH` | The LibreDWG converter; without one, DWG uploads are refused and DXF still works |
 | `FBC_DWG_TIMEOUT_S` | 300 | Seconds one DWG may take to convert |
 | `FBC_CAD_TIMEOUT_S` | 600 | Seconds a drawing's ingest or its DXF markup may run, each in its own subprocess |

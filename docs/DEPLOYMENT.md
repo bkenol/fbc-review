@@ -1225,7 +1225,8 @@ configuration, and `config.py` deliberately shells out to nothing.
 | `FBC_SIGNED_URL_TTL` | 3600 | Signed URL lifetime, seconds |
 | `FBC_RATE_PER_HOUR` | 10 | Reviews per user per hour |
 | `FBC_RATE_CONCURRENT` | 3 | Concurrent reviews per user |
-| `FBC_STALE_RUNNING_MINUTES` | 45 | A `running` job older than this is failed at startup. 45, not 15, since drawings: one CAD job can spend two `FBC_CAD_TIMEOUT_S` steps plus a wait for the CAD slot, and marking a live one interrupted is worse than noticing a dead one late (`webapp/config.py`). Keep it above 4 × `FBC_CAD_TIMEOUT_S` in minutes. |
+| `FBC_STALE_RUNNING_MINUTES` | 15 | A `running` PDF review older than this is failed at startup as interrupted. |
+| `FBC_STALE_DRAWING_MINUTES` | 60 | The same for a drawing review, which runs longer: up to two `FBC_CAD_TIMEOUT_S` steps (20 min at the defaults), the AI reading of its sheets (up to 15 min) and the result review. Kept apart from the PDF window, which one shared 45-minute window had tripled. Drawing reviews run on threads of their own (`FBC_CAD_CONCURRENCY` of them), so none is counted as running while it waits for a CAD slot (`webapp/config.py`). |
 | `FBC_WORKERS` | 2 | Worker threads per instance |
 | `FBC_DWG2DXF` | `/usr/local/bin/dwg2dxf` in the image; else `dwg2dxf` on `PATH` | LibreDWG's converter. Set by the Dockerfile. Unset and not on `PATH` (a local run without LibreDWG), a `.dwg` upload is refused with `cad_unavailable` and a `.dxf` or a zip of DXFs still works. |
 | `FBC_DWG_TIMEOUT_S` | 300 | Seconds one DWG may take to convert before the converter is stopped. The 23 MB reference converts in 4–7 s. |

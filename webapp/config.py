@@ -55,19 +55,24 @@ class Settings:
     signed_url_ttl_seconds: int
     rate_per_hour: int
     rate_concurrent: int
-    #: A job still "running" this long after it started is taken to belong to a
-    #: dead instance and marked interrupted. 45, not the 15 a PDF review needs:
-    #: a drawing's worst case is 40 min (see `cad_timeout_seconds`), and marking
-    #: a live CAD job interrupted is worse than noticing a dead one later.
+    #: A PDF review still "running" this long after it started is taken to
+    #: belong to a dead instance and marked interrupted.
     stale_running_minutes: int
+    #: The same for a drawing review, which runs longer: two CAD steps of up to
+    #: `cad_timeout_seconds` each (20 min at the defaults), the AI reading of
+    #: its sheets (up to 15 min), and the rules and the result review between.
+    #: Kept apart from the PDF window — one window for both left an orphaned
+    #: PDF review "running" for three times as long once drawings arrived.
+    stale_drawing_minutes: int
     workers: int
     #: Seconds one drawing's ingest (DWG conversion, reading, plotting every
     #: layout) or its DXF markup may run before the subprocess is killed. The
     #: 23 MB reference DWG ingests in 186 s and marks up in 85 s, so 600 s is
     #: three times the measured worst step without letting a pathological drawing
-    #: hold a worker for long. A CAD job can spend up to two of these, plus the
-    #: wait for a CAD slot behind another job's two, so `FBC_STALE_RUNNING_MINUTES`
-    #: must stay above 4 × this: 40 min at the defaults, hence its default of 45.
+    #: hold a worker for long. A drawing review spends up to two of these, so
+    #: `FBC_STALE_DRAWING_MINUTES` must stay well above 2 × this. Drawing jobs run
+    #: on threads of their own, as many as `cad_concurrency`, so none waits for
+    #: a CAD slot while counted as running.
     cad_timeout_seconds: int
     #: How many CAD subprocesses one instance runs at once. Reading the reference
     #: drawing peaks at about 1.1 GB, so on a 2 GiB instance that also serves the
@@ -179,7 +184,8 @@ def settings() -> Settings:
         signed_url_ttl_seconds=_int("FBC_SIGNED_URL_TTL", 3600),
         rate_per_hour=_int("FBC_RATE_PER_HOUR", 10),
         rate_concurrent=_int("FBC_RATE_CONCURRENT", 3),
-        stale_running_minutes=_int("FBC_STALE_RUNNING_MINUTES", 45),
+        stale_running_minutes=_int("FBC_STALE_RUNNING_MINUTES", 15),
+        stale_drawing_minutes=_int("FBC_STALE_DRAWING_MINUTES", 60),
         workers=_int("FBC_WORKERS", 2),
         cad_timeout_seconds=max(30, _int("FBC_CAD_TIMEOUT_S", 600)),
         cad_concurrency=max(1, _int("FBC_CAD_CONCURRENCY", 1)),

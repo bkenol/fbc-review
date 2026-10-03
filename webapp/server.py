@@ -56,13 +56,27 @@ VERSION = version.resolve()
 API_VERSION = version.release()
 
 _pool: Optional[ThreadPoolExecutor] = None
+#: Drawing reviews run here, never in `_pool`. One waits for the CAD slot
+#: (`cadjob`) for as long as the drawing ahead of it takes — minutes — and in
+#: `_pool` that wait held a PDF review's thread: two drawings behind a third
+#: parked both workers and every PDF review queued behind them (measured).
+#: Sized to the slots, so a drawing job that has a thread has a slot.
+_cad_pool: Optional[ThreadPoolExecutor] = None
+
+
+def _executor_for(source_format: str) -> ThreadPoolExecutor:
+    pool = _pool if source_format == "pdf" else _cad_pool
+    assert pool is not None
+    return pool
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _pool
+    global _pool, _cad_pool
     cfg = settings()
     _pool = ThreadPoolExecutor(max_workers=cfg.workers, thread_name_prefix="review")
+    _cad_pool = ThreadPoolExecutor(max_workers=cfg.cad_concurrency,
+                                   thread_name_prefix="drawing")
     log.info(
         "service starting",
         extra={
@@ -89,6 +103,8 @@ async def lifespan(app: FastAPI):
     yield
 
     _pool.shutdown(wait=False, cancel_futures=True)
+    if _cad_pool is not None:
+        _cad_pool.shutdown(wait=False, cancel_futures=True)
 
 
 app = FastAPI(
@@ -619,8 +635,7 @@ async def create_review(
     # promotes it.
     profile = _profile_for(parsed.mode, user, feedback)
 
-    assert _pool is not None
-    _pool.submit(
+    _executor_for(kind).submit(
         run_review,
         job_id=job_id,
         uid=user.uid,
@@ -1090,8 +1105,7 @@ def rerun_review(
         **{k: v for k, v in parsed.model_dump().items() if k in engine_fields}
     )
 
-    assert _pool is not None
-    _pool.submit(
+    _executor_for(source_format).submit(
         run_review,
         job_id=new_id,
         uid=user.uid,

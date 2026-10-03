@@ -191,12 +191,16 @@ class JobStore:
         poll forever."""
         cfg = settings()
         cutoff = utcnow() - dt.timedelta(minutes=cfg.stale_running_minutes)
-        stale: List[Any] = list(
+        drawing_cutoff = utcnow() - dt.timedelta(minutes=cfg.stale_drawing_minutes)
+        candidates: List[Any] = list(
             self._col.where(filter=FieldFilter("state", "==", RUNNING))
-            .where(filter=FieldFilter("started_at", "<", cutoff))
+            # every job past the shorter window; each is then held to its own
+            .where(filter=FieldFilter("started_at", "<", max(cutoff, drawing_cutoff)))
             .limit(100)
             .stream()
         )
+        stale = [snap for snap in candidates
+                 if is_stale(snap.to_dict() or {}, cutoff, drawing_cutoff)]
         for snap in stale:
             self.mark_error(
                 snap.id,
@@ -206,6 +210,16 @@ class JobStore:
         if stale:
             log.warning("failed orphaned jobs", extra={"count": len(stale)})
         return len(stale)
+
+
+def is_stale(record: Dict[str, Any], cutoff: dt.datetime, drawing_cutoff: dt.datetime) -> bool:
+    """Whether a running job started before its kind's window: a drawing
+    review, which runs longer, by `drawing_cutoff`; anything else by `cutoff`."""
+    started = record.get("started_at")
+    if record.get("state") != RUNNING or not started:
+        return False
+    drawing = (record.get("source_format") or "pdf") != "pdf"
+    return started < (drawing_cutoff if drawing else cutoff)
 
 
 @lru_cache(maxsize=1)
