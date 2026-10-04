@@ -24,7 +24,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from webapp.config import settings
-from webapp.jobs import ACTIVE, DONE, ERROR, QUEUED, RUNNING, check_limits, utcnow
+from webapp.jobs import (ACTIVE, DONE, ERROR, QUEUED, RUNNING, check_limits, is_stale,
+                         utcnow)
 
 log = logging.getLogger("fbc.dev")
 
@@ -145,11 +146,12 @@ class LocalJobStore:
         check_limits(self.active_count(uid), self.recent_count(uid, window_start))
 
     def fail_stale_running(self) -> int:
-        cutoff = utcnow() - dt.timedelta(minutes=settings().stale_running_minutes)
+        cfg = settings()
+        cutoff = utcnow() - dt.timedelta(minutes=cfg.stale_running_minutes)
+        drawing_cutoff = utcnow() - dt.timedelta(minutes=cfg.stale_drawing_minutes)
         failed = 0
         for record in self._all():
-            started = record.get("started_at")
-            if record.get("state") == RUNNING and started and started < cutoff:
+            if is_stale(record, cutoff, drawing_cutoff):
                 self.mark_error(
                     record["id"], "interrupted",
                     "This review was interrupted by a server restart. Run it again.",

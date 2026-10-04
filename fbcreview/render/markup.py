@@ -1075,5 +1075,11 @@ def render(src: str, out: str, findings, sheets, options, abstentions=None,
            reconciled=None, cad=None) -> dict:
     """`reconciled` is the ReconciledFacts the rules ran against. Without it the
     output is exactly what it was before the declaration existed. `cad` is
-    `facts.meta["cad"]` for a set plotted from a drawing; without it, likewise."""
+    `facts.meta["cad"]` for a set plotted from a drawing; without it the wording
+    is a PDF set's, as before.
+
+    One thing changed for every set, PDFs included: each unrotated sheet's rail
+    and chip bounds are sized from that sheet, not from page 0 (`_size`). On a
+    PDF whose sheets differ in size the margin of a smaller sheet no longer runs
+    off its foot — the legend used to land up to 900 pt below it."""
     return Renderer(src, findings, sheets, options, abstentions, reconciled, cad).build(out)

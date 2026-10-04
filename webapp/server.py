@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from fbcreview import declaration_schema
 from fbcreview.declaration import ProjectDeclaration
@@ -56,13 +57,49 @@ VERSION = version.resolve()
 API_VERSION = version.release()
 
 _pool: Optional[ThreadPoolExecutor] = None
+#: Drawing reviews run here, never in `_pool`. One waits for the CAD slot
+#: (`cadjob`) for as long as the drawing ahead of it takes — minutes — and in
+#: `_pool` that wait held a PDF review's thread: two drawings behind a third
+#: parked both workers and every PDF review queued behind them (measured).
+#: Sized to the slots, so a drawing job that has a thread has a slot.
+_cad_pool: Optional[ThreadPoolExecutor] = None
+
+
+def _record_format(store, job_id: str, source_format: str) -> None:
+    """Write a drawing job's format onto the record it was just created as.
+
+    A second write, so it can fail where the first did not; and a queued job
+    no worker will take counts against its owner's concurrent reviews from
+    then on. If it fails, the job is closed as failed before the error goes
+    back — never left queued.
+    """
+    try:
+        store.update(job_id, source_format=source_format)
+    except Exception as exc:
+        log.error("drawing job format not recorded",
+                  extra={"job_id": job_id, "error": type(exc).__name__})
+        try:
+            store.mark_error(job_id, errors.INTERNAL,
+                             "This review could not be started. Upload the drawing again.")
+        except Exception:
+            log.error("drawing job left queued", extra={"job_id": job_id})
+        raise errors.ApiError(500, errors.INTERNAL,
+                              "The review could not be started. Try the upload again.")
+
+
+def _executor_for(source_format: str) -> ThreadPoolExecutor:
+    pool = _pool if source_format == "pdf" else _cad_pool
+    assert pool is not None
+    return pool
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _pool
+    global _pool, _cad_pool
     cfg = settings()
     _pool = ThreadPoolExecutor(max_workers=cfg.workers, thread_name_prefix="review")
+    _cad_pool = ThreadPoolExecutor(max_workers=cfg.cad_concurrency,
+                                   thread_name_prefix="drawing")
     log.info(
         "service starting",
         extra={
@@ -89,6 +126,8 @@ async def lifespan(app: FastAPI):
     yield
 
     _pool.shutdown(wait=False, cancel_futures=True)
+    if _cad_pool is not None:
+        _cad_pool.shutdown(wait=False, cancel_futures=True)
 
 
 app = FastAPI(
@@ -419,7 +458,8 @@ async def prefill_declaration(
         if kind in upload.CAD_KINDS:
             # Refused the way a review would refuse it first, so an unsafe zip
             # or an unreadable DWG is reported now, with the review's own code.
-            upload.admit_cad(local, kind)
+            # On the thread pool: it reads the file, and this is the event loop.
+            await run_in_threadpool(upload.admit_cad, local, kind)
             # Never converted here. Reading a real drawing takes minutes and a
             # gigabyte, and this handler runs on the event loop that answers
             # every other request on the instance.
@@ -548,7 +588,9 @@ async def create_review(
             # A header and a zip directory: everything that can be refused
             # without reading the drawing, refused before a job or a blob exists.
             # The page cap and the rest wait for the worker, which reads it.
-            upload.admit_cad(local, kind)
+            # On the thread pool, so a hostile zip's directory never holds the
+            # event loop that answers every other request on the instance.
+            await run_in_threadpool(upload.admit_cad, local, kind)
             pages, source = 0, None
         else:
             pages, source = upload.probe(local, allow_raster=parsed.convert_raster)
@@ -594,7 +636,7 @@ async def create_review(
     if is_cad:
         # Through update rather than a create() parameter: the record is
         # otherwise the shape every store and test double already writes.
-        store.update(job_id, source_format=kind)
+        _record_format(store, job_id, kind)
 
     log.info(
         "review accepted",
@@ -619,8 +661,7 @@ async def create_review(
     # promotes it.
     profile = _profile_for(parsed.mode, user, feedback)
 
-    assert _pool is not None
-    _pool.submit(
+    _executor_for(kind).submit(
         run_review,
         job_id=job_id,
         uid=user.uid,
@@ -1072,7 +1113,7 @@ def rerun_review(
         rerun_of=job_id,
     )
     if is_cad:
-        store.update(new_id, source_format=source_format)
+        _record_format(store, new_id, source_format)
 
     log.info(
         "review re-run accepted",
@@ -1090,8 +1131,7 @@ def rerun_review(
         **{k: v for k, v in parsed.model_dump().items() if k in engine_fields}
     )
 
-    assert _pool is not None
-    _pool.submit(
+    _executor_for(source_format).submit(
         run_review,
         job_id=new_id,
         uid=user.uid,

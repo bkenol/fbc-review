@@ -76,6 +76,7 @@ def attributes(page: int, runs: List[TextRun], to_page) -> List[dict]:
             continue
         out.append({"type": "attribute", "page": page, "kind": r.kind, "tag": r.tag,
                     "prompt": r.prompt, "text": text, "layer": r.layer, "handle": r.handle,
+                    "source": r.source or r.handle,
                     "viewport": r.viewport, "box": _r(_run_box(r, to_page))})
     return out
 
@@ -250,6 +251,16 @@ def from_sheet(opened, sheet_page, runs: List[TextRun]) -> List[dict]:
     units_in = opened.units.inches
     doc = opened.doc
     out = attributes(page, runs, sheet_page.to_page)
+    if sheet_page.model:
+        # A block inserted more than once in model space is a tag — room, door,
+        # equipment — and describes what it tags, not the building.
+        counts: Dict[str, int] = {}
+        for ins in doc.modelspace().query("INSERT"):
+            counts[ins.dxf.name] = counts.get(ins.dxf.name, 0) + 1
+        for rec in out:
+            ins = doc.entitydb.get(rec.get("handle", ""))
+            if ins is not None and ins.dxftype() == "INSERT" and counts.get(ins.dxf.name, 0) > 1:
+                rec["repeated"] = True
     out.extend(dimensions(page, runs, sheet_page.to_page, doc, units_in))
     model_map = sheet_page.to_page if sheet_page.model else None
     out.extend(areas(page, sheet_page.viewports, doc, units_in, model_map))

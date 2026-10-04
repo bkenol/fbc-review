@@ -141,6 +141,15 @@ class Resolution:
         note = f"'{b.raw}' {how} {b.where()}{also}{agreed}"
         return Evidence(self.value, b.where(), self.confidence, note, b.page)
 
+    @property
+    def stating_sheets(self) -> List[str]:
+        """Sheets that state the value: the best claim's, and every other that
+        states it again. A sheet that only shows the best claim's own drawing
+        entity is not one — one note seen through viewports on two sheets is
+        one statement, and agreeing with itself is not two sheets agreeing.
+        On a PDF, where claims carry no source, this is every sheet."""
+        return [self.best.sheet] + self._other_sheets()[0]
+
     def _other_sheets(self) -> Tuple[List[str], List[str]]:
         """Sheets other than the best claim's, split into those that state the
         value again and those that only show the best claim's own drawing

@@ -64,11 +64,18 @@ def stated(f: ProjectFacts, *sections: str) -> Optional[CodeDatum]:
         home = (req or prov).best
         from ..read.catalog import BY_KEY
         unit = _UNIT.get(BY_KEY[key].parse, "") if key in BY_KEY else ""
-        only = {m for r in (req, prov) if r is not None and len(r.methods) == 1
-                for m in r.methods}
-        notes = [n for m, n in (("ai", f"read by AI and verified on {home.sheet}"),
-                                ("cad", f"read from the drawing's own attribute on {home.sheet}"))
-                 if m in only]
+        # Each value's own provenance, on its own sheet: the required value
+        # printed on G-001 and the provided one read from an attribute on A-101
+        # was noted as "read from the drawing's own attribute on G-001".
+        hr, hp = _how(req), _how(prov)
+        if hr and hp:
+            note = hr if hr == hp else f"required {hr}; provided {hp}"
+        elif hr:
+            note = f"required value {hr}" if prov is not None else hr
+        elif hp:
+            note = f"provided value {hp}" if req is not None else hp
+        else:
+            note = ""
         return CodeDatum(
             section=section, label=home.label,
             required_raw=_printed(req.best) if req else "",
@@ -76,8 +83,17 @@ def stated(f: ProjectFacts, *sections: str) -> Optional[CodeDatum]:
             required=float(req.value) if req else None,
             provided=float(prov.value) if prov else None,
             unit=unit, sheet=home.sheet, page=home.page, anchor=home.label, box=home.box,
-            note="; ".join(notes))
+            note=note)
     return None
+
+
+def _how(r) -> str:
+    """How one resolution's value was read, when one reader alone read it."""
+    if r is None or len(r.methods) != 1:
+        return ""
+    return {"ai": f"read by AI and verified on {r.best.sheet}",
+            "cad": f"read from the drawing's own attribute on {r.best.sheet}"}.get(
+        r.methods[0], "")
 
 
 def noted(d: Optional[CodeDatum], text: str) -> str:

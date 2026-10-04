@@ -23,7 +23,9 @@
 # the examples and the test suite are not. Measured outside Docker on 4 cores:
 # about 6 minutes, nearly all of it the library, and the dwg2dxf it produces
 # writes a DXF of the reference drawing byte-identical to the one it was
-# measured with. Docker caches this stage, so it is paid once per version.
+# measured with. A workstation's Docker caches this stage, so it is paid once
+# per version there; the CI deploy builds on a fresh runner with no layer cache,
+# so it pays the six minutes on every image it builds.
 FROM python:3.12-slim AS libredwg
 
 ARG LIBREDWG_VERSION=0.14
