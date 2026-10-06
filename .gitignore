@@ -31,6 +31,8 @@ web/dist/
 # Local artefacts
 /out/
 .devdata/
+# The running Rebuild Console's record of itself (its URL carries its token).
+/.console/
 samples/
 *.pdf
 !docs/**/*.pdf

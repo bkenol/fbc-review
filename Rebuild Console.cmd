@@ -10,8 +10,10 @@ rem
 rem      "Rebuild Console.cmd"                open the console
 rem      "Rebuild Console.cmd" app            open it as its own Chrome window,
 rem                                           with no tab strip or address bar
-rem      "Rebuild Console.cmd" app-shortcut   put a Desktop shortcut that does
-rem                                           that - the one to use
+rem      "Rebuild Console.cmd" app-shortcut   put a shortcut that does that on
+rem                                           the Desktop and in the Start
+rem                                           menu, with the console's own
+rem                                           icon - the one to use
 rem      "Rebuild Console.cmd" shortcut       the older Desktop shortcut, which
 rem                                           opens in the default browser
 rem      "Rebuild Console.cmd" debug          open it with a visible console, so
@@ -21,8 +23,13 @@ rem  From Git Bash, use scripts/rebuild-console.sh instead — a POSIX path with
 rem  no spaces in it, which avoids the backslash-escaping this file's name runs
 rem  into there.
 rem
-rem  No administrator rights are needed. Docker Desktop must be running before a
-rem  rebuild will work, which is a separate matter.
+rem  Opening it again while the console is running brings back that console
+rem  rather than starting a second one.
+rem
+rem  No administrator rights are needed, and the console never runs with them.
+rem  The tunnel-service buttons ask Windows for approval (a UAC prompt) for that
+rem  one step. Docker Desktop must be running before a rebuild will work, which
+rem  is a separate matter.
 
 setlocal
 set "REPO=%~dp0"
@@ -88,8 +95,9 @@ pause
 exit /b 0
 
 :debug
-rem Same thing with a console attached, so a traceback is visible.
-"%PYC%" "%REPO%\scripts\rebuild_console.py"
+rem Same thing with a console attached, so a traceback is visible. A new
+rem instance even if one is running, or this would only reopen that one.
+"%PYC%" "%REPO%\scripts\rebuild_console.py" --new-instance
 echo.
 pause
 exit /b 0

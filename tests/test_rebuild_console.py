@@ -479,3 +479,250 @@ def test_both_run_scripts_reach_the_daemon_before_building_the_client(console):
         assert text.index(probe) < text.index("Building the client"), (
             "{} asks the daemon after paying for the client build".format(script.name)
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Launched like a program: one console, its own icon, admin only on demand
+# ══════════════════════════════════════════════════════════════════════════
+# Asked for so the console opens from a Desktop icon the way the OmniFlux
+# console does. Three things make that true: a second launch brings back the
+# running console instead of starting another, the shortcut and the window
+# carry the console's own icon, and the only steps that need an administrator
+# ask Windows for it themselves rather than the whole console running elevated.
+import json as _json
+import struct
+import urllib.request
+
+SHORTCUT = ROOT / "scripts" / "app-shortcut.ps1"
+SERVICE = ROOT / "scripts" / "tunnel-service.ps1"
+ICON = ROOT / "scripts" / "console-assets" / "rebuild-console.ico"
+
+
+def _fake_repo(tmp_path: Path) -> Path:
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "share.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture
+def live_console(console, tmp_path):
+    repo = _fake_repo(tmp_path)
+    server, url = console.serve(repo)
+    yield repo, server, url
+    server.shutdown()
+    server.server_close()
+
+
+def _get(url: str):
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return opener.open(url, timeout=5)
+
+
+def test_a_second_launch_finds_the_console_already_running(console, live_console):
+    repo, _server, url = live_console
+    console.write_state(repo, url)
+    assert console.running_console(repo) == url
+
+
+def test_a_record_left_by_a_dead_console_is_not_followed(console, live_console):
+    repo, server, url = live_console
+    console.write_state(repo, url)
+    server.shutdown()
+    server.server_close()
+    assert console.running_console(repo, timeout=1.0) is None
+
+
+def test_a_console_for_another_checkout_is_not_reopened(console, live_console, tmp_path_factory):
+    _repo, _server, url = live_console
+    other = _fake_repo(tmp_path_factory.mktemp("other"))
+    console.write_state(other, url)
+    assert console.running_console(other) is None
+
+
+def test_only_a_loopback_url_in_the_record_is_ever_followed(console, tmp_path):
+    repo = _fake_repo(tmp_path)
+    for url in ("http://example.com:80/?token=abc", "https://127.0.0.1:9/?token=abc",
+                "http://127.0.0.1:9/", "not a url", "http://127.0.0.1:99999/?token=a"):
+        (repo / console.STATE_DIR).mkdir(exist_ok=True)
+        console.state_file(repo).write_text(_json.dumps({"url": url}), encoding="utf-8")
+        assert console.running_console(repo, timeout=0.5) is None, url
+
+
+def test_main_reopens_the_running_console_instead_of_starting_another(
+        console, live_console, monkeypatch):
+    repo, _server, url = live_console
+    console.write_state(repo, url)
+    opened = []
+    monkeypatch.setattr(console, "open_console", lambda u, mode: opened.append((u, mode)))
+    monkeypatch.setattr(console, "serve", lambda *a, **k: pytest.fail("started a second console"))
+    assert console.main(["--repo", str(repo), "--browser", "app"]) == 0
+    assert opened == [(url, "app")]
+
+
+def test_the_record_is_removed_only_by_the_console_it_belongs_to(console, tmp_path):
+    repo = _fake_repo(tmp_path)
+    console.write_state(repo, "http://127.0.0.1:1/?token=mine")
+    console.clear_state(repo, "http://127.0.0.1:2/?token=someone-else")
+    assert console.state_file(repo).exists()
+    console.clear_state(repo, "http://127.0.0.1:1/?token=mine")
+    assert not console.state_file(repo).exists()
+
+
+def test_the_record_never_lands_in_the_repository(console):
+    """It holds the token. .console/ is ignored, and it is not .devdata."""
+    ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "/.console/" in ignored
+    assert console.STATE_DIR == ".console"
+
+
+def test_the_ping_is_behind_the_token_like_everything_else(live_console):
+    _repo, server, _url = live_console
+    with pytest.raises(urllib.error.HTTPError) as err:
+        _get("http://127.0.0.1:{}/api/ping?token=wrong".format(server.server_port))
+    assert err.value.code == 403
+
+
+def test_the_window_gets_the_console_icon(live_console):
+    _repo, server, _url = live_console
+    with _get("http://127.0.0.1:{}/favicon.ico".format(server.server_port)) as resp:
+        assert resp.status == 200
+        assert resp.headers["Content-Type"] == "image/x-icon"
+        assert resp.read() == ICON.read_bytes()
+
+
+def test_the_icon_holds_every_size_windows_asks_for():
+    data = ICON.read_bytes()
+    reserved, kind, count = struct.unpack("<HHH", data[:6])
+    assert (reserved, kind) == (0, 1)
+    sizes = set()
+    for i in range(count):
+        width, height = data[6 + 16 * i], data[7 + 16 * i]
+        sizes.add((width or 256, height or 256))
+    for size in (16, 32, 48, 256):
+        assert (size, size) in sizes, size
+
+
+def test_the_shortcut_goes_on_the_desktop_and_in_the_start_menu_with_the_icon():
+    ps1 = SHORTCUT.read_text(encoding="utf-8")
+    assert "GetFolderPath('Desktop')" in ps1
+    assert "GetFolderPath('Programs')" in ps1
+    assert "scripts\\console-assets\\rebuild-console.ico" in ps1
+    assert "[switch]$NoStartMenu" in ps1
+
+
+def test_nothing_launches_the_console_elevated():
+    """The console is a web server that runs commands; it does not get an
+    administrator token, and an elevated git refuses the checkout anyway."""
+    for path in (SHORTCUT, ROOT / "Rebuild Console.cmd", ROOT / "scripts" / "rebuild-console.sh"):
+        text = path.read_text(encoding="utf-8")
+        assert "RunAs" not in text, path.name
+        assert "runas" not in text.lower(), path.name
+
+
+def test_the_service_buttons_run_the_service_script_on_windows(console, monkeypatch, tmp_path):
+    monkeypatch.setattr(console, "WINDOWS", True)
+    commands = console.build_commands(tmp_path, {"port": 8070})
+    for action, verb in (("svc_install", "Install"), ("svc_start", "Start"),
+                         ("svc_stop", "Stop"), ("svc_uninstall", "Uninstall")):
+        argv = commands[action]
+        assert argv[:5] == ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+        assert argv[5].endswith("tunnel-service.ps1")
+        assert argv[-2:] == ["-Action", verb]
+        assert argv[argv.index("-Port") + 1] == "8070"
+    assert commands["funnel_reset"] == ["tailscale", "funnel", "reset"]
+
+
+def test_the_service_buttons_explain_themselves_off_windows(console, monkeypatch, tmp_path):
+    monkeypatch.setattr(console, "WINDOWS", False)
+    assert "svc_install" not in console.build_commands(tmp_path, {})
+    console.log_clear()
+    handler = console.Console.__new__(console.Console)
+    handler.repo = tmp_path
+    assert handler._run({"action": "svc_install"}) == {"ok": False}
+    assert any("Windows service" in line for line in console.log_since(0)["lines"])
+
+
+def test_the_service_script_elevates_itself_only_for_the_changing_step():
+    ps1 = SERVICE.read_text(encoding="utf-8")
+    assert "-Verb RunAs" in ps1
+    # Status first, before any elevation, and the pre-flight checks too.
+    assert ps1.index("if ($Action -eq 'Status')") < ps1.index("-Verb RunAs")
+    assert ps1.index("There is no $Tunnel.yml") < ps1.index("-Verb RunAs")
+    # A declined prompt is a clear message, not a stack trace.
+    assert "exit 1223" in ps1
+
+
+def test_the_service_script_follows_cloudflares_windows_steps():
+    ps1 = SERVICE.read_text(encoding="utf-8")
+    assert "System32\\config\\systemprofile\\.cloudflared" in ps1
+    assert "@('service', 'install')" in ps1
+    assert "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\$ServiceName" in ps1
+    assert "--config=`\"{1}`\" tunnel run" in ps1 or '--config="{1}" tunnel run' in ps1
+    assert "-StartupType Automatic" in ps1
+
+
+def test_the_service_script_names_no_particular_tunnel():
+    """The tunnel id is read from the config tunnel.ps1 wrote, so the script is
+    not tied to one machine's tunnel - and no credential is in the repository."""
+    import re
+    ps1 = SERVICE.read_text(encoding="utf-8")
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", ps1)
+    assert "Get-TunnelUuid" in ps1
+
+
+def test_the_service_script_is_plain_ascii():
+    """Windows PowerShell 5.1 reads a BOM-less script as the ANSI code page."""
+    SERVICE.read_bytes().decode("ascii")
+    SHORTCUT.read_bytes().decode("ascii")
+
+
+def test_sc_query_is_read_into_one_word(console):
+    running = ("SERVICE_NAME: Cloudflared\n        TYPE               : 10  WIN32_OWN_PROCESS\n"
+               "        STATE              : 4  RUNNING\n")
+    stopped = running.replace("4  RUNNING", "1  STOPPED")
+    missing = "[SC] EnumQueryServicesStatus:OpenService FAILED 1060:\n\nThe specified service does not exist as an installed service.\n"
+    assert console.parse_sc_query(0, running) == "running"
+    assert console.parse_sc_query(0, stopped) == "stopped"
+    assert console.parse_sc_query(1060, missing) == "not installed"
+    assert console.parse_sc_query(0, "") == "unknown"
+
+
+def test_a_running_service_is_named_instead_of_advising_a_publish(console, tmp_path, monkeypatch):
+    monkeypatch.setattr(console, "port_open", lambda port: True)
+    monkeypatch.setattr(console, "container_version", lambda port: "1.0.0+local.abc1234")
+    monkeypatch.setattr(console, "service_mail", lambda port: None)
+    monkeypatch.setattr(console, "service_state", lambda: {"supported": True, "state": "running"})
+    monkeypatch.setattr(console, "cloudflared_ready", lambda: {"ok": True, "why": ""})
+    titles = [h["title"] for h in console.guidance(tmp_path, 8060, 8443, "")]
+    assert "The tunnel service is publishing fbc.omniflexfitness.com" in titles
+    assert "To publish" not in titles
+
+
+def test_publish_does_not_start_a_second_connector_beside_the_service(console, monkeypatch, tmp_path):
+    monkeypatch.setattr(console, "service_state", lambda: {"supported": True, "state": "running"})
+    started = []
+    monkeypatch.setattr(console.TUNNEL, "start", lambda *a: started.append(a) or True)
+    handler = console.Console.__new__(console.Console)
+    handler.repo = tmp_path
+    console.log_clear()
+    assert handler._run({"action": "tunnel"}) == {"ok": False}
+    assert started == []
+    assert any("already publishing" in line for line in console.log_since(0)["lines"])
+
+
+def test_the_new_buttons_are_wired(console):
+    source = CONSOLE.read_text(encoding="utf-8")
+    for action in ("svc_install", "svc_start", "svc_stop", "svc_uninstall", "funnel_reset"):
+        assert '<button id="{}"'.format(action) in source, action
+        assert '"{}"'.format(action) in source.split("<script>")[1], action
+
+
+def test_probes_open_no_window_under_pythonw(console, monkeypatch):
+    """From the icon the console runs under pythonw, with no console of its own;
+    every probe it spawns would otherwise get a window of its own."""
+    import subprocess
+    monkeypatch.setattr(console, "WINDOWS", True)
+    flags = console._hidden()
+    assert flags == {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    source = CONSOLE.read_text(encoding="utf-8")
+    assert source.count("**_hidden()") >= 6
