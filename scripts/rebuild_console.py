@@ -51,8 +51,30 @@ whose whole job is executing scripts. Three things close it:
   * Host and Origin are checked, which is what stops DNS rebinding — a hostile
     name resolving to 127.0.0.1 arrives with the wrong Host and is refused.
 
-NO ADMINISTRATOR RIGHTS ARE NEEDED. Docker Desktop does have to be running,
-which is a separate matter.
+LAUNCHED LIKE A PROGRAM
+`"Rebuild Console.cmd" app-shortcut` puts an icon on the Desktop and in the
+Start menu. It opens the console as its own window, with its own icon, and the
+console keeps running in the background when that window is closed. Opening the
+icon again brings back the console that is already running rather than starting
+a second one: it records itself in .console/console.json (git-ignored), and a
+new launch that finds a live console for this checkout opens that one and exits.
+
+PERMISSIONS: THE CONSOLE RUNS AS YOU, AND ASKS WHEN IT MUST
+Nothing day to day needs an administrator: git, the client build, Docker and
+both publish paths all run as the signed-in user. The one thing that does is
+the Cloudflare tunnel as a Windows service, which keeps fbc.omniflexfitness.com
+up without a window open. Those buttons run scripts/tunnel-service.ps1, which
+asks Windows for approval through the usual UAC prompt, does that one job
+elevated, and returns.
+
+The console itself is never run elevated, and the shortcut does not ask for it.
+A web server that runs commands is the last thing that should hold an
+administrator token. Git also refuses a checkout owned by another account when
+it runs elevated ("detected dubious ownership"), and every file an elevated
+build writes would belong to Administrators, so the next ordinary build could
+not replace it.
+
+Docker Desktop does have to be running, which is a separate matter.
 """
 from __future__ import annotations
 
@@ -73,7 +95,7 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 from typing import Dict, List, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 WINDOWS = os.name == "nt"
 ROOT = Path(__file__).resolve().parent.parent
@@ -81,6 +103,35 @@ ROOT = Path(__file__).resolve().parent.parent
 #: What share.ps1 and share.sh both name the container. Kept in one place so
 #: Stop and Logs cannot drift from what Rebuild actually starts.
 CONTAINER = "fbc-test"
+
+#: How a console recognises another console when it asks one, so the launcher
+#: never mistakes some other program on a recorded port for this one.
+APP_ID = "meridian-rebuild-console"
+
+#: Where a running console records itself, so the Desktop icon brings that
+#: console back instead of starting a second. Git-ignored. Kept out of .devdata,
+#: which is the app's own data, because this file holds the console's token.
+STATE_DIR = ".console"
+
+#: The console's icon. The shortcut wears it, and the console serves it as the
+#: page's favicon so the app window's taskbar button matches the shortcut.
+ICON = ROOT / "scripts" / "console-assets" / "rebuild-console.ico"
+
+#: The Windows service `cloudflared service install` creates.
+TUNNEL_SERVICE = "Cloudflared"
+
+
+def _hidden() -> Dict[str, int]:
+    """Keyword arguments that stop a child process opening a console window.
+
+    From the Desktop icon the console runs under pythonw.exe, which has no
+    console of its own. Windows then gives every console program it starts a
+    new window, and the status probes (git, docker, tailscale, sc) run every
+    few seconds. CREATE_NO_WINDOW keeps each of those invisible.
+    """
+    if WINDOWS:
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    return {}
 
 # ── the shared output log ─────────────────────────────────────────────────
 # One list, appended by the reader threads and read by the browser at an
@@ -193,6 +244,79 @@ def open_console(url: str, mode: str) -> None:
         webbrowser.open(url)
     except Exception:  # a headless box has no browser; the URL is printed
         pass
+
+
+# ── one console per checkout ─────────────────────────────────────────────
+# The Desktop icon is meant to behave like a program's: press it and the
+# console is there. A second press used to start a second server on another
+# port, with its own empty log and no idea what the first one was running.
+# Now a console records its URL, and a launch that finds a live one opens it.
+def state_file(repo: Path) -> Path:
+    return repo / STATE_DIR / "console.json"
+
+
+def write_state(repo: Path, url: str) -> None:
+    """Record this console so the next launch can find it."""
+    path = state_file(repo)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = json.dumps({"url": url, "pid": os.getpid(), "repo": str(repo)})
+        # Owner-only where the platform honours the mode: the URL is the token.
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(body)
+    except OSError:
+        # A console that cannot record itself still works; the next launch
+        # just starts another instead of finding this one.
+        pass
+
+
+def clear_state(repo: Path, url: str) -> None:
+    """Remove the record, but only while it is still this console's."""
+    path = state_file(repo)
+    try:
+        if json.loads(path.read_text(encoding="utf-8")).get("url") == url:
+            path.unlink()
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def running_console(repo: Path, timeout: float = 2.0) -> Optional[str]:
+    """The URL of a console already serving this checkout, or None.
+
+    The record alone proves nothing: a console ended from Task Manager leaves
+    it behind, and its port may since have gone to something else. So the URL
+    is asked, with its token, whether it is a Rebuild Console for this same
+    repository. Only a loopback http URL is ever followed. The record is a file
+    on disk, and whatever is written in it must not make the launcher open a
+    page anywhere else.
+    """
+    try:
+        data = json.loads(state_file(repo).read_text(encoding="utf-8"))
+        url = str(data.get("url") or "")
+    except (OSError, ValueError, AttributeError):
+        return None
+    parsed = urlparse(url)
+    token = (parse_qs(parsed.query).get("token") or [""])[0]
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not port or not token:
+        return None
+    ping = "http://127.0.0.1:{}/api/ping?token={}".format(port, quote(token, safe=""))
+    # No proxy: an HTTP_PROXY in the environment must not see loopback calls.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(ping, timeout=timeout) as resp:
+            reply = json.loads(resp.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(reply, dict):
+        return None
+    if reply.get("app") != APP_ID or reply.get("repo") != str(repo):
+        return None
+    return "http://127.0.0.1:{}/?token={}".format(port, quote(token, safe=""))
 
 
 def log_write(text: str) -> None:
@@ -314,6 +438,7 @@ class Slot:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
+                **_hidden(),  # type: ignore[arg-type]
             )
         else:
             import signal
@@ -401,6 +526,17 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
         if not training:
             rebuild += ["-NoTraining"]
         tunnel = ps + [str(repo / "scripts" / "tunnel.ps1")]
+        # The always-on tunnel. tunnel-service.ps1 asks for administrator
+        # approval itself (a UAC prompt) and only for these; the console and
+        # everything else it runs stay at the signed-in user's rights.
+        service = ps + [str(repo / "scripts" / "tunnel-service.ps1"),
+                        "-Port", str(port), "-Action"]
+        extra = {
+            "svc_install": service + ["Install"],
+            "svc_start": service + ["Start"],
+            "svc_stop": service + ["Stop"],
+            "svc_uninstall": service + ["Uninstall"],
+        }
         # --check only. The console never writes a secrets file: creating one
         # is a deliberate act at a prompt, not something a page does because a
         # button was near the cursor.
@@ -420,6 +556,7 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
         if not training:
             rebuild += ["--no-training"]
         tunnel = ["bash", str(repo / "scripts" / "tunnel.sh")]
+        extra = {}
         config = ["bash", str(repo / "scripts" / "setup-secrets.sh"), "--check"]
 
     return {
@@ -431,6 +568,11 @@ def build_commands(repo: Path, opts: Dict[str, object]) -> Dict[str, List[str]]:
         "funnel_off": funnel_off,
         "stop": stop,
         "logs": logs,
+        # Every Serve and Funnel rule on this machine. One left over from a
+        # test publishes whatever answers on its port, so this is offered as a
+        # button rather than left to be remembered.
+        "funnel_reset": ["tailscale", "funnel", "reset"],
+        **extra,
     }
 
 
@@ -449,6 +591,7 @@ def _probe(argv: List[str], timeout: float = 8.0) -> Optional[str]:
         out = subprocess.run(
             [exe] + argv[1:], capture_output=True, text=True,
             timeout=timeout, check=False, errors="replace",
+            **_hidden(),  # type: ignore[arg-type]
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -547,6 +690,50 @@ def _docker_ready() -> Dict[str, object]:
 
 def docker_ready() -> Dict[str, object]:
     return _cached("docker", _DOCKER_TTL, _docker_ready)
+
+
+def parse_sc_query(returncode: int, text: str) -> str:
+    """Read `sc query <name>` into one word.
+
+    1060 is ERROR_SERVICE_DOES_NOT_EXIST, which `sc` returns both as its exit
+    code and in its text. The state line reads `STATE : 4  RUNNING`.
+    """
+    if returncode == 1060 or "1060" in (text or ""):
+        return "not installed"
+    match = re.search(r"STATE\s*:\s*\d+\s+([A-Z_]+)", text or "")
+    if not match:
+        return "unknown"
+    word = match.group(1).upper()
+    return {"RUNNING": "running", "STOPPED": "stopped",
+            "START_PENDING": "starting", "STOP_PENDING": "stopping"}.get(
+                word, word.lower().replace("_", " "))
+
+
+def _service_state() -> Dict[str, object]:
+    """Whether the tunnel's Windows service exists, and whether it runs.
+
+    `sc query` rather than PowerShell: it ships in System32, answers at once,
+    and reading a service's state needs no elevation, only changing it does.
+    """
+    if not WINDOWS:
+        return {"supported": False, "state": "n/a"}
+    sc = shutil.which("sc.exe") or shutil.which("sc")
+    if not sc:
+        return {"supported": True, "state": "unknown"}
+    try:
+        out = subprocess.run(
+            [sc, "query", TUNNEL_SERVICE], capture_output=True, text=True,
+            timeout=8, check=False, errors="replace",
+            **_hidden(),  # type: ignore[arg-type]
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"supported": True, "state": "unknown"}
+    return {"supported": True,
+            "state": parse_sc_query(out.returncode, out.stdout + out.stderr)}
+
+
+def service_state() -> Dict[str, object]:
+    return _cached("service", _PROBE_TTL, _service_state)
 
 
 # ── local configuration ───────────────────────────────────────────────────
@@ -893,6 +1080,7 @@ def tree_state(repo: Path) -> Optional[str]:
             [git, "-C", str(repo), "describe", "--always", "--dirty",
              "--abbrev=7", "--match="],
             capture_output=True, text=True, timeout=10, check=False,
+            **_hidden(),  # type: ignore[arg-type]
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -921,6 +1109,7 @@ def container_exists() -> bool:
         out = subprocess.run(
             [docker, "ps", "-aq", "--filter", "name=^{}$".format(CONTAINER)],
             capture_output=True, text=True, timeout=15, check=False,
+            **_hidden(),  # type: ignore[arg-type]
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -1076,11 +1265,28 @@ def guidance(repo: Path, port: int, funnelport: int,
             "funnel also clears its rule, so the port is free next time."]})
         return hints
 
-    # 4. Not published yet - and this is where the two machines diverge.
+    # 4. The always-on tunnel is up: nothing left to press.
+    if service_state().get("state") == "running":
+        hints.append({"tone": "ok",
+            "title": "The tunnel service is publishing fbc.omniflexfitness.com",
+            "lines": [
+                "The Cloudflared Windows service serves the hostname whether or",
+                "not this console is open, and it starts with Windows. Rebuild",
+                "as often as you like; it keeps serving across it.",
+                "",
+                "Stop service turns it off (Windows asks for approval).",
+            ]})
+        return hints
+
+    # 5. Not published yet - and this is where the two machines diverge.
     if cf["ok"]:
-        hints.append({"tone": "idle", "title": "To publish",
-            "lines": ["Press Publish - Cloudflare for fbc.omniflexfitness.com.",
-                      "Only one machine can serve that hostname at a time."]})
+        lines = ["Press Publish - Cloudflare for fbc.omniflexfitness.com.",
+                 "Only one machine can serve that hostname at a time."]
+        if WINDOWS:
+            lines += ["",
+                      "To keep it up without this console open, press Install",
+                      "service instead. Windows asks for approval once."]
+        hints.append({"tone": "idle", "title": "To publish", "lines": lines})
     elif ts["ok"]:
         hints.append({"tone": "warn",
             "title": "Publish - Cloudflare will not work on this machine",
@@ -1150,6 +1356,7 @@ h1{font:700 22px/1.2 var(--sans);color:var(--strong);margin:6px 0 2px}
 .eyebrow{font:11px/1.4 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
 .repo{font:11px/1.4 var(--mono);color:var(--faint);margin-top:4px}
 .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.rowlabel{align-self:center;font:600 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-right:4px}
 button{font:600 13px/1 var(--sans);padding:10px 16px;border:1px solid var(--primary);
   background:var(--card);color:var(--primary);cursor:pointer}
 button.filled{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -1199,6 +1406,15 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
   <button id="clear" class="quiet">Clear log</button>
 </div>
 
+<div class="row" id="always">
+  <span class="rowlabel">Always on</span>
+  <button id="svc_install" title="Run the Cloudflare tunnel as a Windows service. Windows asks for approval.">Install service &#x1F6E1;</button>
+  <button id="svc_start" title="Windows asks for approval">Start service &#x1F6E1;</button>
+  <button id="svc_stop" title="Windows asks for approval">Stop service &#x1F6E1;</button>
+  <button id="svc_uninstall" class="quiet" title="Windows asks for approval">Remove service &#x1F6E1;</button>
+  <button id="funnel_reset" class="quiet" title="tailscale funnel reset: removes every Serve and Funnel rule on this machine">Clear Funnel rules</button>
+</div>
+
 <div class="opts">
   <label>Port <input type="number" id="port" value="8060" min="1" max="65535"></label>
   <label>Upload MB <input type="number" id="upload" value="95" min="1" max="1000"></label>
@@ -1220,6 +1436,7 @@ footer{margin-top:16px;font:11px/1.5 var(--mono);color:var(--faint)}
   <span id="live">Container &mdash; ?</span>
   <span id="tun">Publishing &mdash; ?</span>
   <span id="paths">Publish paths &mdash; ?</span>
+  <span id="svc">Tunnel service &mdash; ?</span>
   <span id="channels">Mail &amp; assist &mdash; ?</span>
 </div>
 <div id="verdict" class="idle"></div>
@@ -1277,6 +1494,9 @@ document.getElementById("config").onclick = function () { run("config"); };
 document.getElementById("doctor").onclick = function () { run("doctor"); };
 document.getElementById("facts").onclick = function () { run("facts"); };
 document.getElementById("cancel").onclick = function () { run("cancel"); };
+["svc_install", "svc_start", "svc_stop", "svc_uninstall", "funnel_reset"].forEach(function (id) {
+  document.getElementById(id).onclick = function () { run(id); };
+});
 document.getElementById("clear").onclick = function () {
   api("/api/clear", {}).then(function () { logBox.textContent = ""; offset = 0; });
 };
@@ -1328,6 +1548,16 @@ function poll() {
        : !ch ? "unreadable"
        : (ch["Mail"] ? "mail on" : "mail off") + ", " +
          (ch["Comment assist"] ? "assist on" : "assist off"));
+    var svc = s.service || {};
+    document.getElementById("svc").textContent = "Tunnel service — " + (svc.state || "?");
+    // The service row is Windows only; elsewhere it would offer buttons that
+    // can only explain why they do nothing.
+    document.getElementById("always").style.display = svc.supported === false ? "none" : "";
+    var svcRunning = svc.state === "running", svcThere = svc.state && svc.state !== "not installed" && svc.state !== "n/a";
+    document.getElementById("svc_install").disabled = s.task_running || !s.cloudflare.ok;
+    document.getElementById("svc_start").disabled = s.task_running || !svcThere || svcRunning;
+    document.getElementById("svc_stop").disabled = s.task_running || !svcRunning;
+    document.getElementById("svc_uninstall").disabled = s.task_running || !svcThere;
     var v = document.getElementById("verdict");
     v.textContent = s.verdict.text;
     v.className = s.verdict.state;
@@ -1444,7 +1674,12 @@ class Console(http.server.BaseHTTPRequestHandler):
         # for it shows up as a console error on an otherwise healthy page.
         # Answering "no content" leaks nothing and keeps the log clean.
         if parsed.path == "/favicon.ico":
-            self._send(204, b"", "image/x-icon")
+            # The console's own icon, so the app window's taskbar button
+            # matches the shortcut. Public by nature: it is a picture.
+            try:
+                self._send(200, ICON.read_bytes(), "image/x-icon")
+            except OSError:
+                self._send(204, b"", "image/x-icon")
             return
         if not self._authorised(query):
             self._send(403, b"Forbidden", "text/plain; charset=utf-8")
@@ -1453,6 +1688,11 @@ class Console(http.server.BaseHTTPRequestHandler):
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
         elif parsed.path == "/api/status":
             self._json(self._status(query))
+        elif parsed.path == "/api/ping":
+            # What a second launch asks before reopening this console rather
+            # than starting another. Behind the token like everything else.
+            self._json({"ok": True, "app": APP_ID, "repo": str(self.repo),
+                        "pid": os.getpid()})
         else:
             self._send(404, b"Not found", "text/plain; charset=utf-8")
 
@@ -1509,6 +1749,16 @@ class Console(http.server.BaseHTTPRequestHandler):
                     # already exists". Cleared explicitly.
                     self._funnel_off(commands["funnel_off"])
                 return {"ok": True, "stopped": True}
+            if kind == "cloudflare" and service_state().get("state") == "running":
+                # The service already serves the hostname. A second connector
+                # from this machine only duplicates it, and stopping this one
+                # later would look like it unpublished something.
+                rule("cloudflare")
+                log_write("The Cloudflared service is already publishing")
+                log_write("fbc.omniflexfitness.com from this machine, so there is nothing")
+                log_write("to start. Stop service turns it off.")
+                log_write("[cloudflare not started]")
+                return {"ok": False}
             if kind == "cloudflare":
                 ready = cloudflared_ready()
                 if not ready["ok"]:
@@ -1529,7 +1779,20 @@ class Console(http.server.BaseHTTPRequestHandler):
                 return {"ok": True}
             return {"ok": False}
 
-        if action in ("pull", "rebuild", "logs", "config"):
+        if action in ("pull", "rebuild", "logs", "config", "funnel_reset"):
+            return {"ok": TASK.start(action, commands[action], self.repo)}
+
+        if action in ("svc_install", "svc_start", "svc_stop", "svc_uninstall"):
+            if action not in commands:
+                rule(action)
+                log_write("The tunnel service is a Windows service; on this platform")
+                log_write("run scripts/tunnel.sh under your init system instead.")
+                log_write("[{} not started]".format(action))
+                return {"ok": False}
+            # The state changes underneath the cache when this finishes;
+            # forget it so the strip shows the new state on the next poll.
+            with _probe_cache_lock:
+                _probe_cache.pop("service", None)
             return {"ok": TASK.start(action, commands[action], self.repo)}
 
         if action == "stop":
@@ -1587,6 +1850,7 @@ class Console(http.server.BaseHTTPRequestHandler):
             out = subprocess.run(
                 [exe] + argv[1:], capture_output=True, text=True,
                 timeout=15, check=False, errors="replace",
+                **_hidden(),  # type: ignore[arg-type]
             )
         except (OSError, subprocess.SubprocessError) as exc:
             log_write("[could not clear the funnel rule: {}]".format(exc))
@@ -1640,6 +1904,7 @@ class Console(http.server.BaseHTTPRequestHandler):
             "tunnel_kind": TUNNEL_KIND if TUNNEL.running else "",
             "cloudflare": cloudflared_ready(),
             "tailscale": tailscale_ready(),
+            "service": service_state(),
             "config": local_config(self.repo),
             "hints": guidance(self.repo, port, funnelport,
                               TUNNEL_KIND if TUNNEL.running else ""),
@@ -1659,6 +1924,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="'default' uses the system browser; 'app' opens a "
                              "Chrome/Edge window of its own, with no tab strip "
                              "or address bar; 'none' opens nothing")
+    parser.add_argument("--new-instance", action="store_true",
+                        help="start a console even if one is already running "
+                             "for this checkout (the default reopens that one)")
     args = parser.parse_args(argv)
 
     repo = Path(args.repo).resolve()
@@ -1668,30 +1936,52 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("No scripts/share.* under {}. Pass --repo.".format(repo), file=sys.stderr)
         return 2
 
-    Console.token = secrets.token_urlsafe(24)
-    Console.repo = repo
-    Console.quit_event = threading.Event()
+    mode = "none" if args.no_browser else args.browser
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Console)
-    server.daemon_threads = True
-    url = "http://127.0.0.1:{}/?token={}".format(server.server_port, Console.token)
+    # Pressing the icon again brings this console back rather than starting a
+    # second one beside it.
+    if not args.new_instance:
+        existing = running_console(repo)
+        if existing:
+            print("Rebuild Console is already running: {}".format(existing))
+            open_console(existing, mode)
+            return 0
 
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    server, url = serve(repo, args.port)
+    write_state(repo, url)
     print("Rebuild Console: {}".format(url))
     print("Ctrl-C, or the link in the page, stops it.")
     log_write("Ready. {}".format(repo))
 
-    open_console(url, "none" if args.no_browser else args.browser)
+    open_console(url, mode)
 
     try:
         while not Console.quit_event.wait(0.4):
             pass
     except KeyboardInterrupt:
         pass
+    finally:
+        clear_state(repo, url)
     TUNNEL.stop()
     TASK.stop()
     server.shutdown()
     return 0
+
+
+def serve(repo: Path, port: int = 0):
+    """Start the console's server on loopback; return it and the page's URL.
+
+    The server runs on a daemon thread. Shutting it down is the caller's job.
+    """
+    Console.token = secrets.token_urlsafe(24)
+    Console.repo = repo
+    Console.quit_event = threading.Event()
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Console)
+    server.daemon_threads = True
+    url = "http://127.0.0.1:{}/?token={}".format(server.server_port, Console.token)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, url
 
 
 if __name__ == "__main__":

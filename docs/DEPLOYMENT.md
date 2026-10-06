@@ -118,14 +118,40 @@ Pull, Rebuild and Publish become buttons, their output streams into the page,
 and a line says whether the running container is on the commit in your working
 tree. `bash scripts/rebuild-console.sh` is the same thing from Git Bash.
 
-That shortcut opens the console as **its own Chrome window** — no tab strip, no
-address bar, its own taskbar button and Chrome's icon — because the console is a
-control panel and a control panel that lives in a tab gets lost among thirty
-others. It targets `pythonw.exe` directly rather than the `.cmd`, so no console
-window flashes on launch. Edge and Brave work too; with none of them installed
-the page opens in the default browser instead. `& ".\Rebuild Console.cmd" app`
-does the same thing once, without writing a shortcut, and
+That puts a **Rebuild Console** icon on the Desktop and in the Start menu, and
+from then on the console opens like a program:
+
+- **Its own window.** No tab strip, no address bar, its own taskbar button, and
+  the console's own icon (`scripts/console-assets/rebuild-console.ico`, which the
+  page also serves as its favicon so the taskbar button matches). A control
+  panel that lives in a tab gets lost among thirty others. Pin it from the Start
+  menu entry: right-click, **Pin to taskbar**.
+- **One console.** Opening the icon again while the console is running brings
+  back that console instead of starting a second one. The running console
+  records itself in `.console/console.json` (git-ignored; its URL carries the
+  token), and a launch that finds a live console for this checkout opens it and
+  exits.
+- **Keeps running.** Closing the window leaves the console running in the
+  background, with any rebuild or publish it started. **Shut down this console**,
+  at the foot of the page, ends it.
+- **No flashing windows.** It targets `pythonw.exe` directly rather than the
+  `.cmd`, and every status check it runs is started without a console window.
+
+Edge and Brave work too; with none of them installed the page opens in the
+default browser instead. `& ".\Rebuild Console.cmd" app` does the same thing
+once, without writing a shortcut; `& ".\Rebuild Console.cmd" debug` starts a
+fresh console with a terminal attached so a startup error is readable; and
 `& ".\Rebuild Console.cmd" shortcut` still writes the older default-browser one.
+
+**Permissions.** The console runs as you and is never elevated; the shortcut does
+not ask for administrator rights. Git, the client build, Docker and both publish
+paths need none. The one job that does is the tunnel as a Windows service (see
+*Persistence* in §0c): the **Install / Start / Stop / Remove service** buttons
+run `scripts\tunnel-service.ps1`, which checks everything it can first, then asks
+Windows for approval (a UAC prompt) for that one step and returns. Running the
+whole console elevated would hand an administrator token to a web server that
+runs commands, make git refuse the checkout ("detected dubious ownership"), and
+leave every file an elevated build wrote owned by Administrators.
 
 To confirm a machine is running what you think it is, read the version in the
 masthead and the footer of the page itself — locally it carries the commit and
@@ -417,7 +443,26 @@ composes with it.
 `tunnel.sh` runs in the foreground and the hostname stops resolving to anything
 useful when it exits — Cloudflare then returns error 1033. `share.ps1
 -Persistent` already keeps the container across reboots; to match that for the
-tunnel, install `cloudflared` as a Windows service:
+tunnel, install `cloudflared` as a Windows service.
+
+The Rebuild Console's **Install service** button does all of it, and so does:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\tunnel-service.ps1 -Action Install
+```
+
+Run it as yourself, not from an administrator window: it reads the tunnel's
+config and credentials from your own `.cloudflared`, refuses before asking for
+anything if `tunnel.ps1` has never run here, and only then shows the UAC prompt.
+It copies the config and credentials into the system profile, points the copy at
+`-Port` (8060 by default; install again after changing it), validates the
+ingress, installs the service, sets its `ImagePath` and starts it automatically
+with Windows. `-Action Start`, `Stop` and `Uninstall` do what they say, and
+`Uninstall` also deletes the copied credentials; `-Action Status` needs no
+approval. While the service runs, the console's **Publish · Cloudflare** refuses
+to start a second connector beside it.
+
+The steps it automates, from Cloudflare's page, for doing it by hand:
 
 ```bat
 mkdir C:\Cloudflared\bin

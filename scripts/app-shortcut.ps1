@@ -1,13 +1,24 @@
 <#
 .SYNOPSIS
-    Put a Rebuild Console shortcut on the Desktop that opens in a Chrome app window.
+    Put a Rebuild Console icon on the Desktop and in the Start menu, so the
+    console opens like a program.
 
 .DESCRIPTION
-    Writes "Rebuild Console.lnk" to the Desktop. Double-clicking it starts the
-    console server and opens the page as its own Chrome (or Edge) window: no tab
-    strip, no address bar, its own taskbar button and its own icon. For a control
-    panel rather than a document that is the right frame, and it stops the
-    console getting lost among thirty tabs.
+    Writes "Rebuild Console.lnk" to the Desktop and the Start menu. Opening it
+    starts the console and shows it as its own Chrome (or Edge) window: no tab
+    strip, no address bar, its own taskbar button and the console's own icon.
+    For a control panel rather than a document that is the right frame, and it
+    stops the console getting lost among thirty tabs. Pin it to the taskbar
+    from the Start menu entry.
+
+    Opening it again while the console is running brings back that console
+    rather than starting a second one, and closing the window leaves the
+    console running in the background with whatever it was doing. "Shut down
+    this console", at the foot of the page, ends it.
+
+    The shortcut runs the console as you, never as an administrator, and does
+    not ask to. The buttons that need an administrator (the tunnel service)
+    ask Windows for approval themselves, each time, for that one step.
 
     Two differences from the shortcut `"Rebuild Console.cmd" shortcut` writes:
 
@@ -18,14 +29,17 @@
       the taskbar. pythonw has no console, so there is nothing to hide.
     * The console is told to open in app mode rather than in the default browser.
 
-    Harmless to re-run: the shortcut is overwritten. Needs no administrator
-    rights - it only writes one file to your own Desktop.
+    Harmless to re-run: the shortcuts are overwritten. Needs no administrator
+    rights - it only writes to your own Desktop and Start menu folders.
 
 .PARAMETER Name
     Shortcut file name, without ".lnk". Defaults to "Rebuild Console".
 
+.PARAMETER NoStartMenu
+    Write the Desktop shortcut only.
+
 .PARAMETER Remove
-    Delete the shortcut instead of writing it.
+    Delete the shortcuts instead of writing them.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\app-shortcut.ps1
@@ -36,21 +50,30 @@
 [CmdletBinding()]
 param(
     [string]$Name = 'Rebuild Console',
+    [switch]$NoStartMenu,
     [switch]$Remove
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent $PSScriptRoot
-$desktop = [Environment]::GetFolderPath('Desktop')
-$link = Join-Path $desktop "$Name.lnk"
+$folders = @([Environment]::GetFolderPath('Desktop'))
+if (-not $NoStartMenu) { $folders += [Environment]::GetFolderPath('Programs') }
+# GetFolderPath returns '' for a folder this account does not have.
+$links = @($folders | Where-Object { $_ } | ForEach-Object { Join-Path $_ "$Name.lnk" })
+if (-not $links.Count) {
+    Write-Host 'Could not find a Desktop or Start menu folder for this account.' -ForegroundColor Red
+    exit 1
+}
 
 if ($Remove) {
-    if (Test-Path $link) {
-        Remove-Item $link -Force
-        Write-Host "Removed $link"
-    } else {
-        Write-Host "Nothing to remove; $link does not exist."
+    foreach ($link in $links) {
+        if (Test-Path $link) {
+            Remove-Item $link -Force
+            Write-Host "Removed $link"
+        } else {
+            Write-Host "Nothing to remove; $link does not exist."
+        }
     }
     exit 0
 }
@@ -79,10 +102,9 @@ if (-not (Test-Path $script)) {
     exit 1
 }
 
-# Borrow the browser's own icon, so the shortcut looks like what it opens. Kept
-# in step with _APP_BROWSER_PATHS in rebuild_console.py: if none of these is
-# installed the console falls back to the default browser at launch, and the
-# shortcut just keeps Python's icon.
+# The browser the console opens in app mode. Kept in step with
+# _APP_BROWSER_PATHS in rebuild_console.py: if none of these is installed the
+# console falls back to the default browser at launch.
 $browser = @(
     "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe",
     "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
@@ -92,22 +114,34 @@ $browser = @(
     "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\Application\brave.exe"
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 
+# The console's own icon, which it also serves as the page's favicon so the app
+# window's taskbar button matches. The browser's icon if the file is missing.
+$icon = Join-Path $repo 'scripts\console-assets\rebuild-console.ico'
+if (Test-Path $icon) { $iconLocation = "$icon,0" }
+elseif ($browser) { $iconLocation = "$browser,0" }
+else { $iconLocation = $null }
+
 $shell = New-Object -ComObject WScript.Shell
-$s = $shell.CreateShortcut($link)
-$s.TargetPath = $python
-$s.Arguments = '"{0}" --browser app' -f $script
-$s.WorkingDirectory = $repo
-$s.Description = 'Meridian Rebuild Console - pull, rebuild, publish'
-$s.WindowStyle = 1
-if ($browser) { $s.IconLocation = "$browser,0" }
-$s.Save()
+foreach ($link in $links) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $link) | Out-Null
+    $s = $shell.CreateShortcut($link)
+    $s.TargetPath = $python
+    $s.Arguments = '"{0}" --browser app' -f $script
+    $s.WorkingDirectory = $repo
+    $s.Description = 'Meridian Rebuild Console - pull, rebuild, publish'
+    $s.WindowStyle = 1
+    if ($iconLocation) { $s.IconLocation = $iconLocation }
+    $s.Save()
+    Write-Host "Shortcut written: $link" -ForegroundColor Green
+}
 
 Write-Host ''
-Write-Host "Shortcut written: $link" -ForegroundColor Green
 if ($browser) {
     Write-Host "Opens in an app window of: $browser"
 } else {
     Write-Host 'No Chrome, Edge or Brave found. The console will open in your' -ForegroundColor Yellow
     Write-Host 'default browser instead; install one of those for app mode.' -ForegroundColor Yellow
 }
+Write-Host 'Pin it: Start menu, right-click Rebuild Console, Pin to taskbar.'
+Write-Host 'It runs as you. The tunnel-service buttons ask Windows for approval when pressed.'
 Write-Host ''
