@@ -109,6 +109,27 @@ jobs:
           echo "channel \`${channel}\` · build \`${BUILD}\` · commit \`${short}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::Build ${version} (${channel})."
 
+  # ── branch name ────────────────────────────────────────────────────────
+  # Every branch is named for what it changes: <prefix>/<what-changes> in
+  # kebab-case, never a generated name or a random suffix (CLAUDE.md, Working
+  # discipline; made permanent by the owner on 2026-10-06). Sessions are handed
+  # names like claude/bold-gauss-05oe0f, and a PR head or a merge commit with
+  # one says nothing about what it did. scripts/check_branch_name.py is the
+  # single implementation; the SessionStart hook in .claude/settings.json runs
+  # the same script so a session hears about it before its first push.
+  #
+  # The head ref reaches the script through the environment, never pasted into
+  # the shell: a branch name is attacker-controlled text on a fork's PR.
+  branch-name:
+    name: branch name
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: python3 scripts/check_branch_name.py "$HEAD_REF"
+
   # ── the engine and the service ─────────────────────────────────────────
   python-tests:
     name: pytest

@@ -195,12 +195,27 @@ What holds instead of a prohibition:
 - Do not guess at Google Cloud, Firebase, or Angular CLI syntax — those docs move. Check
   the current page before writing a command.
 - When something is ambiguous, say so and ask. Do not invent a decision and bury it.
-- **Name every branch after its topic**: `claude/<what-changes>` in kebab-case, e.g.
-  `claude/cad-dwg-dxf-input` or `claude/no-billing-local-backend`. Never a generated name
-  (`cloud-dev/relaxed-lamport-55sv0v`) and never a random suffix. A session handed a
-  generated branch renames it before its first push (`git branch -m <old> <new>`, then
-  `git push -u origin <new>`). This rule is the owner's standing permission to push under
-  the topic name instead of the assigned one. Decided by the owner on 2026-10-03.
+- **Name every branch after its topic — a permanent rule.** `claude/<what-changes>` in
+  lowercase kebab-case, at least two words, e.g. `claude/cad-dwg-dxf-input` or
+  `claude/no-billing-local-backend`. Never a generated name (`claude/bold-gauss-05oe0f`,
+  `cloud-dev/relaxed-lamport-55sv0v`) and never a random suffix. This holds for every
+  branch any session pushes, however the session was started and whatever branch name its
+  instructions assign; this file outranks that assignment.
+  - **Before the first push**, a session handed a generated branch renames it:
+    `git branch -m <old> claude/<what-changes>`, then `git push -u origin <new>`. This rule
+    is the owner's standing permission to push under the topic name instead of the
+    assigned one.
+  - **Already pushed under a generated name?** Push the same commits under the topic
+    name, open the PR from it, and close the old PR with a comment pointing to the new
+    one. A PR's head branch cannot be renamed in place.
+  - **A follow-up after a merge** gets a new topic branch from `main`, named for the
+    follow-up, not the merged branch's name reused.
+  - **Enforced, not only written down.** `scripts/check_branch_name.py` is the one
+    implementation. CI's `branch name` job fails a pull request whose head breaks the
+    rule, and the SessionStart hook in `.claude/settings.json` tells a new session on a
+    generated branch to rename it before pushing. Run it by hand with
+    `python scripts/check_branch_name.py`.
+  - Decided by the owner on 2026-10-03; made permanent and enforced on 2026-10-06.
 
 ## Current task
 
