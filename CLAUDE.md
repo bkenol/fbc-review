@@ -217,6 +217,48 @@ What holds instead of a prohibition:
     `python scripts/check_branch_name.py`.
   - Decided by the owner on 2026-10-03; made permanent and enforced on 2026-10-06.
 
+## When Desktop Commander is offline
+
+The owner's laptop (`OmniFlex-Laptop`, device id `1b46b54a-b9f3-45db-aaa0-29d4f1a36081`)
+holds the Obsidian vaults. Writing to a vault from a cloud session goes through the
+Desktop Commander Remote device, and that device only answers while its terminal is open.
+
+**Whenever `list_devices` shows it offline, or a Desktop Commander call fails with "No
+Desktop Commander device is currently online", do all of this in the same reply:**
+
+1. Say it is offline and when it was last seen.
+2. Give the owner the command below in a code block, ready to paste into a terminal on
+   that laptop. Never describe the command in prose only.
+3. Say the terminal must stay open, and that on a normal restart no browser sign-in is
+   needed because saved credentials are reused.
+4. Keep the work. Write the deliverable to the session scratchpad, give its full path, and
+   say plainly that it is **not** in the vault yet. Never report a vault note as
+   published until a write to the vault has succeeded.
+5. Retry the write once the owner says the device is back, then confirm with `list_devices`.
+
+```bash
+npx @wonderwhy-er/desktop-commander@latest remote
+```
+
+Requires Node.js 18 or newer. The first run on a machine opens a browser to pair it: check
+the code matches the one in the terminal, sign in, authorize.
+
+If it still shows offline after that, in this order:
+
+```bash
+# more output about why it will not connect
+npx @wonderwhy-er/desktop-commander@latest remote --debug
+
+# clear the saved login, then start again and re-pair in the browser
+npx @wonderwhy-er/desktop-commander@latest remote --logout
+npx @wonderwhy-er/desktop-commander@latest remote
+```
+
+Do not revoke the device in the dashboard (<https://mcp.desktopcommander.app/>) as a first
+step; `--logout` does not revoke it and is enough for a stale login. Source: the project's
+`src/remote-device/README.md` in `wonderwhy-er/DesktopCommanderMCP`. That page moves, so
+check it before changing the command here.
+
 ## Current task
 
 `docs/DEPLOYMENT-PROMPT.md` — deploy this to `fbc.omniflexfitness.com`. Six phases.
